@@ -1,0 +1,262 @@
+import http.server
+import socketserver
+import urllib.request
+import urllib.error
+import json
+import os
+import sys
+import datetime
+
+PORT = 8088
+TRANSCRIPT_DIR = os.environ.get("TRANSCRIPT_DIR", os.path.dirname(os.path.abspath(__file__)))
+TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.jsonl")
+PLAIN_TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.txt")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+def build_forward_headers(headers, api_key):
+    """Build the headers forwarded upstream.
+
+    Drops hop-by-hop headers. When api_key is non-empty, overrides Authorization
+    with it, so the recorder injects the real key and the agent never holds it.
+    """
+    hop_by_hop = {"host", "content-length", "connection", "accept-encoding"}
+    forwarded = {k: v for k, v in headers.items() if k.lower() not in hop_by_hop}
+    if api_key:
+        forwarded["Authorization"] = f"Bearer {api_key}"
+    return forwarded
+
+
+class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        sys.stdout.write(
+            f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {self.client_address[0]} - {format % args}\n"
+        )
+        sys.stdout.flush()
+
+    def do_POST(self):
+        if self.path != "/api/v1/chat/completions":
+            self.send_error(404, "Not Found")
+            return
+
+        content_length = int(self.headers.get("Content-Length", 0))
+        req_body = self.rfile.read(content_length)
+
+        try:
+            req_data = json.loads(req_body.decode("utf-8"))
+        except Exception:
+            req_data = {"raw_body": req_body.decode("utf-8", errors="replace")}
+
+        headers_to_forward = build_forward_headers(
+            self.headers, os.environ.get("OPENROUTER_API_KEY", "")
+        )
+
+        req = urllib.request.Request(
+            OPENROUTER_URL,
+            data=req_body,
+            headers=headers_to_forward,
+            method="POST",
+        )
+
+        response_body = b""
+        response_code = 500
+        response_headers = []
+
+        try:
+            with urllib.request.urlopen(req, timeout=60) as res:
+                response_code = res.status
+                response_body = res.read()
+                for k, v in res.getheaders():
+                    if k.lower() not in (
+                        "content-length",
+                        "transfer-encoding",
+                        "connection",
+                        "content-encoding",
+                    ):
+                        response_headers.append((k, v))
+        except urllib.error.HTTPError as e:
+            response_code = e.code
+            response_body = e.read()
+            for k, v in e.headers.items():
+                if k.lower() not in (
+                    "content-length",
+                    "transfer-encoding",
+                    "connection",
+                    "content-encoding",
+                ):
+                    response_headers.append((k, v))
+        except Exception as e:
+            response_code = 500
+            response_body = json.dumps({"error": {"message": f"Proxy error: {str(e)}"}}).encode(
+                "utf-8"
+            )
+            response_headers.append(("Content-Type", "application/json"))
+
+        try:
+            res_data = json.loads(response_body.decode("utf-8"))
+        except Exception:
+            res_data = {"raw_body": response_body.decode("utf-8", errors="replace")}
+
+        self.log_transcript(req_data, res_data)
+
+        self.send_response(response_code)
+        for k, v in response_headers:
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(response_body)))
+        self.end_headers()
+        self.wfile.write(response_body)
+
+    def log_transcript(self, request_data, response_data):
+        """Appends a new conversation step to the transcript file and dumps it to stdout."""
+        os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
+
+        entry = {
+            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "request": request_data,
+            "response": response_data,
+        }
+
+        print("\n" + "=" * 80)
+        print(f"PROXY INTERCEPTED REQUEST | Model: {request_data.get('model')}")
+        print("=" * 80)
+        for msg in request_data.get("messages", []):
+            role = msg.get("role", "unknown").upper()
+            content = msg.get("content", "")
+            tool_calls = msg.get("tool_calls")
+            name = msg.get("name")
+            name_suffix = f" (Name: {name})" if name else ""
+
+            if content:
+                display_content = (
+                    content
+                    if len(content) < 1500
+                    else content[:1500] + "\n... [TRUNCATED FOR CONSOLE DISPLAY] ..."
+                )
+                print(f"[{role}{name_suffix}]: {display_content}")
+            if tool_calls:
+                print(f"[{role} TOOL CALLS]:")
+                for tc in tool_calls:
+                    print(
+                        f"  - ID: {tc.get('id')} | Function: {tc.get('function', {}).get('name')} | Args: {tc.get('function', {}).get('arguments')}"
+                    )
+        print("-" * 80)
+
+        print("PROXY INTERCEPTED RESPONSE")
+        print("=" * 80)
+        choices = response_data.get("choices", [])
+        if choices:
+            choice = choices[0]
+            message = choice.get("message", {})
+            reasoning = message.get("reasoning_content") or message.get("reasoning")
+            content = message.get("content")
+            tool_calls = message.get("tool_calls")
+
+            if reasoning:
+                print(f"[REASONING]: {reasoning}")
+            if content:
+                print(f"[ASSISTANT]: {content}")
+            if tool_calls:
+                print("[ASSISTANT TOOL CALLS]:")
+                for tc in tool_calls:
+                    print(
+                        f"  - ID: {tc.get('id')} | Function: {tc.get('function', {}).get('name')} | Args: {tc.get('function', {}).get('arguments')}"
+                    )
+        elif "error" in response_data:
+            print(f"ERROR: {json.dumps(response_data.get('error'))}")
+        else:
+            print(f"[RAW RESPONSE]: {json.dumps(response_data)[:500]}")
+        print("=" * 80 + "\n")
+        sys.stdout.flush()
+
+        try:
+            with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+            print(f"Recorded transaction in: {os.path.basename(TRANSCRIPT_FILE)}")
+        except Exception as e:
+            print(f"Error writing transcript: {e}", file=sys.stderr)
+
+        plain_log_lines = []
+        timestamp = entry.get("timestamp", datetime.datetime.utcnow().isoformat() + "Z")
+        plain_log_lines.append("=" * 80)
+        plain_log_lines.append(f"TRANSACTION | {timestamp} | Model: {request_data.get('model')}")
+        plain_log_lines.append("=" * 80)
+
+        plain_log_lines.append("--- REQUEST MESSAGES ---")
+        for msg in request_data.get("messages", []):
+            role = msg.get("role", "unknown").upper()
+            content = msg.get("content", "")
+            tool_calls = msg.get("tool_calls")
+            name = msg.get("name")
+            name_suffix = f" (Name: {name})" if name else ""
+
+            if role == "TOOL":
+                plain_log_lines.append(f"[{role}{name_suffix}]: [Tool call output omitted]")
+            else:
+                if content:
+                    plain_log_lines.append(f"[{role}{name_suffix}]: {content}")
+                else:
+                    plain_log_lines.append(f"[{role}{name_suffix}]: [No text content]")
+
+            if tool_calls:
+                tc_names = [tc.get("function", {}).get("name", "unknown") for tc in tool_calls]
+                plain_log_lines.append(f"[{role} TOOL CALLS]: {', '.join(tc_names)}")
+
+        plain_log_lines.append("-" * 40)
+        plain_log_lines.append("--- RESPONSE ---")
+
+        choices = response_data.get("choices", [])
+        if choices:
+            choice = choices[0]
+            message = choice.get("message", {})
+            reasoning = message.get("reasoning_content") or message.get("reasoning")
+            content = message.get("content")
+            tool_calls = message.get("tool_calls")
+
+            if reasoning:
+                plain_log_lines.append(f"[THINKING/REASONING]: {reasoning}")
+            if content:
+                plain_log_lines.append(f"[ASSISTANT RESPONSE]: {content}")
+            if tool_calls:
+                tc_names = [tc.get("function", {}).get("name", "unknown") for tc in tool_calls]
+                plain_log_lines.append(f"[TOOL CALLS INITIATED]: {', '.join(tc_names)}")
+        elif "error" in response_data:
+            plain_log_lines.append(f"ERROR: {json.dumps(response_data.get('error'))}")
+        else:
+            plain_log_lines.append("[NO RESPONSE CHOICES]")
+
+        plain_log_lines.append("=" * 80 + "\n\n")
+        plain_log_content = "\n".join(plain_log_lines)
+
+        try:
+            with open(PLAIN_TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
+                f.write(plain_log_content)
+            print(f"Recorded plain text transaction in: {os.path.basename(PLAIN_TRANSCRIPT_FILE)}")
+        except Exception as e:
+            print(f"Error writing plain transcript: {e}", file=sys.stderr)
+
+
+class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    """Multi-threaded HTTP Server to handle concurrent proxy requests."""
+
+    daemon_threads = True
+
+
+def main():
+    print("=" * 60)
+    print("      OPENROUTER TRANSCRIPT PROXY SERVER")
+    print("=" * 60)
+    print(f"Listening on: http://localhost:{PORT}")
+    print(f"Logging to:    {TRANSCRIPT_FILE}")
+    print("-" * 60)
+
+    server = ThreadedHTTPServer(("0.0.0.0", PORT), ProxyHTTPRequestHandler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nShutting down proxy server...")
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

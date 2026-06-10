@@ -1,0 +1,10 @@
+FROM python:3.13-slim
+
+RUN useradd --create-home --uid 1000 vieweruser
+
+COPY --chown=vieweruser:vieweruser viewer.py /opt/viewer/viewer.py
+
+USER vieweruser
+WORKDIR /opt/viewer
+
+ENTRYPOINT ["python", "/opt/viewer/viewer.py"]

@@ -1,0 +1,18 @@
+FROM python:3.13-slim
+
+RUN pip install --no-cache-dir trafilatura
+
+RUN useradd --create-home --uid 1000 diodeuser
+
+COPY --chown=diodeuser:diodeuser diode.py /opt/diode/diode.py
+
+# Pre-create the shared /diode mountpoint owned by uid 1000 so Docker seeds the
+# fresh named volume with non-root ownership. Both the diode (diodeuser) and the
+# agent (appuser) run as uid 1000 and need to write to this shared volume, but
+# cap_drop:[ALL] + no-new-privileges means neither can write a root-owned mount.
+RUN mkdir -p /diode && chown diodeuser:diodeuser /diode
+
+USER diodeuser
+WORKDIR /opt/diode
+
+ENTRYPOINT ["python", "/opt/diode/diode.py"]

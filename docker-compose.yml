@@ -1,0 +1,89 @@
+services:
+  recorder:
+    image: aurora-harness
+    build: .
+    entrypoint: ["python", "/opt/agent/proxy.py"]
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
+      TRANSCRIPT_DIR: /transcripts
+    volumes:
+      - transcripts:/transcripts
+    networks: [internal, egress]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+  agent:
+    image: aurora-harness
+    build: .
+    depends_on: [recorder]
+    environment:
+      OPENROUTER_API_KEY: "sk-dummy"
+      OPENROUTER_BASE_URL: "http://recorder:8088/api/v1"
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-v4-pro}
+    volumes:
+      - diode:/diode
+    networks: [internal]
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /work:size=256m,uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 2
+    restart: unless-stopped
+
+  diode:
+    build:
+      context: .
+      dockerfile: Dockerfile.diode
+    image: aurora-diode
+    environment:
+      DIODE_DIR: /diode
+    volumes:
+      - diode:/diode
+    networks: [egress]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 512m
+    restart: unless-stopped
+
+  viewer:
+    build:
+      context: .
+      dockerfile: Dockerfile.viewer
+    image: aurora-viewer
+    profiles: ["viewer"]
+    environment:
+      TRANSCRIPT_DIR: /transcripts
+      VIEWER_PORT: "8090"
+    volumes:
+      - transcripts:/transcripts:ro
+    ports:
+      - "127.0.0.1:8090:8090"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 256m
+    restart: "no"
+
+networks:
+  internal:
+    internal: true
+  egress: {}
+
+volumes:
+  transcripts: {}
+  diode: {}
