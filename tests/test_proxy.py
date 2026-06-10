@@ -25,7 +25,12 @@ def test_build_forward_headers_preserves_auth_when_no_key():
 
 def test_build_forward_headers_drops_hop_by_hop():
     proxy = _proxy()
-    headers = {"Content-Length": "5", "Connection": "keep-alive", "Accept-Encoding": "gzip", "X-Title": "t"}
+    headers = {
+        "Content-Length": "5",
+        "Connection": "keep-alive",
+        "Accept-Encoding": "gzip",
+        "X-Title": "t",
+    }
     out = proxy.build_forward_headers(headers, "")
     for h in ("Content-Length", "Connection", "Accept-Encoding"):
         assert h not in out

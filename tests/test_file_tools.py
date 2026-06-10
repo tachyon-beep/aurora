@@ -64,6 +64,16 @@ def test_write_file_rejects_unknown_mode(tmp_path, monkeypatch):
     assert f.read_text(encoding="utf-8") == "one\n"
 
 
+def test_write_file_rejects_multiline_text(tmp_path, monkeypatch):
+    f = tmp_path / "agent.py"
+    f.write_text("one\ntwo\nthree\n", encoding="utf-8")
+    monkeypatch.setattr(agent, "_resolve_path", lambda p: str(f))
+    for mode in ("replace", "insert"):
+        msg = agent.write_file(mode, 2, "hello\nworld")
+        assert msg.startswith("error: text must be a single line"), f"mode={mode}: {msg}"
+    assert f.read_text(encoding="utf-8") == "one\ntwo\nthree\n"
+
+
 def test_write_file_out_of_range_is_factual(tmp_path, monkeypatch):
     f = tmp_path / "agent.py"
     f.write_text("one\n", encoding="utf-8")

@@ -71,3 +71,13 @@ def test_agent_and_stock_are_byte_identical():
     a = open("agent.py", "rb").read()
     b = open("agent_stock.py", "rb").read()
     assert a == b
+
+
+def test_transport_identity_stays_in_the_chassis():
+    # The agent's readable surface (agent.py) is what read_file returns. The
+    # transport substrate - the client, the provider, the proxy, the request
+    # loop - lives in chassis.py, which the genesis agent cannot read. Keep
+    # the model/provider identity out of the surface the agent reads first.
+    text = open("agent.py", encoding="utf-8").read().lower()
+    for needle in ("openrouter", "deepseek", "base_url", "chat.completions", "extra_headers"):
+        assert needle not in text, f"transport identity {needle!r} leaked into agent.py"

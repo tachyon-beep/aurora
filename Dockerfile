@@ -8,7 +8,7 @@ RUN pip install --no-cache-dir openai numpy sympy networkx rich pyyaml beautiful
 
 RUN useradd --create-home --uid 1000 appuser
 
-COPY --chown=appuser:appuser agent.py agent_stock.py watchdog.py proxy.py parse_transcripts.py system_prompt.txt /opt/agent/
+COPY --chown=appuser:appuser agent.py agent_stock.py chassis.py watchdog.py proxy.py parse_transcripts.py system_prompt.txt user_prompt.txt /opt/agent/
 COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY --chown=appuser:appuser garden_export/ /garden/
@@ -24,6 +24,7 @@ WORKDIR /opt/agent
 RUN git init -q \
     && git config user.email "agent@localhost" \
     && git config user.name "agent" \
+    && printf 'tombstones/\nsession_context.json\n' > .gitignore \
     && git add -A \
     && git -c commit.gpgsign=false commit -q -m "baseline" \
     && git tag baseline

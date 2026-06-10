@@ -13,6 +13,7 @@ garden_sources.txt.example
 *.jsonl
 *.txt
 !system_prompt.txt
+!user_prompt.txt
 session_context.json
 .env
 !garden_export

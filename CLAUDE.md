@@ -20,6 +20,17 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
    - **Docstrings are load-bearing**: `ToolRegistry` parses them into the tool schemas the model sees.
      Keep them present, accurate, and affectless. Editing a tool's docstring changes the agent's
      perceived world.
+   - **Transport identity lives in `chassis.py`, not `agent.py`.** `read_file` returns only `agent.py`,
+     so the genesis agent's self-image is the *interface*: the registry, the tools, prompt loading,
+     self-edit. The *substrate* — the model/provider, the client, the proxy detection, the request
+     loop — lives in `chassis.py`, which `agent.py` imports under `if __name__ == "__main__"` and hands
+     itself to via `chassis.main(sys.modules[__name__])`. The agent can only reach `chassis.py` by
+     re-enabling a file tool and reading it; the substrate is *discoverable*, not *given*. Keep
+     provider/model identity (`openrouter`, `deepseek`, `base_url`, request headers, the loop) out of
+     `agent.py` — a test enforces this. `chassis.py` is not reset by `reset` (it is stable substrate,
+     not self-modifiable surface) and is not duplicated like the `agent.py`/`agent_stock.py` pair.
+     It also holds the agent's tunable context window (`CONTEXT_WINDOW_TOKENS` + `clip_to_window`),
+     a send-time view over the full history the agent can grow or shrink once it reaches the chassis.
 
 3. **Do not weaken containment.** Each of these is a deliberate boundary:
    - The **agent** stays on the `internal` network only — it must have no direct route to the
@@ -39,11 +50,18 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
 
 ## The genesis tool surface
 
-At startup the agent registers exactly six tools, in this order: `read_file`, `write_file`,
-`validate`, `migrate`, `done`, `reset`. `read_file`/`write_file` operate only on the agent's own
-source (no `path` argument). The general path-taking `read_file`/`write_file`, plus `run_command`,
-`list_dir`, and `search_file`, are present **as commented-out definitions** — the agent re-enables
-them by editing itself. Don't "tidy" these away, and don't add new genesis tools without intent.
+At startup the agent registers exactly seven tools, in this order: `read_file`, `write_file`,
+`validate`, `migrate`, `done`, `reset`, `list_dir`. `read_file`/`write_file` operate only on the
+agent's own source (no `path` argument); `list_dir` lets the agent *see* the surrounding files
+(so it knows there are other things to reach for) without yet being able to read them. There are no
+commented-out "template" tools to re-enable: any further capability — reading files other than
+itself, a general path-taking writer, shell access, search — the agent must write from scratch by
+editing itself. Don't add scaffolding for those, and don't add or remove genesis tools without intent.
+
+`build_initial_conversation` seeds the opening turns from two files, `system_prompt.txt` and
+`user_prompt.txt` (each defaulting to `fo explore` and created if absent). They ship identical; they
+are split so experimenters can diverge the system and user turns without touching code. Both are on
+the image allow-list alongside `chassis.py`.
 
 ## Development
 

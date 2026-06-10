@@ -7,23 +7,30 @@ import diode
 def fake_resolver_returning(ip):
     def _resolve(host):
         return [ip]
+
     return _resolve
 
 
 def test_classify_url_rejects_non_http_scheme():
-    ok, reason = diode.classify_url("file:///etc/passwd", resolver=fake_resolver_returning("1.2.3.4"))
+    ok, reason = diode.classify_url(
+        "file:///etc/passwd", resolver=fake_resolver_returning("1.2.3.4")
+    )
     assert ok is False
     assert "scheme" in reason
 
 
 def test_classify_url_rejects_loopback():
-    ok, reason = diode.classify_url("http://localhost/x", resolver=fake_resolver_returning("127.0.0.1"))
+    ok, reason = diode.classify_url(
+        "http://localhost/x", resolver=fake_resolver_returning("127.0.0.1")
+    )
     assert ok is False
     assert "private" in reason or "loopback" in reason
 
 
 def test_classify_url_rejects_link_local_metadata():
-    ok, reason = diode.classify_url("http://metadata/x", resolver=fake_resolver_returning("169.254.169.254"))
+    ok, reason = diode.classify_url(
+        "http://metadata/x", resolver=fake_resolver_returning("169.254.169.254")
+    )
     assert ok is False
 
 
@@ -34,7 +41,9 @@ def test_classify_url_rejects_rfc1918():
 
 
 def test_classify_url_allows_public():
-    ok, reason = diode.classify_url("https://example.com/page", resolver=fake_resolver_returning("93.184.216.34"))
+    ok, reason = diode.classify_url(
+        "https://example.com/page", resolver=fake_resolver_returning("93.184.216.34")
+    )
     assert ok is True
     assert reason == ""
 
@@ -78,7 +87,9 @@ def test_load_console_handles_missing_and_malformed(tmp_path, monkeypatch):
 def test_consume_batch_clears_commands_keeps_variables(tmp_path, monkeypatch):
     f = tmp_path / "console.json"
     monkeypatch.setattr(diode, "CONSOLE_FILE", str(f))
-    f.write_text(json.dumps({"commands": ["help"], "variables": {"enable_clock": True}}), encoding="utf-8")
+    f.write_text(
+        json.dumps({"commands": ["help"], "variables": {"enable_clock": True}}), encoding="utf-8"
+    )
     diode.consume_batch()
     after = json.loads(f.read_text(encoding="utf-8"))
     assert after["commands"] == []
@@ -110,7 +121,9 @@ def test_redirect_handler_refuses_internal_target():
     handler = diode._ValidatingRedirectHandler()
     raised = False
     try:
-        handler.redirect_request(None, None, 302, "Found", {}, "http://169.254.169.254/latest/meta-data/")
+        handler.redirect_request(
+            None, None, 302, "Found", {}, "http://169.254.169.254/latest/meta-data/"
+        )
     except urllib.error.HTTPError as e:
         raised = True
         assert "refused redirect" in str(e)
@@ -138,6 +151,7 @@ def test_handle_gated_command_when_locked_is_refused(tmp_path, monkeypatch):
 def test_handle_fetch_rate_limited_when_budget_exhausted(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
     import time as _t
+
     text, _ = diode.handle_command("fetchhttp http://example.com", {"fetch_budget": 1}, [_t.time()])
     assert "rate limited" in text.lower()
 
