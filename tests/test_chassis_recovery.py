@@ -261,6 +261,8 @@ def test_main_archives_corrupt_session_and_starts_fresh(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as excinfo:
         chassis.main(module)
     assert excinfo.value.code == 0
-    assert not session.exists()
-    assert list((tmp_path / "tombstones").glob("corrupt_session_*.json"))
+    moved = list((tmp_path / "tombstones").glob("corrupt_session_*.json"))
+    assert len(moved) == 1
+    assert moved[0].read_text(encoding="utf-8") == "{not json"
+    assert json.loads(session.read_text(encoding="utf-8")) == module.conversation_history
     assert module.conversation_history[0]["role"] == "system"

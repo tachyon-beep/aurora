@@ -434,7 +434,6 @@ def main(agent_module):
     client, model = build_client()
 
     resumed = False
-    session_corrupted = False
     if "--resume" in sys.argv or os.path.exists(SESSION_FILE):
         if os.path.exists(SESSION_FILE):
             try:
@@ -446,7 +445,6 @@ def main(agent_module):
             except Exception as e:
                 print(f"warning: failed to load session context: {e}")
                 archive_corrupt_session()
-                session_corrupted = True
 
     if not resumed:
         print("=" * 60)
@@ -473,7 +471,6 @@ def main(agent_module):
         save_session(agent_module.conversation_history)
         sys.exit(EXIT_ENVIRONMENT)
 
-    if not session_corrupted:
-        save_session(agent_module.conversation_history)
+    save_session(agent_module.conversation_history)
     print("autonomous loop finished cleanly; exiting")
     sys.exit(0)
