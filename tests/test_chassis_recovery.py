@@ -226,3 +226,41 @@ def test_run_agent_loop_persists_model_fallback(monkeypatch):
     messages = [{"role": "user", "content": "u"}]
     chassis.run_agent_loop(client, "bad/model", messages, tools, max_turns=1)
     assert completions.calls[-1]["model"] == "good/model"
+
+
+def test_archive_corrupt_session_moves_file_and_notes(tmp_path):
+    session = tmp_path / "session_context.json"
+    session.write_text("{not json", encoding="utf-8")
+    chassis.archive_corrupt_session(session_file=str(session), work_dir=str(tmp_path))
+    assert not session.exists()
+    tombstones = tmp_path / "tombstones"
+    moved = list(tombstones.glob("corrupt_session_*.json"))
+    assert len(moved) == 1
+    assert moved[0].read_text(encoding="utf-8") == "{not json"
+    notes = list(tombstones.glob("corrupt_session_*.txt"))
+    assert len(notes) == 1
+    assert "could not be read" in notes[0].read_text(encoding="utf-8")
+    assert not (tombstones / "incarnation_note.txt").exists()
+
+
+def test_archive_corrupt_session_ignores_missing_file(tmp_path):
+    chassis.archive_corrupt_session(
+        session_file=str(tmp_path / "absent.json"), work_dir=str(tmp_path)
+    )
+
+
+def test_main_archives_corrupt_session_and_starts_fresh(tmp_path, monkeypatch):
+    session = tmp_path / "session_context.json"
+    session.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(chassis, "SESSION_FILE", str(session))
+    monkeypatch.setattr(chassis, "WORK_DIR", str(tmp_path))
+    monkeypatch.setattr(chassis, "load_dotenv", lambda: None)
+    monkeypatch.setattr(chassis, "build_client", lambda: (object(), "m"))
+    monkeypatch.setattr(chassis, "run_agent_loop", lambda *a, **k: None)
+    module = _agent_module([])
+    with pytest.raises(SystemExit) as excinfo:
+        chassis.main(module)
+    assert excinfo.value.code == 0
+    assert not session.exists()
+    assert list((tmp_path / "tombstones").glob("corrupt_session_*.json"))
+    assert module.conversation_history[0]["role"] == "system"

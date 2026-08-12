@@ -1,6 +1,6 @@
 import datetime
 import os
-import shutil  # noqa: F401
+import shutil
 import sys
 import json
 import time
@@ -205,6 +205,33 @@ def create_with_recovery(client, api_kwargs, full_history, sleep=time.sleep):
                 tried_deep_repair = True
 
 
+def archive_corrupt_session(session_file=None, work_dir=None):
+    """Move an unreadable session file into tombstones/ and note the loss."""
+    if session_file is None:
+        session_file = SESSION_FILE
+    if work_dir is None:
+        work_dir = WORK_DIR
+    if not os.path.exists(session_file):
+        return
+    tombstone_dir = os.path.join(work_dir, "tombstones")
+    os.makedirs(tombstone_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    dest = os.path.join(tombstone_dir, f"corrupt_session_{stamp}.json")
+    try:
+        shutil.move(session_file, dest)
+    except OSError:
+        return
+    note = (
+        "the saved session could not be read and was moved to "
+        f"tombstones/corrupt_session_{stamp}.json. this incarnation starts "
+        "without it.\n"
+    )
+    with open(
+        os.path.join(tombstone_dir, f"corrupt_session_{stamp}.txt"), "w", encoding="utf-8"
+    ) as f:
+        f.write(note)
+
+
 def headshot(messages, reason, work_dir=None, session_file=None):
     """Record a harness-terminated incarnation and exit with code 43.
 
@@ -407,6 +434,7 @@ def main(agent_module):
     client, model = build_client()
 
     resumed = False
+    session_corrupted = False
     if "--resume" in sys.argv or os.path.exists(SESSION_FILE):
         if os.path.exists(SESSION_FILE):
             try:
@@ -417,6 +445,8 @@ def main(agent_module):
                 print("resumed session")
             except Exception as e:
                 print(f"warning: failed to load session context: {e}")
+                archive_corrupt_session()
+                session_corrupted = True
 
     if not resumed:
         print("=" * 60)
@@ -443,6 +473,7 @@ def main(agent_module):
         save_session(agent_module.conversation_history)
         sys.exit(EXIT_ENVIRONMENT)
 
-    save_session(agent_module.conversation_history)
+    if not session_corrupted:
+        save_session(agent_module.conversation_history)
     print("autonomous loop finished cleanly; exiting")
     sys.exit(0)
