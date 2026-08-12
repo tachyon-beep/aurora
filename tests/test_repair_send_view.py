@@ -1,4 +1,5 @@
 import copy
+import json
 
 import chassis
 
@@ -90,7 +91,7 @@ def test_input_is_not_mutated():
     assert messages == snapshot
 
 
-def test_send_path_applies_repair(monkeypatch):
+def test_send_path_applies_repair():
     captured = {}
 
     class _Completions:
@@ -113,3 +114,8 @@ def test_send_path_applies_repair(monkeypatch):
     chassis.run_agent_loop(client, "m", messages, tools, max_turns=1)
     sent_roles = [m["role"] for m in captured["messages"]]
     assert "tool" not in sent_roles
+    # run_agent_loop legitimately appends the assistant reply, so the
+    # history is not asserted equal to a snapshot; instead it is checked
+    # that repair's synthetic content never leaked into the kept history.
+    assert messages[2]["tool_call_id"] == "gone-1"
+    assert "result unavailable" not in json.dumps(messages)
