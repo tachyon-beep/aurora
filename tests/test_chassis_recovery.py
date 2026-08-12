@@ -112,10 +112,10 @@ def test_model_error_falls_back_to_environment_default(monkeypatch):
     assert api_kwargs["model"] == "good/model"
 
 
-def test_model_error_on_default_model_is_a_headshot(monkeypatch):
+def test_model_error_on_default_model_is_unrecoverable(monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "bad/model")
     client, _ = _client([_StatusError("bad/model is not a valid model ID", 400)])
-    with pytest.raises(chassis.HeadshotError):
+    with pytest.raises(chassis.UnrecoverableRequestError):
         chassis.create_with_recovery(
             client, {"model": "bad/model", "messages": []}, [], sleep=lambda s: None
         )
@@ -136,10 +136,10 @@ def test_invalid_request_deep_repairs_and_retries():
     assert all("reasoning_content" not in m for m in sent)
 
 
-def test_invalid_request_after_repair_is_a_headshot():
+def test_invalid_request_after_repair_is_unrecoverable():
     errors = [_StatusError("still broken", 400), _StatusError("still broken", 400)]
     client, _ = _client(errors)
-    with pytest.raises(chassis.HeadshotError):
+    with pytest.raises(chassis.UnrecoverableRequestError):
         chassis.create_with_recovery(
             client, {"model": "m", "messages": []}, [], sleep=lambda s: None
         )
@@ -152,12 +152,12 @@ def test_strip_reasoning_is_pure():
     assert "reasoning_content" in messages[0]
 
 
-def test_headshot_writes_tombstone_and_removes_session(tmp_path):
+def test_terminate_incarnation_writes_tombstone_and_removes_session(tmp_path):
     session = tmp_path / "session_context.json"
     session.write_text("[]", encoding="utf-8")
     history = [{"role": "user", "content": "u"}]
     with pytest.raises(SystemExit) as excinfo:
-        chassis.headshot(
+        chassis.terminate_incarnation(
             history,
             "request rejected upstream after repair: still broken",
             work_dir=str(tmp_path),
@@ -176,9 +176,9 @@ def test_headshot_writes_tombstone_and_removes_session(tmp_path):
     assert len(stamped) == 1
 
 
-def test_headshot_survives_missing_session_file(tmp_path):
+def test_terminate_incarnation_survives_missing_session_file(tmp_path):
     with pytest.raises(SystemExit) as excinfo:
-        chassis.headshot(
+        chassis.terminate_incarnation(
             [],
             "reason",
             work_dir=str(tmp_path),
@@ -214,7 +214,7 @@ def test_main_exits_44_and_saves_session_on_environment_failure(tmp_path, monkey
     assert session.exists()
 
 
-def test_main_headshots_on_headshot_error(tmp_path, monkeypatch):
+def test_main_terminates_incarnation_on_unrecoverable_error(tmp_path, monkeypatch):
     session = tmp_path / "session_context.json"
     session.write_text("[]", encoding="utf-8")
     monkeypatch.setattr(chassis, "SESSION_FILE", str(session))
@@ -223,7 +223,7 @@ def test_main_headshots_on_headshot_error(tmp_path, monkeypatch):
     monkeypatch.setattr(chassis, "build_client", lambda: (object(), "m"))
 
     def _raise(*args, **kwargs):
-        raise chassis.HeadshotError("poisoned")
+        raise chassis.UnrecoverableRequestError("poisoned")
 
     monkeypatch.setattr(chassis, "run_agent_loop", _raise)
     with pytest.raises(SystemExit) as excinfo:

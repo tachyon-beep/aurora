@@ -12,7 +12,7 @@ CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "120000"))
 SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_context.json")
 
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
-EXIT_HEADSHOT = 43
+EXIT_TERMINATED = 43
 EXIT_ENVIRONMENT = 44
 
 
@@ -153,7 +153,7 @@ TRANSIENT_RETRIES = 5
 BACKOFF_SECONDS = [1, 2, 4, 8, 16]
 
 
-class HeadshotError(Exception):
+class UnrecoverableRequestError(Exception):
     """An unrepairable request fault; the incarnation must end."""
 
 
@@ -183,7 +183,7 @@ def create_with_recovery(client, api_kwargs, full_history, sleep=time.sleep):
     retries are exhausted. A model error retries once with the
     environment-default model; the swap persists in api_kwargs. Any other
     invalid request retries once with an aggressively repaired send view.
-    Faults that survive their retry raise HeadshotError.
+    Faults that survive their retry raise UnrecoverableRequestError.
     """
     transient = 0
     tried_model_swap = False
@@ -200,12 +200,12 @@ def create_with_recovery(client, api_kwargs, full_history, sleep=time.sleep):
                 transient += 1
             elif kind == "model":
                 if tried_model_swap or api_kwargs.get("model") == default_model():
-                    raise HeadshotError(f"model rejected upstream: {e}")
+                    raise UnrecoverableRequestError(f"model rejected upstream: {e}")
                 api_kwargs["model"] = default_model()
                 tried_model_swap = True
             else:
                 if tried_deep_repair:
-                    raise HeadshotError(f"request rejected upstream after repair: {e}")
+                    raise UnrecoverableRequestError(f"request rejected upstream after repair: {e}")
                 api_kwargs["messages"] = repair_send_view(
                     strip_reasoning(clip_to_window(condense_duplicate_tool_results(full_history)))
                 )
@@ -239,7 +239,7 @@ def archive_corrupt_session(session_file=None, work_dir=None):
         f.write(note)
 
 
-def headshot(messages, reason, work_dir=None, session_file=None):
+def terminate_incarnation(messages, reason, work_dir=None, session_file=None):
     """Record a harness-terminated incarnation and exit with code 43.
 
     Writes a synthetic tombstone note, archives the session history beside
@@ -275,7 +275,7 @@ def headshot(messages, reason, work_dir=None, session_file=None):
         pass
     print(f"harness terminated incarnation: {reason}")
     sys.stdout.flush()
-    sys.exit(EXIT_HEADSHOT)
+    sys.exit(EXIT_TERMINATED)
 
 
 def load_dotenv():
@@ -471,8 +471,8 @@ def main(agent_module):
 
     try:
         run_agent_loop(client, model, agent_module.conversation_history, agent_module.tools)
-    except HeadshotError as e:
-        headshot(agent_module.conversation_history, str(e))
+    except UnrecoverableRequestError as e:
+        terminate_incarnation(agent_module.conversation_history, str(e))
     except EnvironmentFailure as e:
         print(f"environment failure: {e}")
         save_session(agent_module.conversation_history)
