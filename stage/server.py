@@ -1,10 +1,11 @@
 import hmac
 import json
 import os
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from stage import browse, pages
+from stage import browse, data, pages
 
 TRANSCRIPT_DIR = os.environ.get("TRANSCRIPT_DIR", "/transcripts")
 DIODE_DIR = os.environ.get("DIODE_DIR", "/diode")
@@ -153,6 +154,46 @@ class ConsoleHandler(_BaseHandler):
         self._send(200, json.dumps({"diff": text}))
 
 
+def transcript_path():
+    """The recorder's JSONL transcript file path."""
+    return os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.jsonl")
+
+
+def stream_snapshot():
+    """Assemble the stream page's data snapshot."""
+    work = os.path.join(TELEMETRY_DIR, "work")
+    turns, total = data.load_tail_turns(transcript_path())
+    return {
+        "turns": turns,
+        "stats": data.incarnation_stats(turns, total, work),
+        "events": data.self_modification_events(turns),
+        "diode": data.diode_activity(DIODE_DIR),
+        "lineage": data.lineage(work, turns),
+    }
+
+
+class StreamHandler(_BaseHandler):
+    def do_GET(self):
+        route = urlparse(self.path).path
+        if route == "/":
+            self._send(200, pages.STREAM_PAGE_HTML, content_type="text/html; charset=utf-8")
+        elif route == "/api/stream":
+            self._send(200, json.dumps(stream_snapshot()))
+        else:
+            self._send(404, json.dumps({"error": "not found"}))
+
+
 def make_server(port, handler):
     """A threading HTTP server bound to all interfaces on the given port."""
     return ThreadingHTTPServer(("0.0.0.0", port), handler)
+
+
+def main():
+    console = make_server(CONSOLE_PORT, ConsoleHandler)
+    threading.Thread(target=console.serve_forever, daemon=True).start()
+    print(f"stage: stream on :{STREAM_PORT}, console on :{CONSOLE_PORT}")
+    make_server(STREAM_PORT, StreamHandler).serve_forever()
+
+
+if __name__ == "__main__":
+    main()

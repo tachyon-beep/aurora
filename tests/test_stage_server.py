@@ -120,3 +120,80 @@ def test_console_rejects_post(console):
     resp.read()
     conn.close()
     assert resp.status == 405
+
+
+@pytest.fixture()
+def stream(tmp_path, monkeypatch):
+    telemetry = tmp_path / "telemetry"
+    tomb = telemetry / "work" / "tombstones"
+    tomb.mkdir(parents=True)
+    (tomb / "incarnation-1.txt").write_text("ended early. detail.\n", encoding="utf-8")
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    entry = {
+        "timestamp": "T",
+        "request": {"model": "m", "messages": []},
+        "response": {
+            "choices": [
+                {
+                    "message": {
+                        "content": "hello",
+                        "tool_calls": [{"function": {"name": "write_file", "arguments": "{}"}}],
+                    }
+                }
+            ]
+        },
+    }
+    (transcripts / "agent_life_transcript.jsonl").write_text(
+        json.dumps(entry) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(telemetry))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(transcripts))
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path / "diode"))
+    httpd = server.make_server(0, server.StreamHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield httpd.server_address[1]
+    httpd.shutdown()
+
+
+def _plain_get(port, path):
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+    conn.request("GET", path)
+    resp = conn.getresponse()
+    body = resp.read()
+    conn.close()
+    return resp.status, body
+
+
+def test_stream_page_served_without_token(stream):
+    status, body = _plain_get(stream, "/")
+    assert status == 200
+    assert b"<!doctype html" in body.lower()
+
+
+def test_stream_snapshot_shape(stream):
+    status, body = _plain_get(stream, "/api/stream")
+    assert status == 200
+    snap = json.loads(body)
+    assert snap["stats"]["incarnation"] == 2
+    assert snap["stats"]["model"] == "m"
+    assert snap["turns"][-1]["content"] == "hello"
+    assert snap["events"][-1]["name"] == "write_file"
+    assert snap["lineage"][0]["summary"] == "ended early."
+    assert "diode" in snap
+
+
+def test_stream_port_has_no_mutating_routes(stream):
+    for method in ("POST", "PUT", "DELETE", "PATCH"):
+        conn = http.client.HTTPConnection("127.0.0.1", stream, timeout=5)
+        conn.request(method, "/api/stream")
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        assert resp.status == 405
+
+
+def test_stream_unknown_route_404(stream):
+    status, _ = _plain_get(stream, "/api/nope")
+    assert status == 404
