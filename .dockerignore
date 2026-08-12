@@ -9,7 +9,6 @@ tests
 tombstones
 README.md
 CLAUDE.md
-garden_sources.txt.example
 *.jsonl
 *.txt
 !system_prompt.txt
