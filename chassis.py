@@ -72,6 +72,53 @@ def condense_duplicate_tool_results(messages):
     return out
 
 
+def repair_send_view(messages):
+    """Return a copy of the message list with tool-call pairing repaired.
+
+    A tool message is kept only when it answers a tool call from the nearest
+    preceding assistant message that is still awaiting results. Every tool
+    call left unanswered receives a synthetic "result unavailable" tool
+    result. The input list and its messages are not modified.
+    """
+    out = []
+    open_calls = []
+
+    def close_open():
+        for call_id, call_name in open_calls:
+            out.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "name": call_name,
+                    "content": "result unavailable",
+                }
+            )
+        open_calls.clear()
+
+    for m in messages:
+        role = m.get("role")
+        if role == "tool":
+            match = next(
+                (
+                    i
+                    for i, (call_id, _) in enumerate(open_calls)
+                    if call_id == m.get("tool_call_id")
+                ),
+                None,
+            )
+            if match is not None:
+                open_calls.pop(match)
+                out.append(m)
+        else:
+            close_open()
+            out.append(m)
+            if role == "assistant":
+                for tc in m.get("tool_calls") or []:
+                    open_calls.append((tc.get("id"), (tc.get("function") or {}).get("name")))
+    close_open()
+    return out
+
+
 def load_dotenv():
     dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.exists(dotenv_path):
@@ -133,7 +180,7 @@ def run_agent_loop(client, model, messages, tools, max_turns=1000):
 
         api_kwargs = {
             "model": model,
-            "messages": clip_to_window(condense_duplicate_tool_results(messages)),
+            "messages": repair_send_view(clip_to_window(condense_duplicate_tool_results(messages))),
             "extra_headers": {
                 "HTTP-Referer": "https://github.com/john/aurora",
                 "X-Title": "Lightweight Agent Harness",
