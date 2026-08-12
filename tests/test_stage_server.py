@@ -1,6 +1,7 @@
 import http.client
 import json
 import threading
+from urllib.parse import quote
 
 import pytest
 
@@ -78,6 +79,24 @@ def test_download_sets_attachment(console):
     assert resp.status == 200
     assert "attachment" in resp.getheader("Content-Disposition", "")
     assert resp.read() == b"CURRENT\n"
+    conn.close()
+
+
+def test_download_sanitizes_crlf_in_filename(console, tmp_path):
+    evil_name = 'evil\r\nX-Injected: 1\r\nContent-Disposition: attachment; filename="x'
+    (tmp_path / "telemetry" / "work" / evil_name).write_text("payload", encoding="utf-8")
+    conn = http.client.HTTPConnection("127.0.0.1", console, timeout=5)
+    conn.request(
+        "GET",
+        "/download?root=telemetry&path=" + quote("work/" + evil_name),
+        headers={"X-Console-Token": "sekrit"},
+    )
+    resp = conn.getresponse()
+    assert resp.status == 200
+    assert resp.getheader("X-Injected") is None
+    content_disposition = resp.getheader("Content-Disposition", "")
+    assert "\r" not in content_disposition and "\n" not in content_disposition
+    resp.read()
     conn.close()
 
 

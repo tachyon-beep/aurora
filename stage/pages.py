@@ -45,6 +45,7 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
 </main>
 <script>
 const token = new URLSearchParams(location.search).get("token") || "";
+history.replaceState(null, "", location.pathname);
 let root = "telemetry";
 let path = "";
 function api(url) {
@@ -89,7 +90,24 @@ function show(p, tail) {
     tailBtn.onclick = () => show(p, true);
     const dl = document.createElement("a");
     dl.textContent = "download";
-    dl.href = `/download?root=${root}&path=${encodeURIComponent(p)}&token=${encodeURIComponent(token)}`;
+    dl.href = "#";
+    dl.onclick = (ev) => {
+      ev.preventDefault();
+      const url = `/download?root=${root}&path=${encodeURIComponent(p)}`;
+      fetch(url, {headers: {"X-Console-Token": token}}).then(r => {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.blob();
+      }).then(blob => {
+        const objectUrl = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = objectUrl;
+        a.download = p.split("/").pop();
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(objectUrl);
+      }).catch(err => { document.getElementById("content").textContent = String(err); });
+    };
     bar.append(label, tailBtn, dl);
     document.getElementById("content").textContent = d.content;
   }).catch(err => { document.getElementById("content").textContent = String(err); });

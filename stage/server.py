@@ -24,6 +24,11 @@ SECURITY_HEADERS = {
 }
 
 
+def _sanitize_header_value(value):
+    """Strip CR, LF, and double-quote so a value is safe to embed in a response header."""
+    return value.replace("\r", "").replace("\n", "").replace('"', "")
+
+
 def browse_roots():
     """The directories the console browser may serve, by public name."""
     return {
@@ -129,7 +134,7 @@ class ConsoleHandler(_BaseHandler):
             return
         with open(target, "rb") as f:
             body = f.read()
-        name = os.path.basename(target)
+        name = _sanitize_header_value(os.path.basename(target))
         self._send(
             200,
             body,
