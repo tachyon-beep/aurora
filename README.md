@@ -101,8 +101,11 @@ What the design provides:
 - **The record is external and tamper-evident.** Transcripts are written by the recorder to a volume
   the agent cannot reach. The agent may try to blind its own in-container view, but the authoritative
   record lives elsewhere.
-- **Recovery is layered.** The watchdog restores the agent from a baseline built into the image;
-  failing that, it resets the working tree; failing that, the container is replaced.
+- **Recovery is layered.** The chassis repairs malformed request histories in flight, retries
+  transient upstream failures, and converts unrecoverable faults into recorded deaths with a
+  factual tombstone instead of silent restart loops. Above it, the watchdog restores the agent
+  from a baseline built into the image; failing that, it resets the working tree; failing that,
+  the container is replaced.
 - **The web channel is a diode, not an interpreter.** Only a fixed command vocabulary crosses it, and
   network targets are validated (scheme allow-list, private/loopback/link-local rejection, redirect
   re-checking).

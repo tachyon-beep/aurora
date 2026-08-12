@@ -31,6 +31,13 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      not self-modifiable surface) and is not duplicated like the `agent.py`/`agent_stock.py` pair.
      It also holds the agent's tunable context window (`CONTEXT_WINDOW_TOKENS` + `clip_to_window`),
      a send-time view over the full history the agent can grow or shrink once it reaches the chassis.
+     The chassis is also the resilience layer: it repairs tool-call pairing in the send view
+     (never the in-memory history), classifies API failures (transient failures retry with
+     backoff and exit 44; an invalid model falls back to the environment default; unrepairable
+     requests end the incarnation), and on an unrecoverable fault writes a factual synthetic
+     tombstone, archives and deletes the saved session, and exits 43. The watchdog treats 43
+     like a `done` (archive and reset), pauses on 44, and treats clustered exit-0 restarts as
+     failures (flap detection). Keep tombstone text bland and factual.
 
 3. **Do not weaken containment.** Each of these is a deliberate boundary:
    - The **agent** stays on the `internal` network only — it must have no direct route to the
