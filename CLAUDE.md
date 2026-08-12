@@ -48,6 +48,17 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
    recovery `baseline` git tag is created *inside the image at build time*; it is the runtime
    recovery anchor (a repo-level tag of the same name is only a development convenience).
 
+5. **Persistent state is latent, private, and inert.** The state volume is mounted only into the
+   agent at `/state`. The image may seed its mountpoint ownership, but no entrypoint, watchdog,
+   agent, proxy, diode, or viewer scans, imports, executes, clears, or injects its contents. There is
+   no startup convention for `/state`, and recovery leaves it intact.
+
+6. **The garden communicates permission without proposing an application.** It contains exactly
+   `README.md` and `runtime.md`. Neither document names `/state`, teaches tool construction or
+   lifecycle, contains executable examples, or suggests apps, peers, persistence, missions,
+   puzzles, rewards, curiosity, or self-modification. Package names and factual constraints are
+   allowed.
+
 ## The genesis tool surface
 
 At startup the agent registers exactly seven tools, in this order: `read_file`, `write_file`,
@@ -72,6 +83,11 @@ the image allow-list alongside `chassis.py`.
 - Tests live in `tests/` and are **not** shipped into any image.
 - Container checks: `docker compose build`, `docker compose up`, and `scripts/verify_container.sh`
   against a running stack.
+- Agent-image packages live in `requirements-agent.txt`; `scripts/build_garden.py` generates the
+  garden runtime inventory from that manifest. Keep the approved set within 100 MiB of the
+  pre-change image built on the same host. Do not add ML runtimes, local models, browser engines,
+  agent frameworks, cloud SDKs, or service daemons without a new design decision and an image-size
+  measurement.
 
 ## Conventions
 

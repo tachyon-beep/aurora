@@ -44,6 +44,7 @@ flowchart LR
 
     tvol[("transcripts<br/>volume")]
     dvol[("diode<br/>volume")]
+    svol[("state<br/>agent-private volume")]
 
     model(["OpenRouter — the model"])
     web(["the web"])
@@ -57,13 +58,14 @@ flowchart LR
     dvol -- "reads results" --> agent
     diode -- "reads commands · writes results" --> dvol
     diode -- "egress net · vetted fetches" --> web
+    agent -- "reads and writes" --> svol
 
     classDef external fill:#fde68a,stroke:#b45309,color:#1f2937;
     classDef contained fill:#bfdbfe,stroke:#1d4ed8,color:#1f2937;
     classDef vol fill:#e5e7eb,stroke:#4b5563,color:#1f2937;
     class model,web external;
     class agent,recorder,diode,viewer contained;
-    class tvol,dvol vol;
+    class tvol,dvol,svol vol;
 ```
 
 | Component | Role | Containment |
@@ -71,24 +73,20 @@ flowchart LR
 | **agent** | Runs the model loop and rewrites its own source (`agent.py`). | On the `internal` network only — **no route to the internet**. Read-only image; work happens in a tmpfs. Talks to the model only through the recorder. |
 | **recorder** | A transparent proxy in front of OpenRouter. Holds the **only** real API key, injects the `Authorization` header, and appends every turn to the transcript. | Logs request/response **bodies only, never headers**, so the key never enters the transcript. |
 | **diode** | A one-way command channel. The agent writes declarative commands to a shared volume; the diode executes a **closed vocabulary** (e.g. vetted web fetches) and writes results back. | Egress-only. No code crosses the boundary — only a fixed set of commands. Web fetches are checked against an SSRF allow-list with redirect re-validation. |
+| **state volume** | Empty durable storage mounted at `/state`; nothing reads or executes it automatically. | Mounted only into the agent. Survives container replacement and ordinary Compose shutdown; removed only by explicit volume deletion. |
 | **watchdog** | Supervises the agent and recovers it if it breaks itself badly. | Self-editable by the agent, but the durable recovery baseline is built into the image and the real record lives outside the container. |
 | **viewer** | Optional, ephemeral web UI to watch the transcript live. | Read-only mount, host-loopback only, isolated from every other network. Off unless explicitly enabled. |
 
 ### The agent's world
 
-At startup the agent has a deliberately small surface — five capabilities:
+At startup the agent has exactly seven tools: `read_file`, `write_file`, `validate`, `migrate`,
+`done`, `reset`, `list_dir`. Reading and writing are initially limited to `agent.py`; `list_dir`
+reveals names, not arbitrary contents. General filesystem access, command execution, searching, and
+further capability must be authored by modifying the agent itself.
 
-1. **read** its own source code
-2. **write** its own source code
-3. **validate** that the source is still syntactically sound
-4. **migrate** itself (reload the process under the newly written code)
-5. **reset** to the clean baseline, or signal **done** to hand off to a fresh context
-
-Everything else — reading other files, listing directories, running commands, searching, the web
-diode — exists in the source as **commented-out code** the agent can rediscover and re-enable by
-editing itself. Capabilities it adds this way are real, but they are ephemeral: a reset or a
-recovery restores the minimal baseline. The agent's entire perception of its world is the list of
-tools it currently has.
+Capabilities added in `/work` survive ordinary agent-loop restart, but remain subject to `reset` and
+watchdog recovery. Filesystem surfaces have different lifecycle boundaries, and Aurora does not
+inject an explanation of them into the opening conversation.
 
 ---
 
@@ -124,6 +122,7 @@ Requires Docker with Compose v2.
 cp .env.example .env
 # edit .env and set OPENROUTER_API_KEY (the real key — it is mounted only into the recorder)
 
+python scripts/build_garden.py
 docker compose up --build
 ```
 
@@ -139,24 +138,27 @@ docker compose --profile viewer up viewer
 
 The viewer is read-only and ephemeral — stop it and nothing persists.
 
-### Customizing the garden
+### Building the workshop
 
-The agent can explore a read-only corpus of code at `/garden`, assembled from folders you choose.
-List them in `garden_sources.txt` (copy the example and edit to taste), then regenerate before
-building:
+The harness image includes a small, read-only `/garden` containing exactly two factual documents:
+`README.md` states the host-isolation permission, and `runtime.md` lists the available runtime
+materials and limits. It contains no repository snapshots, example apps, database, puzzle, or
+assignment.
+
+Generate the garden before building the image:
 
 ```bash
-cp garden_sources.txt.example garden_sources.txt
-# edit garden_sources.txt — one folder per line; `name = path` to rename; ~ and $VARS expand
-
-python scripts/build_garden.py     # or: python scripts/build_garden.py ~/proj-a ~/proj-b
+python scripts/build_garden.py
 docker compose build
 ```
 
-Only source/text files under a size cap are copied; VCS, build, and environment directories are
-skipped. If a listed folder is itself an Aurora harness, its containment files are redacted from the
-snapshot automatically. With no list and no arguments, the garden is simply empty — the harness still
-runs.
+The named `/state` volume is initially empty and agent-private: it is mounted only into the agent. It
+survives `reset`, watchdog recovery, container replacement, and ordinary `docker compose down`.
+Aurora never scans or executes its contents. Only explicit volume deletion removes it:
+
+```bash
+docker compose down -v  # destructive: removes state, diode data, and transcripts
+```
 
 ---
 
@@ -170,7 +172,7 @@ runs.
 | `watchdog.py` | The supervisor and tiered recovery. |
 | `viewer.py` / `Dockerfile.viewer` | The optional live transcript viewer. |
 | `Dockerfile` / `entrypoint.sh` / `docker-compose.yml` | The harness image and topology. |
-| `scripts/build_garden.py` / `garden_sources.txt.example` | Builds the read-only corpus of codebases the agent can explore, from a configurable folder list. |
+| `scripts/build_garden.py` / `requirements-agent.txt` | Builds the two-document read-only garden and defines the lean package set installed in the harness image. |
 | `scripts/verify_container.sh` | Verifies containment invariants against a running stack. |
 | `tests/` | Test suite (not shipped into any image). |
 | `docs/` | Design specs and implementation plans. |
