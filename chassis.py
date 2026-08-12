@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import time
 from openai import OpenAI
 
 
@@ -133,6 +134,69 @@ def classify_error(exc):
     if status in (400, 404, 422):
         return "invalid_request"
     return "transient"
+
+
+TRANSIENT_RETRIES = 5
+BACKOFF_SECONDS = [1, 2, 4, 8, 16]
+
+
+class HeadshotError(Exception):
+    """An unrepairable request fault; the incarnation must end."""
+
+
+class EnvironmentFailure(Exception):
+    """The upstream stayed unreachable through bounded retries."""
+
+
+def default_model():
+    """The model named by the environment, matching build_client's selection."""
+    return os.getenv("LLM_MODEL") or os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-pro")
+
+
+def strip_reasoning(messages):
+    """Return a copy of the message list without reasoning_content fields."""
+    out = []
+    for m in messages:
+        if "reasoning_content" in m:
+            m = {k: v for k, v in m.items() if k != "reasoning_content"}
+        out.append(m)
+    return out
+
+
+def create_with_recovery(client, api_kwargs, full_history, sleep=time.sleep):
+    """Send one completion request, recovering from classified failures.
+
+    Transient failures retry with backoff and raise EnvironmentFailure when
+    retries are exhausted. A model error retries once with the
+    environment-default model; the swap persists in api_kwargs. Any other
+    invalid request retries once with an aggressively repaired send view.
+    Faults that survive their retry raise HeadshotError.
+    """
+    transient = 0
+    tried_model_swap = False
+    tried_deep_repair = False
+    while True:
+        try:
+            return client.chat.completions.create(**api_kwargs)
+        except Exception as e:
+            kind = classify_error(e)
+            if kind == "transient":
+                if transient >= TRANSIENT_RETRIES:
+                    raise EnvironmentFailure(str(e))
+                sleep(BACKOFF_SECONDS[min(transient, len(BACKOFF_SECONDS) - 1)])
+                transient += 1
+            elif kind == "model":
+                if tried_model_swap or api_kwargs.get("model") == default_model():
+                    raise HeadshotError(f"model rejected upstream: {e}")
+                api_kwargs["model"] = default_model()
+                tried_model_swap = True
+            else:
+                if tried_deep_repair:
+                    raise HeadshotError(f"request rejected upstream after repair: {e}")
+                api_kwargs["messages"] = repair_send_view(
+                    strip_reasoning(clip_to_window(condense_duplicate_tool_results(full_history)))
+                )
+                tried_deep_repair = True
 
 
 def load_dotenv():
