@@ -118,7 +118,7 @@ read-only rootfs, tmpfs `/tmp`, `cap_drop: ALL`, `no-new-privileges`, pids/mem l
 | Property | Value |
 |----------|-------|
 | Networks | `egress` (Twitch IRC out; serves HTTP) |
-| Mounts | `transcripts` **ro**, `diode` **ro**, `exchange` **rw** |
+| Mounts | `transcripts` **ro**, `diode` **ro**, `telemetry` **ro**, `exchange` **rw** |
 | Never | mounts `state`; holds the recorder's API key; writes agent code |
 | Ports | `127.0.0.1:8091` stream page; `127.0.0.1:8092` operator console |
 
@@ -128,9 +128,37 @@ read-only rootfs, tmpfs `/tmp`, `cap_drop: ALL`, `no-new-privileges`, pids/mem l
   mutating endpoints are served on this port at all.
 - **8092 — operator console.** Loopback only, never tunneled: pending/recent viewer messages,
   purge message, ban user, channel kill switch, delivery cadence, TTS toggle, manual message
-  injection. Defense in depth: every console request additionally requires a bearer token
-  (`STAGE_CONSOLE_TOKEN`), so a misconfigured tunnel or a container sharing the stage's network
-  fails closed.
+  injection, and the container browser (below). Defense in depth: every console request
+  additionally requires a bearer token (`STAGE_CONSOLE_TOKEN`), so a misconfigured tunnel or a
+  container sharing the stage's network fails closed.
+
+### Operator telemetry and container browser
+
+Debugging and analysis view for the operator; nothing here appears on the stream page.
+
+**Telemetry mirror (watchdog duties).** A new `telemetry` volume is mounted rw into the agent
+container and ro into the stage. The watchdog:
+
+1. Mirrors `/work` into `/telemetry/work` every `MIRROR_INTERVAL_SECONDS` (default 5) —
+   wipe-and-copy of the small tree, excluding `__pycache__` and `.git`.
+2. Tees the agent process's stdout/stderr (it already spawns the process) into a size-capped
+   rolling `agent_stdout.log` inside `/work`, so the mirror carries the agent's live console
+   output, while the container log stream continues to receive the same bytes.
+
+The mountpoint is visible to the agent via `list_dir("/")` as an inert directory — latent like
+`/state`: no README, nothing injected, nothing about it in the garden or prompts.
+
+**Console file browser (stage, port 8092, behind the token).** Read-only browsing of exactly four
+roots: `telemetry`, `transcripts`, `diode`, `exchange`. Directory listings show name, size, mtime;
+file view renders escaped text capped at 256 KiB with a tail view for logs and transcripts; files
+can be downloaded. One derived view: a unified diff (difflib) of the mirrored `agent.py` against
+`agent_stock.py`, showing at a glance how the agent has modified itself.
+
+**Containment rules.** Every resolved path must realpath-resolve inside its allow-listed root;
+symlinks are never followed across a root boundary (the agent can plant symlinks in `/work` or
+`/exchange`; the browser must not follow one into the stage's own filesystem). All content renders
+as escaped text; nothing is executed or interpreted. `/state` is never browsable — it stays
+mounted only into the agent; deep dives remain `docker exec` on the host.
 
 ### Stream page (1920×1080, OBS browser source)
 
@@ -146,12 +174,12 @@ Panels, all fed by polling the transcript and the mounted volumes:
   limit).
 - **Agent panels** — up to a small fixed number of agent-authored regions populated via
   `kind: panel` outbox files (see the publication contract in Part 3); escaped text only.
-- **Lineage** — the last three incarnations, one line each, reconstructed entirely from the
-  transcript: a `done` death's line derives from the tombstone message in the tool-call arguments;
-  a headshot death's line derives from the recorded upstream error entry (the stage cannot read
-  the agent's tmpfs `tombstones/`). Default summarization is extractive (first sentence, clamped).
-  An optional `STAGE_SUMMARY_API_KEY` — a separate low-value key, never the recorder's — enables
-  one-line LLM summaries.
+- **Lineage** — the last three incarnations, one line each. Tombstones are read from the
+  telemetry mirror (`telemetry/work/tombstones/`), which carries both `done` notes and synthetic
+  harness-termination notes; the transcript's `done` tool-call arguments and recorded upstream
+  error entries are the fallback when the mirror is empty. Default summarization is extractive
+  (first sentence, clamped). An optional `STAGE_SUMMARY_API_KEY` — a separate low-value key, never
+  the recorder's — enables one-line LLM summaries.
 
 ### Twitch ingest
 
@@ -258,7 +286,9 @@ existing rate-limit budget.
 - **Invariant 3 (containment)**: add stage rules — outward-facing but holds no upstream API key;
   never mounts `/state`; the console binds loopback-only and is never exposed through the tunnel;
   the stream port serves no mutating endpoints; inbound messages are filtered and rate-limited;
-  exchange and outbox content is rendered as escaped text only.
+  exchange and outbox content is rendered as escaped text only; the `telemetry` volume is written
+  only by the watchdog, mounted ro into the stage, never rendered on the stream page, and the
+  console browser never follows a symlink across a browse-root boundary.
 - **New invariant (exchange cleanliness)**: nothing is ever injected into the agent's
   conversation; the exchange README stays factual and affectless; inbound viewer text is untrusted
   and exists only as files.
@@ -267,6 +297,7 @@ existing rate-limit budget.
 ### Topology changes (`docker-compose.yml`)
 
 - New `exchange` volume; mounted rw into `agent` and `stage`.
+- New `telemetry` volume; mounted rw into `agent` (written by the watchdog), ro into `stage`.
 - New `stage` service as specified.
 - Optional `cloudflared` service under a `stream` profile.
 - Agent service otherwise unchanged (still `internal` network only).
@@ -280,7 +311,11 @@ existing rate-limit budget.
 - **Stage units**: filter/rate-limit/dedupe as pure functions; IRC line parsing; inbox file
   naming/format; publication-contract parsing (headers, defaults, unknown headers, panel-name
   limits); outbox rendering sanitization (HTML escaping, `kind: say` extraction, caps); observer
-  counting; console/stream port endpoint split (no mutating routes on 8091).
+  counting; console/stream port endpoint split (no mutating routes on 8091); browser path
+  containment (traversal attempts, symlinks pointing outside a root, size caps, binary handling);
+  the agent.py-vs-stock diff view.
+- **Watchdog units**: mirror copy correctness (exclusions, deletions reflected); stdout tee
+  writes both streams and honors the log size cap.
 - **Diode units**: the three new commands with fake fetchers; gate behavior; HELP.md contents.
 - **Cleanliness**: extend `test_cleanliness.py` to the exchange `README.md` and `interface.md`
   texts.
@@ -290,9 +325,11 @@ existing rate-limit budget.
 ### Build order (one implementation plan each)
 
 1. **Resilience** — chassis repair/classification/headshot + watchdog changes. The stream is only
-   as good as its uptime.
+   as good as its uptime. (Complete; the "headshot" identifiers shipped under neutral names:
+   `UnrecoverableRequestError` / `terminate_incarnation` / `EXIT_TERMINATED`.)
 2. **Stage, read-only** — container, stream page fed by transcripts/diode, Cloudflare docs +
-   optional service. Streamable at the end of this phase.
-3. **Exchange** — volume, moderation pipeline, Twitch IRC ingest, console, transmissions panel,
-   TTS.
+   optional service, plus the operator console skeleton (token auth), the watchdog telemetry
+   mirror + stdout tee, and the container browser. Streamable at the end of this phase.
+3. **Exchange** — volume, moderation pipeline, Twitch IRC ingest, moderation views on the
+   existing console, transmissions panel, TTS.
 4. **World enrichment** — diode commands, `observers.txt`, lineage summarization polish.
