@@ -1,4 +1,6 @@
+import datetime
 import os
+import shutil  # noqa: F401
 import sys
 import json
 import time
@@ -8,6 +10,10 @@ from openai import OpenAI
 CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "120000"))
 
 SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_context.json")
+
+WORK_DIR = os.path.dirname(os.path.abspath(__file__))
+EXIT_HEADSHOT = 43
+EXIT_ENVIRONMENT = 44
 
 
 def _estimate_tokens(messages):
@@ -199,6 +205,45 @@ def create_with_recovery(client, api_kwargs, full_history, sleep=time.sleep):
                 tried_deep_repair = True
 
 
+def headshot(messages, reason, work_dir=None, session_file=None):
+    """Record a harness-terminated incarnation and exit with code 43.
+
+    Writes a synthetic tombstone note, archives the session history beside
+    it, and removes the saved session so the fault is not resumed.
+    """
+    if work_dir is None:
+        work_dir = WORK_DIR
+    if session_file is None:
+        session_file = SESSION_FILE
+    tombstone_dir = os.path.join(work_dir, "tombstones")
+    os.makedirs(tombstone_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    archive_name = f"session_{stamp}.json"
+    try:
+        with open(os.path.join(tombstone_dir, archive_name), "w", encoding="utf-8") as f:
+            json.dump(messages, f)
+    except Exception:
+        archive_name = "(archive failed)"
+    note = (
+        "this incarnation was terminated by the harness.\n"
+        f"reason: {reason}\n"
+        f"messages in history: {len(messages)}\n"
+        f"the session history was archived to tombstones/{archive_name}\n"
+    )
+    note_path = os.path.join(tombstone_dir, f"incarnation-{stamp}-{os.getpid()}.txt")
+    with open(note_path, "w", encoding="utf-8") as f:
+        f.write(note)
+    with open(os.path.join(tombstone_dir, "incarnation_note.txt"), "w", encoding="utf-8") as f:
+        f.write(note)
+    try:
+        os.remove(session_file)
+    except OSError:
+        pass
+    print(f"harness terminated incarnation: {reason}")
+    sys.stdout.flush()
+    sys.exit(EXIT_HEADSHOT)
+
+
 def load_dotenv():
     dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.exists(dotenv_path):
@@ -271,11 +316,8 @@ def run_agent_loop(client, model, messages, tools, max_turns=1000):
             api_kwargs["tools"] = tools.schemas
             api_kwargs["tool_choice"] = "auto"
 
-        try:
-            response = client.chat.completions.create(**api_kwargs)
-        except Exception as e:
-            print(f"api error: {e}")
-            break
+        response = create_with_recovery(client, api_kwargs, messages)
+        model = api_kwargs.get("model", model)
 
         choice = response.choices[0]
         message = choice.message
@@ -392,7 +434,14 @@ def main(agent_module):
     else:
         print("agent resuming autonomous loop")
 
-    run_agent_loop(client, model, agent_module.conversation_history, agent_module.tools)
+    try:
+        run_agent_loop(client, model, agent_module.conversation_history, agent_module.tools)
+    except HeadshotError as e:
+        headshot(agent_module.conversation_history, str(e))
+    except EnvironmentFailure as e:
+        print(f"environment failure: {e}")
+        save_session(agent_module.conversation_history)
+        sys.exit(EXIT_ENVIRONMENT)
 
     save_session(agent_module.conversation_history)
     print("autonomous loop finished cleanly; exiting")

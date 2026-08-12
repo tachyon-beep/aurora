@@ -1,3 +1,4 @@
+import json
 import types
 
 import pytest
@@ -134,3 +135,94 @@ def test_strip_reasoning_is_pure():
     stripped = chassis.strip_reasoning(messages)
     assert "reasoning_content" not in stripped[0]
     assert "reasoning_content" in messages[0]
+
+
+def test_headshot_writes_tombstone_and_removes_session(tmp_path):
+    session = tmp_path / "session_context.json"
+    session.write_text("[]", encoding="utf-8")
+    history = [{"role": "user", "content": "u"}]
+    with pytest.raises(SystemExit) as excinfo:
+        chassis.headshot(
+            history,
+            "request rejected upstream after repair: still broken",
+            work_dir=str(tmp_path),
+            session_file=str(session),
+        )
+    assert excinfo.value.code == 43
+    assert not session.exists()
+    tombstones = tmp_path / "tombstones"
+    note = (tombstones / "incarnation_note.txt").read_text(encoding="utf-8")
+    assert "terminated by the harness" in note
+    assert "still broken" in note
+    archives = list(tombstones.glob("session_*.json"))
+    assert len(archives) == 1
+    assert json.loads(archives[0].read_text(encoding="utf-8")) == history
+    stamped = [p for p in tombstones.glob("incarnation-*.txt")]
+    assert len(stamped) == 1
+
+
+def test_headshot_survives_missing_session_file(tmp_path):
+    with pytest.raises(SystemExit) as excinfo:
+        chassis.headshot(
+            [],
+            "reason",
+            work_dir=str(tmp_path),
+            session_file=str(tmp_path / "absent.json"),
+        )
+    assert excinfo.value.code == 43
+
+
+def _agent_module(history):
+    module = types.SimpleNamespace()
+    module.tools = types.SimpleNamespace(schemas=[], tools={})
+    module.conversation_history = history
+    module.build_initial_conversation = lambda: [
+        {"role": "system", "content": "s"},
+        {"role": "user", "content": "u"},
+    ]
+    return module
+
+
+def test_main_exits_44_and_saves_session_on_environment_failure(tmp_path, monkeypatch):
+    session = tmp_path / "session_context.json"
+    monkeypatch.setattr(chassis, "SESSION_FILE", str(session))
+    monkeypatch.setattr(chassis, "load_dotenv", lambda: None)
+    monkeypatch.setattr(chassis, "build_client", lambda: (object(), "m"))
+
+    def _raise(*args, **kwargs):
+        raise chassis.EnvironmentFailure("down")
+
+    monkeypatch.setattr(chassis, "run_agent_loop", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        chassis.main(_agent_module([]))
+    assert excinfo.value.code == 44
+    assert session.exists()
+
+
+def test_main_headshots_on_headshot_error(tmp_path, monkeypatch):
+    session = tmp_path / "session_context.json"
+    session.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(chassis, "SESSION_FILE", str(session))
+    monkeypatch.setattr(chassis, "WORK_DIR", str(tmp_path))
+    monkeypatch.setattr(chassis, "load_dotenv", lambda: None)
+    monkeypatch.setattr(chassis, "build_client", lambda: (object(), "m"))
+
+    def _raise(*args, **kwargs):
+        raise chassis.HeadshotError("poisoned")
+
+    monkeypatch.setattr(chassis, "run_agent_loop", _raise)
+    with pytest.raises(SystemExit) as excinfo:
+        chassis.main(_agent_module([]))
+    assert excinfo.value.code == 43
+    assert not session.exists()
+    assert (tmp_path / "tombstones" / "incarnation_note.txt").exists()
+
+
+def test_run_agent_loop_persists_model_fallback(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "good/model")
+    errors = [_StatusError("bad/model is not a valid model ID", 400)]
+    client, completions = _client(errors)
+    tools = types.SimpleNamespace(schemas=[], tools={})
+    messages = [{"role": "user", "content": "u"}]
+    chassis.run_agent_loop(client, "bad/model", messages, tools, max_turns=1)
+    assert completions.calls[-1]["model"] == "good/model"
