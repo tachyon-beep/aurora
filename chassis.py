@@ -129,15 +129,22 @@ def repair_send_view(messages):
 def classify_error(exc):
     """Classify an API exception as transient, model, or invalid_request.
 
-    Status codes 400/404/422 are permanent request faults; when the message
-    names the model the fault is classified as a model error. Everything
-    else, including missing status codes, is treated as transient.
+    A 400 or 404 whose message names the model by identity (phrases such as
+    "not a valid model", "model not found", "no endpoints found", or both
+    "model" and "does not exist") is a model error. Any other status from
+    400 up to (but not including) 500, except 408 and 429, is a permanent
+    request fault. 408, 429, 5xx, and missing status codes are transient.
     """
     status = getattr(exc, "status_code", None)
     text = str(exc).lower()
-    if status in (400, 404) and "model" in text:
+    if status in (400, 404) and (
+        "not a valid model" in text
+        or "model not found" in text
+        or "no endpoints found" in text
+        or ("model" in text and "does not exist" in text)
+    ):
         return "model"
-    if status in (400, 404, 422):
+    if status is not None and 400 <= status < 500 and status not in (408, 429):
         return "invalid_request"
     return "transient"
 
@@ -289,7 +296,7 @@ def load_dotenv():
 
 def build_client():
     llm_base = os.getenv("LLM_BASE_URL", "").strip()
-    model = os.getenv("LLM_MODEL") or os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-pro")
+    model = default_model()
 
     if llm_base:
         api_key = os.getenv("LLM_API_KEY") or "sk-local"

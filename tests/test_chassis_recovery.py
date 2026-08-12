@@ -44,6 +44,21 @@ def test_404_without_model_mention_is_invalid_request():
     assert chassis.classify_error(_StatusError("not found", 404)) == "invalid_request"
 
 
+def test_context_length_message_is_not_a_model_error():
+    exc = _StatusError("This model's maximum context length is 131072 tokens", 400)
+    assert chassis.classify_error(exc) == "invalid_request"
+
+
+def test_permanent_4xx_faults_are_invalid_request_not_transient():
+    assert chassis.classify_error(_StatusError("payload too large", 413)) == "invalid_request"
+    assert chassis.classify_error(_StatusError("unauthorized", 401)) == "invalid_request"
+
+
+def test_retryable_4xx_faults_stay_transient():
+    assert chassis.classify_error(_StatusError("request timeout", 408)) == "transient"
+    assert chassis.classify_error(_StatusError("too many requests", 429)) == "transient"
+
+
 def _response():
     message = types.SimpleNamespace(content="hi", tool_calls=None, reasoning_content=None)
     return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
