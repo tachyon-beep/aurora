@@ -18,6 +18,13 @@ FAILURE_WINDOW_SECONDS = 600
 TIER2_FAILURES = 2
 TIER3_FAILURES = 3
 
+EXIT_DONE = 42
+EXIT_HEADSHOT = 43
+EXIT_ENVIRONMENT = 44
+ZERO_EXIT_FLAP_COUNT = 3
+ZERO_EXIT_FLAP_WINDOW_SECONDS = 120
+ENVIRONMENT_PAUSE_SECONDS = 60
+
 
 def decide_tier(
     failure_times,
@@ -34,6 +41,47 @@ def decide_tier(
     if n >= tier2:
         return 2
     return 1
+
+
+def is_flapping(
+    zero_exit_times,
+    now,
+    count=ZERO_EXIT_FLAP_COUNT,
+    window=ZERO_EXIT_FLAP_WINDOW_SECONDS,
+):
+    """True when enough exit-0s cluster within the window to count as a failure."""
+    recent = [t for t in zero_exit_times if now - t <= window]
+    return len(recent) >= count
+
+
+def plan_recovery(ret, zero_exit_times, failure_times, now):
+    """Map an agent exit code to a recovery action and updated exit history.
+
+    Returns (action, zero_exit_times, failure_times). Actions: archive_reset
+    for deliberate endings (42, 43), pause for environment failures (44),
+    restart for an isolated exit 0, and tier1/tier2/tier3 for crashes or
+    flapping exit-0 loops.
+    """
+    if ret in (EXIT_DONE, EXIT_HEADSHOT):
+        return "archive_reset", [], []
+    if ret == EXIT_ENVIRONMENT:
+        return "pause", zero_exit_times, failure_times
+    if ret == 0:
+        zero_exit_times = zero_exit_times + [now]
+        if not is_flapping(zero_exit_times, now):
+            return "restart", zero_exit_times, failure_times
+        zero_exit_times = []
+    failure_times = failure_times + [now]
+    tier = decide_tier(failure_times, now)
+    return f"tier{tier}", zero_exit_times, failure_times
+
+
+def discard_session(work_dir=WORK_DIR):
+    """Remove a saved session file so a faulty session is not resumed."""
+    try:
+        os.remove(os.path.join(work_dir, "session_context.json"))
+    except OSError:
+        pass
 
 
 def restore_agent_only(work_dir=WORK_DIR):
@@ -145,6 +193,7 @@ def run_watchdog():
     """
     own_hash = file_hash(WATCHDOG_FILE)
     failures = []
+    zero_exits = []
     agent = spawn_agent()
     last_size = os.path.getsize(TRANSCRIPT_FILE) if os.path.exists(TRANSCRIPT_FILE) else 0
     last_activity = time.time()
@@ -163,29 +212,31 @@ def run_watchdog():
 
         ret = agent.poll()
         if ret is not None:
-            if ret == 42:
-                print("agent finished cleanly (42); archiving and resetting")
+            now = time.time()
+            action, zero_exits, failures = plan_recovery(ret, zero_exits, failures, now)
+            print(f"agent exited ({ret}); action {action}")
+            if action == "archive_reset":
                 archive_transcript()
                 git_reset_all()
                 own_hash = file_hash(WATCHDOG_FILE)
-                failures = []
-                time.sleep(60)
-            elif ret == 0:
-                print("agent loop ended (0); restarting, keeping modifications")
+                time.sleep(60 if ret == EXIT_DONE else 10)
+            elif action == "pause":
+                time.sleep(ENVIRONMENT_PAUSE_SECONDS)
+            elif action == "restart":
+                pass
+            elif action == "tier1":
+                if ret == 0:
+                    discard_session()
+                restore_agent_only()
+            elif action == "tier2":
+                if ret == 0:
+                    discard_session()
+                git_reset_all()
+                own_hash = file_hash(WATCHDOG_FILE)
             else:
-                now = time.time()
-                failures.append(now)
-                tier = decide_tier(failures, now)
-                print(f"agent crashed (exit {ret}); recovery tier {tier}")
-                if tier == 1:
-                    restore_agent_only()
-                elif tier == 2:
-                    git_reset_all()
-                    own_hash = file_hash(WATCHDOG_FILE)
-                else:
-                    print("persistent failure; exiting for container respawn")
-                    sys.stdout.flush()
-                    sys.exit(1)
+                print("persistent failure; exiting for container respawn")
+                sys.stdout.flush()
+                sys.exit(1)
             agent = spawn_agent()
             last_size = os.path.getsize(TRANSCRIPT_FILE) if os.path.exists(TRANSCRIPT_FILE) else 0
             last_activity = time.time()
