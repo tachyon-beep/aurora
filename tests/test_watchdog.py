@@ -77,46 +77,71 @@ def test_is_flapping_requires_clustered_zero_exits():
 
 
 def test_plan_recovery_maps_deliberate_exits():
-    action, zeros, failures = watchdog.plan_recovery(42, [1.0], [2.0], 10.0)
+    action, zeros, terminated, failures = watchdog.plan_recovery(42, [1.0], [5.0], [2.0], 10.0)
     assert action == "archive_reset"
-    assert zeros == [] and failures == []
-    action, zeros, failures = watchdog.plan_recovery(43, [1.0], [2.0], 10.0)
+    assert zeros == [] and terminated == [] and failures == []
+
+
+def test_plan_recovery_isolated_termination_archives_and_records_it():
+    action, zeros, terminated, failures = watchdog.plan_recovery(43, [1.0], [], [2.0], 10.0)
     assert action == "archive_reset"
-    assert zeros == [] and failures == []
+    assert zeros == [1.0]
+    assert terminated == [10.0]
+    assert failures == [2.0]
+
+
+def test_plan_recovery_clustered_terminations_escalate():
+    now = 1000.0
+    terminated = [now - 100, now - 50]
+    action, zeros, terminated, failures = watchdog.plan_recovery(43, [], terminated, [], now)
+    assert action == "tier1"
+    assert terminated == []
+    assert failures == [now]
+
+
+def test_plan_recovery_clears_terminated_history_on_completion():
+    action, zeros, terminated, failures = watchdog.plan_recovery(42, [], [5.0, 6.0], [], 10.0)
+    assert terminated == []
 
 
 def test_plan_recovery_pauses_on_environment_failure():
-    action, zeros, failures = watchdog.plan_recovery(44, [], [], 10.0)
+    action, zeros, terminated, failures = watchdog.plan_recovery(44, [], [7.0], [], 10.0)
     assert action == "pause"
     assert failures == []
+    assert terminated == [7.0]
 
 
 def test_plan_recovery_benign_zero_exit_restarts():
-    action, zeros, failures = watchdog.plan_recovery(0, [], [], 1000.0)
+    action, zeros, terminated, failures = watchdog.plan_recovery(0, [], [], [], 1000.0)
     assert action == "restart"
     assert zeros == [1000.0]
     assert failures == []
+    assert terminated == []
 
 
 def test_plan_recovery_flapping_zero_exits_escalate():
     now = 1000.0
     zeros = [now - 100, now - 50]
-    action, zeros, failures = watchdog.plan_recovery(0, zeros, [], now)
+    action, zeros, terminated, failures = watchdog.plan_recovery(0, zeros, [], [], now)
     assert action == "tier1"
     assert zeros == []
     assert failures == [now]
-    action, zeros, failures = watchdog.plan_recovery(0, [now - 60, now - 30], failures, now)
+    assert terminated == []
+    action, zeros, terminated, failures = watchdog.plan_recovery(
+        0, [now - 60, now - 30], terminated, failures, now
+    )
     assert action == "tier2"
 
 
 def test_plan_recovery_crash_uses_existing_tiers():
     now = 1000.0
-    action, zeros, failures = watchdog.plan_recovery(1, [], [], now)
+    action, zeros, terminated, failures = watchdog.plan_recovery(1, [], [], [], now)
     assert action == "tier1"
     assert failures == [now]
-    action, _, failures = watchdog.plan_recovery(1, [], failures, now)
+    assert terminated == []
+    action, _, terminated, failures = watchdog.plan_recovery(1, [], terminated, failures, now)
     assert action == "tier2"
-    action, _, failures = watchdog.plan_recovery(1, [], failures, now)
+    action, _, terminated, failures = watchdog.plan_recovery(1, [], terminated, failures, now)
     assert action == "tier3"
 
 

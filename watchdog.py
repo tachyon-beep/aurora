@@ -19,10 +19,12 @@ TIER2_FAILURES = 2
 TIER3_FAILURES = 3
 
 EXIT_DONE = 42
-EXIT_HEADSHOT = 43
+EXIT_TERMINATED = 43
 EXIT_ENVIRONMENT = 44
 ZERO_EXIT_FLAP_COUNT = 3
 ZERO_EXIT_FLAP_WINDOW_SECONDS = 120
+TERMINATED_FLAP_COUNT = 3
+TERMINATED_FLAP_WINDOW_SECONDS = 600
 ENVIRONMENT_PAUSE_SECONDS = 60
 
 
@@ -44,36 +46,57 @@ def decide_tier(
 
 
 def is_flapping(
-    zero_exit_times,
+    times,
     now,
     count=ZERO_EXIT_FLAP_COUNT,
     window=ZERO_EXIT_FLAP_WINDOW_SECONDS,
 ):
-    """True when enough exit-0s cluster within the window to count as a failure."""
-    recent = [t for t in zero_exit_times if now - t <= window]
+    """True when enough timestamps cluster within the window to count as a failure.
+
+    Used for both exit-0 timestamps and harness-termination (exit 43)
+    timestamps; the caller supplies the relevant history and thresholds.
+    """
+    recent = [t for t in times if now - t <= window]
     return len(recent) >= count
 
 
-def plan_recovery(ret, zero_exit_times, failure_times, now):
+def plan_recovery(ret, zero_exit_times, terminated_exit_times, failure_times, now):
     """Map an agent exit code to a recovery action and updated exit history.
 
-    Returns (action, zero_exit_times, failure_times). Actions: archive_reset
-    for deliberate endings (42, 43), pause for environment failures (44),
-    restart for an isolated exit 0, and tier1/tier2/tier3 for crashes or
-    flapping exit-0 loops.
+    Returns (action, zero_exit_times, terminated_exit_times, failure_times).
+    A completed incarnation (42) clears all histories. A harness termination
+    (43) archives and records the timestamp; when terminations cluster
+    within TERMINATED_FLAP_WINDOW_SECONDS the terminated history is cleared
+    and the fault is escalated through the tier ladder instead, so an
+    environment that kills every incarnation cannot loop forever. An
+    environment failure (44) pauses. An isolated exit 0 restarts; flapping
+    exit-0s and crashes escalate through tier1/tier2/tier3.
     """
-    if ret in (EXIT_DONE, EXIT_HEADSHOT):
-        return "archive_reset", [], []
+    if ret == EXIT_DONE:
+        return "archive_reset", [], [], []
+    if ret == EXIT_TERMINATED:
+        terminated_exit_times = terminated_exit_times + [now]
+        if not is_flapping(
+            terminated_exit_times,
+            now,
+            count=TERMINATED_FLAP_COUNT,
+            window=TERMINATED_FLAP_WINDOW_SECONDS,
+        ):
+            return "archive_reset", zero_exit_times, terminated_exit_times, failure_times
+        terminated_exit_times = []
+        failure_times = failure_times + [now]
+        tier = decide_tier(failure_times, now)
+        return f"tier{tier}", zero_exit_times, terminated_exit_times, failure_times
     if ret == EXIT_ENVIRONMENT:
-        return "pause", zero_exit_times, failure_times
+        return "pause", zero_exit_times, terminated_exit_times, failure_times
     if ret == 0:
         zero_exit_times = zero_exit_times + [now]
         if not is_flapping(zero_exit_times, now):
-            return "restart", zero_exit_times, failure_times
+            return "restart", zero_exit_times, terminated_exit_times, failure_times
         zero_exit_times = []
     failure_times = failure_times + [now]
     tier = decide_tier(failure_times, now)
-    return f"tier{tier}", zero_exit_times, failure_times
+    return f"tier{tier}", zero_exit_times, terminated_exit_times, failure_times
 
 
 def discard_session(work_dir=WORK_DIR):
@@ -186,7 +209,11 @@ def run_watchdog():
     is chosen by decide_tier over a decaying failure list: only failures
     clustered within FAILURE_WINDOW_SECONDS (600s) count, so isolated
     crashes never escalate, but three crashes within 10 minutes reach
-    tier 3. The watchdog also self-reloads: when its own file changes on
+    tier 3. Harness terminations (exit 43) normally archive and restart
+    without touching the tier ladder; only when they cluster within
+    TERMINATED_FLAP_WINDOW_SECONDS do they feed into it as failures, so an
+    environment that terminates every incarnation still escalates. The
+    watchdog also self-reloads: when its own file changes on
     disk (an agent edit), it terminates the agent and re-execs itself to
     honor the edit; a broken edit crashes on re-exec, which is the tier-3
     container backstop.
@@ -194,6 +221,7 @@ def run_watchdog():
     own_hash = file_hash(WATCHDOG_FILE)
     failures = []
     zero_exits = []
+    terminated_exits = []
     agent = spawn_agent()
     last_size = os.path.getsize(TRANSCRIPT_FILE) if os.path.exists(TRANSCRIPT_FILE) else 0
     last_activity = time.time()
@@ -213,7 +241,9 @@ def run_watchdog():
         ret = agent.poll()
         if ret is not None:
             now = time.time()
-            action, zero_exits, failures = plan_recovery(ret, zero_exits, failures, now)
+            action, zero_exits, terminated_exits, failures = plan_recovery(
+                ret, zero_exits, terminated_exits, failures, now
+            )
             print(f"agent exited ({ret}); action {action}")
             if action == "archive_reset":
                 archive_transcript()
