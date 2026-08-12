@@ -1,5 +1,7 @@
 import sys
+from os import PathLike
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -237,8 +239,12 @@ def test_cleanup_failure_does_not_turn_success_into_failure(
     destination.mkdir()
     (destination / "previous.txt").write_bytes(b"previous garden\n")
 
-    def fail_cleanup(*args: object, **kwargs: object) -> None:
-        raise OSError("cleanup failed")
+    real_rmtree = build_garden.shutil.rmtree
+
+    def fail_cleanup(path: str | PathLike[str], *args: Any, **kwargs: Any) -> None:
+        if Path(path).name.startswith(".garden-backup-"):
+            raise OSError("cleanup failed")
+        real_rmtree(path, *args, **kwargs)
 
     monkeypatch.setattr(build_garden.shutil, "rmtree", fail_cleanup)
 
