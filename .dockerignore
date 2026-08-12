@@ -14,6 +14,7 @@ garden_sources.txt.example
 *.txt
 !system_prompt.txt
 !user_prompt.txt
+!requirements-agent.txt
 session_context.json
 .env
 !garden_export

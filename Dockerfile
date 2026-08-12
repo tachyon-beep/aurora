@@ -4,7 +4,9 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir openai numpy sympy networkx rich pyyaml beautifulsoup4 markdownify
+COPY requirements-agent.txt /tmp/requirements-agent.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-agent.txt \
+    && rm /tmp/requirements-agent.txt
 
 RUN useradd --create-home --uid 1000 appuser
 
