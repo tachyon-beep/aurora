@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -30,6 +31,9 @@ ENVIRONMENT_PAUSE_SECONDS = 60
 TELEMETRY_DIR = os.environ.get("TELEMETRY_DIR", "/telemetry")
 MIRROR_INTERVAL_SECONDS = 5
 MIRROR_EXCLUDE = ("__pycache__", ".git")
+
+AGENT_LOG_NAME = "agent_stdout.log"
+AGENT_LOG_MAX_BYTES = 2_000_000
 
 
 def decide_tier(
@@ -143,6 +147,24 @@ def mirror_work(src=None, dest_root=None):
     shutil.rmtree(old, ignore_errors=True)
 
 
+def _tee_stream(stream, log_path, max_bytes=AGENT_LOG_MAX_BYTES):
+    """Copy a binary stream to stdout and append it to a size-capped log file."""
+    for line in iter(stream.readline, b""):
+        sys.stdout.write(line.decode("utf-8", errors="replace"))
+        sys.stdout.flush()
+        try:
+            if os.path.exists(log_path) and os.path.getsize(log_path) > max_bytes:
+                with open(log_path, "rb") as f:
+                    kept = f.read()[-max_bytes // 2 :]
+                with open(log_path, "wb") as f:
+                    f.write(kept)
+            with open(log_path, "ab") as f:
+                f.write(line)
+        except OSError:
+            pass
+    stream.close()
+
+
 def restore_agent_only(work_dir=WORK_DIR):
     """Tier 1: restore agent.py from the immutable git baseline; keep other edits."""
     subprocess.run(
@@ -221,7 +243,14 @@ def archive_transcript():
 
 def spawn_agent():
     sanitize_stdin(AGENT_FILE)
-    return subprocess.Popen([sys.executable, AGENT_FILE])
+    proc = subprocess.Popen(
+        [sys.executable, AGENT_FILE],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    log_path = os.path.join(WORK_DIR, AGENT_LOG_NAME)
+    threading.Thread(target=_tee_stream, args=(proc.stdout, log_path), daemon=True).start()
+    return proc
 
 
 def terminate_process(proc):

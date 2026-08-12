@@ -1,3 +1,4 @@
+import io
 import os
 
 import watchdog
@@ -56,3 +57,28 @@ def test_mirror_missing_dest_root_is_a_noop(tmp_path):
     src = _make_work(tmp_path)
     watchdog.mirror_work(src=str(src), dest_root=str(tmp_path / "absent"))
     assert not (tmp_path / "absent").exists()
+
+
+def test_tee_stream_appends_and_echoes(tmp_path, capsys):
+    log = tmp_path / "agent_stdout.log"
+    stream = io.BytesIO(b"alpha\nbeta\n")
+    watchdog._tee_stream(stream, str(log), max_bytes=1000)
+    assert log.read_bytes() == b"alpha\nbeta\n"
+    out = capsys.readouterr().out
+    assert "alpha" in out and "beta" in out
+
+
+def test_tee_stream_caps_log_size(tmp_path, capsys):
+    log = tmp_path / "agent_stdout.log"
+    log.write_bytes(b"x" * 100)
+    stream = io.BytesIO(b"tail-line\n")
+    watchdog._tee_stream(stream, str(log), max_bytes=80)
+    content = log.read_bytes()
+    assert content.endswith(b"tail-line\n")
+    assert len(content) <= 40 + len(b"tail-line\n")
+
+
+def test_tee_stream_survives_unwritable_log(tmp_path, capsys):
+    stream = io.BytesIO(b"still echoed\n")
+    watchdog._tee_stream(stream, str(tmp_path / "no" / "dir" / "log"), max_bytes=80)
+    assert "still echoed" in capsys.readouterr().out
