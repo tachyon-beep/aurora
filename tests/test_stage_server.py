@@ -270,3 +270,33 @@ def test_stream_port_has_no_mutating_routes(stream):
 def test_stream_unknown_route_404(stream):
     status, _ = _plain_get(stream, "/api/nope")
     assert status == 404
+
+
+def test_download_streams_large_files_without_loading_them(console, tmp_path):
+    import tracemalloc
+
+    big = tmp_path / "telemetry" / "work" / "big.log"
+    with open(big, "wb") as f:
+        for _ in range(320):
+            f.write(b"x" * 65536)
+    conn = http.client.HTTPConnection("127.0.0.1", console, timeout=10)
+    conn.request(
+        "GET",
+        "/download?root=telemetry&path=work/big.log",
+        headers={"X-Console-Token": "sekrit"},
+    )
+    tracemalloc.start()
+    resp = conn.getresponse()
+    received = 0
+    while True:
+        chunk = resp.read(65536)
+        if not chunk:
+            break
+        received += len(chunk)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    conn.close()
+    assert resp.status == 200
+    assert received == 320 * 65536
+    assert resp.getheader("Content-Length") == str(320 * 65536)
+    assert peak < 8_000_000

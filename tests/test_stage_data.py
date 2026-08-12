@@ -136,3 +136,65 @@ def test_load_tail_turns_tolerates_null_request_response(tmp_path):
     assert turns[0]["content"] == "ok"
     assert turns[1]["model"] is None
     assert turns[1]["content"] is None
+
+
+def _stamped_entry(i):
+    return {"timestamp": f"T{i}", "request": {"model": "m", "messages": []}, "response": {}}
+
+
+def test_load_tail_turns_reads_only_the_tail_of_large_files(tmp_path, monkeypatch):
+    monkeypatch.setattr(data, "TAIL_READ_BYTES", 1000)
+    monkeypatch.setattr(data, "_line_count_state", {})
+    path = tmp_path / "t.jsonl"
+    _write_jsonl(path, [_stamped_entry(i) for i in range(50)])
+    turns, total = data.load_tail_turns(str(path), max_turns=5)
+    assert total == 50
+    assert [t["timestamp"] for t in turns] == ["T45", "T46", "T47", "T48", "T49"]
+    assert turns[0]["index"] == 45
+
+
+def test_load_tail_turns_tracks_growth_and_truncation(tmp_path, monkeypatch):
+    monkeypatch.setattr(data, "_line_count_state", {})
+    path = tmp_path / "t.jsonl"
+    _write_jsonl(path, [_stamped_entry(i) for i in range(10)])
+    _, total = data.load_tail_turns(str(path))
+    assert total == 10
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(_stamped_entry(10)) + "\n")
+    _, total = data.load_tail_turns(str(path))
+    assert total == 11
+    _write_jsonl(path, [_stamped_entry(0)])
+    _, total = data.load_tail_turns(str(path))
+    assert total == 1
+
+
+def test_load_tail_turns_memory_stays_bounded(tmp_path, monkeypatch):
+    import tracemalloc
+
+    monkeypatch.setattr(data, "TAIL_READ_BYTES", 1_000_000)
+    monkeypatch.setattr(data, "_line_count_state", {})
+    path = tmp_path / "t.jsonl"
+    entry = _stamped_entry(0)
+    entry["pad"] = "x" * 1000
+    line = json.dumps(entry) + "\n"
+    with open(path, "w", encoding="utf-8") as f:
+        for _ in range(20_000):
+            f.write(line)
+    tracemalloc.start()
+    turns, total = data.load_tail_turns(str(path))
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    assert total == 20_000
+    assert turns
+    assert peak < 8_000_000
+
+
+def test_lineage_reads_only_the_head_of_tombstones(tmp_path, monkeypatch):
+    monkeypatch.setattr(data, "TOMBSTONE_READ_BYTES", 64)
+    work = tmp_path / "work"
+    (work / "tombstones").mkdir(parents=True)
+    (work / "tombstones" / "incarnation-1.txt").write_text(
+        "Short note. " + "y" * 5000, encoding="utf-8"
+    )
+    items = data.lineage(str(work), [])
+    assert items[0]["summary"] == "Short note."

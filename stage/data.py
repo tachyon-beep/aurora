@@ -3,6 +3,34 @@ import json
 import os
 
 SELF_MOD_TOOLS = ("write_file", "migrate", "reset", "done")
+TAIL_READ_BYTES = 4_000_000
+TOMBSTONE_READ_BYTES = 4096
+
+_line_count_state = {}
+
+
+def _count_lines(path):
+    """Count lines in a file, scanning only bytes appended since the previous call."""
+    scanned, count, ends_with_newline = _line_count_state.get(path, (0, 0, True))
+    try:
+        if os.path.getsize(path) < scanned:
+            scanned, count, ends_with_newline = 0, 0, True
+        with open(path, "rb") as f:
+            f.seek(scanned)
+            while True:
+                chunk = f.read(1_048_576)
+                if not chunk:
+                    break
+                count += chunk.count(b"\n")
+                scanned += len(chunk)
+                ends_with_newline = chunk.endswith(b"\n")
+    except OSError:
+        pass
+    else:
+        _line_count_state[path] = (scanned, count, ends_with_newline)
+    if scanned > 0 and not ends_with_newline:
+        return count + 1
+    return count
 
 
 def _summarize(entry, index):
@@ -31,26 +59,37 @@ def _summarize(entry, index):
 
 
 def load_tail_turns(transcript_path, max_turns=40):
-    """Parse the newest transcript entries; returns (turns, total line count)."""
+    """Parse the newest transcript entries; returns (turns, total line count).
+
+    Reads at most TAIL_READ_BYTES from the end of the file, so memory use
+    stays bounded however large the transcript grows.
+    """
     if not os.path.exists(transcript_path):
         return [], 0
+    total = _count_lines(transcript_path)
     try:
-        with open(transcript_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+        size = os.path.getsize(transcript_path)
+        with open(transcript_path, "rb") as f:
+            if size > TAIL_READ_BYTES:
+                f.seek(size - TAIL_READ_BYTES)
+            raw = f.read(TAIL_READ_BYTES)
     except OSError:
         return [], 0
-    total = len(lines)
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    if size > TAIL_READ_BYTES and lines:
+        lines = lines[1:]
+    tail = lines[-max_turns:]
+    base = total - len(tail)
     turns = []
-    start = max(0, total - max_turns)
-    for index in range(start, total):
-        line = lines[index].strip()
+    for offset, text in enumerate(tail):
+        line = text.strip()
         if not line:
             continue
         try:
             entry = json.loads(line)
         except ValueError:
             continue
-        turns.append(_summarize(entry, index))
+        turns.append(_summarize(entry, base + offset))
     return turns, total
 
 
@@ -105,7 +144,7 @@ def lineage(work_dir, turns, limit=3):
     for path in notes[:limit]:
         try:
             with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
+                text = f.read(TOMBSTONE_READ_BYTES)
         except OSError:
             continue
         out.append(

@@ -64,9 +64,12 @@ def read_text_preview(path, cap=PREVIEW_CAP, tail=False):
 
 
 def unified_diff_text(a_path, b_path, a_label, b_label):
-    """Return a unified diff between two text files; empty when identical."""
+    """Return a unified diff between two text files; empty when identical.
+
+    Each input is read up to PREVIEW_CAP characters.
+    """
     with open(a_path, "r", encoding="utf-8", errors="replace") as f:
-        a_lines = f.readlines()
+        a_lines = f.read(PREVIEW_CAP).splitlines(keepends=True)
     with open(b_path, "r", encoding="utf-8", errors="replace") as f:
-        b_lines = f.readlines()
+        b_lines = f.read(PREVIEW_CAP).splitlines(keepends=True)
     return "".join(difflib.unified_diff(a_lines, b_lines, fromfile=a_label, tofile=b_label))

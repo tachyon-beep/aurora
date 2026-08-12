@@ -66,3 +66,14 @@ def test_unified_diff_text(tmp_path):
     assert "-two" in out and "+three" in out and "stock" in out
     same = browse.unified_diff_text(str(a), str(a), "stock", "current")
     assert same == ""
+
+
+def test_unified_diff_reads_capped_inputs(tmp_path, monkeypatch):
+    monkeypatch.setattr(browse, "PREVIEW_CAP", 100)
+    a = tmp_path / "a.py"
+    b = tmp_path / "b.py"
+    a.write_text("alpha\n" + "z" * 500, encoding="utf-8")
+    b.write_text("beta\n" + "z" * 500, encoding="utf-8")
+    out = browse.unified_diff_text(str(a), str(b), "a", "b")
+    assert "alpha" in out and "beta" in out
+    assert len(out) < 1000

@@ -135,15 +135,28 @@ class ConsoleHandler(_BaseHandler):
         if target is None or not os.path.isfile(target):
             self._send(404, json.dumps({"error": "not found"}))
             return
-        with open(target, "rb") as f:
-            body = f.read()
         name = _sanitize_header_value(os.path.basename(target))
-        self._send(
-            200,
-            body,
-            content_type="application/octet-stream",
-            extra={"Content-Disposition": f'attachment; filename="{name}"'},
-        )
+        try:
+            size = os.path.getsize(target)
+            f = open(target, "rb")
+        except OSError:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        with f:
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(size))
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
+            self.end_headers()
+            remaining = size
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
 
     def _handle_diff(self):
         work = os.path.join(TELEMETRY_DIR, "work")
