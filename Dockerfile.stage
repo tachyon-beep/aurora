@@ -1,0 +1,10 @@
+FROM python:3.13-slim
+
+RUN useradd --create-home --uid 1000 stageuser
+
+COPY --chown=stageuser:stageuser stage/ /opt/stage/stage/
+
+USER stageuser
+WORKDIR /opt/stage
+EXPOSE 8091 8092
+CMD ["python", "-m", "stage.server"]

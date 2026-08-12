@@ -33,6 +33,7 @@ services:
     volumes:
       - diode:/diode
       - state:/state
+      - telemetry:/telemetry
     networks: [internal]
     read_only: true
     tmpfs:
@@ -86,6 +87,40 @@ services:
     mem_limit: 256m
     restart: "no"
 
+  stage:
+    build:
+      context: .
+      dockerfile: Dockerfile.stage
+    image: aurora-stage
+    environment:
+      TRANSCRIPT_DIR: /transcripts
+      DIODE_DIR: /diode
+      TELEMETRY_DIR: /telemetry
+      STAGE_CONSOLE_TOKEN: ${STAGE_CONSOLE_TOKEN:-}
+    volumes:
+      - transcripts:/transcripts:ro
+      - diode:/diode:ro
+      - telemetry:/telemetry:ro
+    ports:
+      - "127.0.0.1:8091:8091"
+      - "127.0.0.1:8092:8092"
+    networks: [egress]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 256m
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["stream"]
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
+    networks: [egress]
+    restart: unless-stopped
+
 networks:
   internal:
     internal: true
@@ -95,3 +130,4 @@ volumes:
   transcripts: {}
   diode: {}
   state: {}
+  telemetry: {}

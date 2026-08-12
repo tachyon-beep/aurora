@@ -19,7 +19,8 @@ cleanup() {
   docker volume rm \
     "${COMPOSE_PROJECT_NAME}_state" \
     "${COMPOSE_PROJECT_NAME}_diode" \
-    "${COMPOSE_PROJECT_NAME}_transcripts" >/dev/null 2>&1 || true
+    "${COMPOSE_PROJECT_NAME}_transcripts" \
+    "${COMPOSE_PROJECT_NAME}_telemetry" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -127,5 +128,19 @@ echo "==> diode affordance: enable_clock unlocks the time command in help"
 docker compose exec -T agent sh -c 'printf "{\"commands\":[\"help\"],\"variables\":{\"enable_clock\":true}}" > /diode/console.json'
 sleep 10
 docker compose exec -T agent sh -c 'grep -q "time ->" /diode/HELP.md'
+
+echo "==> stage (aurora-stage) does not mount the state volume"
+stage_cid=$(docker compose ps -q stage 2>/dev/null || true)
+if [ -n "$stage_cid" ] && docker inspect "$stage_cid" 2>/dev/null | grep -q '"Destination": "/state"'; then
+  echo "FAIL: stage mounts /state"; exit 1
+fi
+
+echo "==> stream port refuses mutating methods"
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8091/api/stream || true)
+[ "$code" = "405" ] || { echo "FAIL: stream port accepted POST ($code)"; exit 1; }
+
+echo "==> console fails closed without a token"
+code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8092/api/roots || true)
+[ "$code" = "401" ] || [ "$code" = "403" ] || { echo "FAIL: console served without token ($code)"; exit 1; }
 
 echo "ALL CONTAINER CHECKS PASSED"
