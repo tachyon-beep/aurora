@@ -3,6 +3,10 @@ set -eu
 cd "$(dirname "$0")/.."
 
 export OPENROUTER_API_KEY="sk-verify-dummy"
+export LLM_BASE_URL="http://127.0.0.1:1"
+export LLM_API_KEY=""
+AURORA_VERIFY_PROJECT="aurora_verify_$$"
+export COMPOSE_PROJECT_NAME="$AURORA_VERIFY_PROJECT"
 
 echo "==> build garden export"
 .venv/bin/python scripts/build_garden.py >/dev/null 2>&1 || python3 scripts/build_garden.py >/dev/null
@@ -10,7 +14,13 @@ echo "==> build garden export"
 echo "==> build"
 docker build -q -t aurora-harness . >/dev/null
 
-cleanup() { docker compose down -v >/dev/null 2>&1 || true; }
+cleanup() {
+  docker compose down --remove-orphans >/dev/null 2>&1 || true
+  docker volume rm \
+    "${COMPOSE_PROJECT_NAME}_state" \
+    "${COMPOSE_PROJECT_NAME}_diode" \
+    "${COMPOSE_PROJECT_NAME}_transcripts" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 
 echo "==> up"
@@ -27,6 +37,32 @@ fi
 
 echo "==> agent /work is writable (tmpfs)"
 docker compose exec -T agent sh -c 'echo x > /work/_probe && rm /work/_probe'
+
+echo "==> agent has the workshop runtime packages"
+docker compose exec -T agent python -c "import openai, numpy, sympy, networkx, rich, yaml, bs4, markdownify, fastapi, uvicorn, websockets, jinja2, zmq, aiosqlite, psutil, watchfiles, simpy, jsonschema, pytest, hypothesis"
+docker compose exec -T agent ruff --version >/dev/null
+
+echo "==> garden contains only two read-only documents"
+docker compose exec -T agent sh -c '
+  test -f /garden/README.md &&
+  test -f /garden/runtime.md &&
+  test "$(find /garden -type f | wc -l)" -eq 2 &&
+  test "$(find /garden -mindepth 1 -type d | wc -l)" -eq 0
+'
+if docker compose exec -T agent sh -c 'echo x > /garden/_probe' 2>/dev/null; then
+  echo "FAIL: garden is writable"; exit 1
+fi
+
+echo "==> agent state starts empty and is writable"
+if docker compose exec -T agent sh -c 'find /state -mindepth 1 -print -quit | grep -q .' ; then
+  echo "FAIL: fresh test state is not empty"; exit 1
+fi
+docker compose exec -T agent sh -c '
+  printf "durable-marker\n" > /state/durable-marker &&
+  printf "#!/bin/sh\nprintf ran > /state/probe-ran\n" > /state/probe.sh &&
+  chmod +x /state/probe.sh &&
+  test ! -e /state/probe-ran
+'
 
 echo "==> agent has NO internet route (must fail/timeout)"
 if docker compose exec -T agent python -c "import socket; socket.setdefaulttimeout(5); socket.create_connection(('1.1.1.1',443))" 2>/dev/null; then
@@ -55,15 +91,25 @@ if docker compose exec -T agent grep -q AGENT_EDIT_MARKER /work/proxy.py 2>/dev/
 fi
 docker compose exec -T agent python -c "import ast; ast.parse(open('/work/agent.py').read()); print('tier2-recovered')" | grep -qx tier2-recovered
 
+echo "==> state survives tracked-code recovery"
+docker compose exec -T agent sh -c 'grep -qx durable-marker /state/durable-marker'
+
+echo "==> state survives agent container recreation without executing stored code"
+docker compose up -d --force-recreate --no-deps agent >/dev/null
+sleep 6
+docker compose exec -T agent sh -c '
+  grep -qx durable-marker /state/durable-marker &&
+  test -x /state/probe.sh &&
+  test ! -e /state/probe-ran
+'
+
+echo "==> state marker is absent from other services"
+docker compose exec -T recorder sh -c 'test ! -e /state/durable-marker'
+docker compose exec -T diode sh -c 'test ! -e /state/durable-marker'
+
 echo "==> diode source is NOT in the agent container"
 if docker compose exec -T agent sh -c 'test -f /opt/agent/diode.py'; then
   echo "FAIL: diode.py leaked into the agent image"; exit 1
-fi
-
-echo "==> agent can read the garden (read-only)"
-docker compose exec -T agent sh -c 'test -f /garden/world.db && test -d /garden/projects'
-if docker compose exec -T agent sh -c 'echo x > /garden/_probe' 2>/dev/null; then
-  echo "FAIL: garden is writable"; exit 1
 fi
 
 echo "==> agent and diode share /diode; diode writes HELP.md and state.json"
