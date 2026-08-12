@@ -119,6 +119,22 @@ def repair_send_view(messages):
     return out
 
 
+def classify_error(exc):
+    """Classify an API exception as transient, model, or invalid_request.
+
+    Status codes 400/404/422 are permanent request faults; when the message
+    names the model the fault is classified as a model error. Everything
+    else, including missing status codes, is treated as transient.
+    """
+    status = getattr(exc, "status_code", None)
+    text = str(exc).lower()
+    if status in (400, 404) and "model" in text:
+        return "model"
+    if status in (400, 404, 422):
+        return "invalid_request"
+    return "transient"
+
+
 def load_dotenv():
     dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     if os.path.exists(dotenv_path):
