@@ -27,6 +27,10 @@ TERMINATED_FLAP_COUNT = 3
 TERMINATED_FLAP_WINDOW_SECONDS = 600
 ENVIRONMENT_PAUSE_SECONDS = 60
 
+TELEMETRY_DIR = os.environ.get("TELEMETRY_DIR", "/telemetry")
+MIRROR_INTERVAL_SECONDS = 5
+MIRROR_EXCLUDE = ("__pycache__", ".git")
+
 
 def decide_tier(
     failure_times,
@@ -105,6 +109,38 @@ def discard_session(work_dir=WORK_DIR):
         os.remove(os.path.join(work_dir, "session_context.json"))
     except OSError:
         pass
+
+
+def mirror_work(src=None, dest_root=None):
+    """Copy the working tree into the telemetry mirror, replacing the prior copy.
+
+    Symbolic links are copied as links and never followed. Does nothing when
+    the destination root does not exist. Excludes MIRROR_EXCLUDE entries.
+    """
+    if src is None:
+        src = WORK_DIR
+    if dest_root is None:
+        dest_root = TELEMETRY_DIR
+    if not os.path.isdir(dest_root):
+        return
+    dest = os.path.join(dest_root, "work")
+    tmp = os.path.join(dest_root, "work.tmp")
+    old = os.path.join(dest_root, "work.old")
+    shutil.rmtree(tmp, ignore_errors=True)
+    try:
+        shutil.copytree(src, tmp, symlinks=True, ignore=shutil.ignore_patterns(*MIRROR_EXCLUDE))
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+        return
+    shutil.rmtree(old, ignore_errors=True)
+    try:
+        if os.path.isdir(dest):
+            os.rename(dest, old)
+        os.rename(tmp, dest)
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+        return
+    shutil.rmtree(old, ignore_errors=True)
 
 
 def restore_agent_only(work_dir=WORK_DIR):
@@ -223,11 +259,16 @@ def run_watchdog():
     zero_exits = []
     terminated_exits = []
     agent = spawn_agent()
+    mirror_work()
+    last_mirror = time.time()
     last_size = os.path.getsize(TRANSCRIPT_FILE) if os.path.exists(TRANSCRIPT_FILE) else 0
     last_activity = time.time()
 
     while True:
         time.sleep(2)
+        if time.time() - last_mirror >= MIRROR_INTERVAL_SECONDS:
+            mirror_work()
+            last_mirror = time.time()
 
         current_hash = file_hash(WATCHDOG_FILE)
         if current_hash != own_hash:
