@@ -184,6 +184,60 @@ def test_stream_snapshot_shape(stream):
     assert "diode" in snap
 
 
+def test_stream_snapshot_caps_and_slims_public_data(tmp_path, monkeypatch):
+    telemetry = tmp_path / "telemetry"
+    (telemetry / "work" / "tombstones").mkdir(parents=True)
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    entry = {
+        "timestamp": "T",
+        "request": {"model": "m", "messages": []},
+        "response": {
+            "choices": [
+                {
+                    "message": {
+                        "content": "x" * 10_000,
+                        "reasoning_content": "y" * 10_000,
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "write_file",
+                                    "arguments": "z" * 5_000,
+                                }
+                            }
+                        ],
+                    }
+                }
+            ]
+        },
+    }
+    (transcripts / "agent_life_transcript.jsonl").write_text(
+        json.dumps(entry) + "\n", encoding="utf-8"
+    )
+    diode_dir = tmp_path / "diode"
+    diode_dir.mkdir()
+    (diode_dir / "console.json").write_text("secret console body", encoding="utf-8")
+    (diode_dir / "state.json").write_text("secret state body", encoding="utf-8")
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(telemetry))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(transcripts))
+    monkeypatch.setattr(server, "DIODE_DIR", str(diode_dir))
+    httpd = server.make_server(0, server.StreamHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body = _plain_get(httpd.server_address[1], "/api/stream")
+    finally:
+        httpd.shutdown()
+    assert status == 200
+    snap = json.loads(body)
+    assert "console" not in snap["diode"]
+    assert "state" not in snap["diode"]
+    turn = snap["turns"][-1]
+    assert len(turn["content"]) <= 2000
+    assert len(turn["reasoning"]) <= 2000
+    assert len(turn["tool_calls"][0]["arguments"]) <= 400
+
+
 def test_stream_port_has_no_mutating_routes(stream):
     for method in ("POST", "PUT", "DELETE", "PATCH"):
         conn = http.client.HTTPConnection("127.0.0.1", stream, timeout=5)

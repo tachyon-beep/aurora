@@ -159,15 +159,36 @@ def transcript_path():
     return os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.jsonl")
 
 
+def _clip(text, cap):
+    """The first cap characters of text; falsy input yields an empty string."""
+    if not text:
+        return ""
+    return text[:cap]
+
+
+def _public_turn(turn):
+    """A turn summary with content, reasoning, and tool call arguments capped for public display."""
+    return {
+        **turn,
+        "content": _clip(turn.get("content"), 2000),
+        "reasoning": _clip(turn.get("reasoning"), 2000),
+        "tool_calls": [
+            {**tc, "arguments": _clip(tc.get("arguments"), 400)}
+            for tc in turn.get("tool_calls") or []
+        ],
+    }
+
+
 def stream_snapshot():
     """Assemble the stream page's data snapshot."""
     work = os.path.join(TELEMETRY_DIR, "work")
     turns, total = data.load_tail_turns(transcript_path())
+    diode = data.diode_activity(DIODE_DIR)
     return {
-        "turns": turns,
+        "turns": [_public_turn(t) for t in turns],
         "stats": data.incarnation_stats(turns, total, work),
         "events": data.self_modification_events(turns),
-        "diode": data.diode_activity(DIODE_DIR),
+        "diode": {"outputs": diode["outputs"]},
         "lineage": data.lineage(work, turns),
     }
 
