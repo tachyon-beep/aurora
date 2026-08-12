@@ -165,6 +165,8 @@ def run_agent_loop(client, model, messages, tools, max_turns=1000):
 
         assistant_message = {"role": "assistant", "content": message.content or reasoning or ""}
         if message.tool_calls:
+            if reasoning:
+                assistant_message["reasoning_content"] = reasoning
             assistant_message["tool_calls"] = [
                 {
                     "id": tc.id,

@@ -107,6 +107,35 @@ def test_reasoning_only_reply_persists_assistant_with_content_key(tmp_path, monk
     assert saved[-1]["content"] == "thinking"
 
 
+def test_tool_loop_resends_assistant_reasoning_content():
+    tool_call = types.SimpleNamespace(
+        id="call-1",
+        function=types.SimpleNamespace(name="echo", arguments='{"value": "ok"}'),
+    )
+    client = _fake_client(
+        [
+            _fake_response(
+                content="I'll check.",
+                tool_calls=[tool_call],
+                reasoning="I should call echo.",
+            ),
+            _fake_response(content="Done."),
+        ]
+    )
+    tools = types.SimpleNamespace(
+        schemas=[{"type": "function", "function": {"name": "echo"}}],
+        tools={"echo": lambda value: value},
+    )
+    messages = [{"role": "user", "content": "Echo ok."}]
+
+    chassis.run_agent_loop(client, "deepseek-v4-pro", messages, tools, max_turns=2)
+
+    assistant = client.chat.completions.calls[1]["messages"][1]
+    assert assistant["content"] == "I'll check."
+    assert assistant["reasoning_content"] == "I should call echo."
+    assert assistant["tool_calls"][0]["id"] == "call-1"
+
+
 def test_loop_sends_condensed_view_not_raw_history(tmp_path, monkeypatch):
     session_file = tmp_path / "session_context.json"
     big = "x" * 300
