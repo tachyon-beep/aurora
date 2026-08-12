@@ -104,7 +104,7 @@ services:
     ports:
       - "127.0.0.1:8091:8091"
       - "127.0.0.1:8092:8092"
-    networks: [egress]
+    networks: [stream]
     read_only: true
     tmpfs:
       - /tmp
@@ -118,13 +118,14 @@ services:
     image: cloudflare/cloudflared:latest
     profiles: ["stream"]
     command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN:-}
-    networks: [egress]
+    networks: [stream]
     restart: unless-stopped
 
 networks:
   internal:
     internal: true
   egress: {}
+  stream: {}
 
 volumes:
   transcripts: {}

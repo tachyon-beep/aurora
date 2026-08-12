@@ -45,6 +45,25 @@ def test_console_requires_token(console):
     assert set(json.loads(body)) == {"telemetry", "transcripts", "diode"}
 
 
+def test_console_rejects_non_ascii_token_without_crashing(console):
+    status, _ = _get(console, "/api/roots?token=" + quote("café"), token=None)
+    assert status == 401
+
+
+def test_console_accepts_non_ascii_configured_token(console, monkeypatch):
+    monkeypatch.setenv("STAGE_CONSOLE_TOKEN", "café")
+    status, body = _get(console, "/api/roots?token=" + quote("café"), token=None)
+    assert status == 200
+    assert set(json.loads(body)) == {"telemetry", "transcripts", "diode"}
+
+
+def test_console_accepts_non_ascii_configured_token_via_header(console, monkeypatch):
+    monkeypatch.setenv("STAGE_CONSOLE_TOKEN", "café")
+    status, body = _get(console, "/api/roots", token="café")
+    assert status == 200
+    assert set(json.loads(body)) == {"telemetry", "transcripts", "diode"}
+
+
 def test_console_fails_closed_without_configured_token(console, monkeypatch):
     monkeypatch.delenv("STAGE_CONSOLE_TOKEN")
     status, _ = _get(console, "/api/roots")

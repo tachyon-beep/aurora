@@ -12,7 +12,19 @@ def test_compose_defines_stage_service_and_telemetry_volume():
     assert "STAGE_CONSOLE_TOKEN" in text
     assert "aurora-stage" in text
     assert "cloudflared" in text
-    assert "state:/state" not in text.split("stage:")[1].split("cloudflared:")[0]
+    stage_block = text.split("stage:")[1].split("cloudflared:")[0]
+    assert "state:/state" not in stage_block
+
+
+def test_stage_and_cloudflared_are_isolated_from_egress():
+    text = _read("docker-compose.yml")
+    stage_block = text.split("\n  stage:\n")[1].split("\n  cloudflared:\n")[0]
+    cloudflared_block = text.split("\n  cloudflared:\n")[1].split("\nnetworks:\n")[0]
+    assert "networks: [stream]" in stage_block
+    assert "egress" not in stage_block
+    assert "networks: [stream]" in cloudflared_block
+    assert "egress" not in cloudflared_block
+    assert "stream: {}" in text
 
 
 def test_agent_image_precreates_telemetry_mountpoint():

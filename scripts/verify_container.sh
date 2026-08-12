@@ -130,8 +130,9 @@ sleep 10
 docker compose exec -T agent sh -c 'grep -q "time ->" /diode/HELP.md'
 
 echo "==> stage (aurora-stage) does not mount the state volume"
-stage_cid=$(docker compose ps -q stage 2>/dev/null || true)
-if [ -n "$stage_cid" ] && docker inspect "$stage_cid" 2>/dev/null | grep -q '"Destination": "/state"'; then
+stage_cid=$(docker compose ps -q stage)
+[ -n "$stage_cid" ] || { echo "FAIL: stage container not running"; exit 1; }
+if docker inspect "$stage_cid" 2>/dev/null | grep -q '"Destination": "/state"'; then
   echo "FAIL: stage mounts /state"; exit 1
 fi
 

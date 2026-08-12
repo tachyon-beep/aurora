@@ -77,7 +77,9 @@ class ConsoleHandler(_BaseHandler):
             return None
         query = parse_qs(urlparse(self.path).query)
         supplied = self.headers.get("X-Console-Token") or query.get("token", [""])[0]
-        return hmac.compare_digest(supplied, token)
+        return hmac.compare_digest(
+            supplied.encode("utf-8", "surrogateescape"), token.encode("utf-8", "surrogateescape")
+        )
 
     def do_GET(self):
         auth = self._authorized()
