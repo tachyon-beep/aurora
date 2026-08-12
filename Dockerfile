@@ -15,11 +15,10 @@ COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY --chown=appuser:appuser garden_export/ /garden/
 
-# Pre-create the shared volume mountpoints owned by uid 1000 so that whichever
-# container first seeds each fresh named volume does so with non-root ownership
-# (every service runs as uid 1000 under cap_drop:[ALL]). /transcripts is seeded
-# by the recorder; /diode by the agent and the diode.
-RUN mkdir -p /diode /transcripts && chown appuser:appuser /diode /transcripts
+# Pre-create named-volume mountpoints owned by uid 1000. Docker copies this
+# ownership into each newly created empty volume; startup never clears them.
+RUN mkdir -p /diode /transcripts /state \
+    && chown appuser:appuser /diode /transcripts /state
 
 USER appuser
 WORKDIR /opt/agent
