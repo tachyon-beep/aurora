@@ -21,6 +21,8 @@ def test_bad_model_is_a_model_error():
     assert chassis.classify_error(exc) == "model"
     exc404 = _StatusError("No endpoints found for model", 404)
     assert chassis.classify_error(exc404) == "model"
+    exc_capitalized = _StatusError("Model not found", 404)
+    assert chassis.classify_error(exc_capitalized) == "model"
 
 
 def test_other_400s_are_invalid_request():
@@ -29,6 +31,8 @@ def test_other_400s_are_invalid_request():
         400,
     )
     assert chassis.classify_error(exc) == "invalid_request"
+    exc422 = _StatusError("unprocessable", 422)
+    assert chassis.classify_error(exc422) == "invalid_request"
 
 
 def test_404_without_model_mention_is_invalid_request():
