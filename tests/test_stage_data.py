@@ -119,3 +119,20 @@ def test_diode_activity(tmp_path):
     assert got["outputs"][0]["name"] == "r1.txt"
     assert got["console"] == '{"commands": []}'
     assert got["state"] == ""
+
+
+def test_load_tail_turns_tolerates_null_request_response(tmp_path):
+    p = tmp_path / "t.jsonl"
+    _write_jsonl(
+        p,
+        [
+            _entry(content="ok"),
+            {"timestamp": "T", "request": None, "response": None},
+        ],
+    )
+    turns, total = data.load_tail_turns(str(p))
+    assert total == 2
+    assert len(turns) == 2
+    assert turns[0]["content"] == "ok"
+    assert turns[1]["model"] is None
+    assert turns[1]["content"] is None

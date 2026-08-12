@@ -6,8 +6,8 @@ SELF_MOD_TOOLS = ("write_file", "migrate", "reset", "done")
 
 
 def _summarize(entry, index):
-    request = entry.get("request", {}) if isinstance(entry, dict) else {}
-    response = entry.get("response", {}) if isinstance(entry, dict) else {}
+    request = entry.get("request") or {}
+    response = entry.get("response") or {}
     reasoning = None
     content = None
     tool_calls = []
