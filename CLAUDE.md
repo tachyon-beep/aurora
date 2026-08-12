@@ -48,6 +48,14 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      paths cross it. Keep the SSRF defenses (scheme allow-list, private/loopback/reserved rejection,
      redirect re-validation).
    - The **viewer** is read-only, loopback-only, and on no shared network. It must stay that way.
+   - The **stage** is outward-facing but holds no upstream API key and never mounts `/state`.
+     Its console (port 8092) binds host-loopback only, requires `STAGE_CONSOLE_TOKEN` on every
+     request, and is never exposed through the tunnel. The stream port (8091) serves no mutating
+     endpoints. The console browser resolves paths only inside its allow-listed roots and never
+     follows a symlink across a root boundary; everything renders as escaped text.
+   - The **telemetry volume** is written only by the watchdog (a mirror of `/work` plus the
+     captured agent log), mounted read-only into the stage, and never rendered on the stream
+     page. The mirror copies symlinks as links and never follows them.
 
 4. **Human docs stay out of the agent's world.** The agent image (`Dockerfile`) copies an explicit
    **allow-list** of files into `/opt/agent`. Do **not** add `README.md`, `CLAUDE.md`, `docs/`, or

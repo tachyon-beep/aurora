@@ -163,6 +163,23 @@ Aurora never scans or executes its contents. Only explicit volume deletion remov
 docker compose down -v  # destructive: removes state, diode data, and transcripts
 ```
 
+### Streaming the stage
+
+The stage serves two pages:
+
+- `http://localhost:8091` — the stream page, a 1920×1080 read-only view designed for an OBS
+  browser source: live agent turns, incarnation stats, lineage, self-modification and diode
+  activity.
+- `http://localhost:8092/?token=<STAGE_CONSOLE_TOKEN>` — the operator console (loopback only):
+  browse the telemetry mirror of the agent's working tree, the transcripts, and the diode; view
+  the agent.py diff against stock; tail the captured agent log.
+
+Set `STAGE_CONSOLE_TOKEN` in `.env` to enable the console. To put the stream page on the
+internet for OBS or viewers, run a Cloudflare Tunnel pointing at `http://localhost:8091`
+(host-run `cloudflared`), or set `TUNNEL_TOKEN` and start the bundled service with
+`docker compose --profile stream up cloudflared`, pointing the tunnel's public hostname at
+`http://stage:8091`. Never expose port 8092.
+
 ---
 
 ## Repository layout
@@ -174,6 +191,7 @@ docker compose down -v  # destructive: removes state, diode data, and transcript
 | `diode.py` / `Dockerfile.diode` | The one-way web command channel. |
 | `watchdog.py` | The supervisor and tiered recovery. |
 | `viewer.py` / `Dockerfile.viewer` | The optional live transcript viewer. |
+| `stage/` / `Dockerfile.stage` | The stream page (OBS browser source) and the token-gated operator console with a container browser. |
 | `Dockerfile` / `entrypoint.sh` / `docker-compose.yml` | The harness image and topology. |
 | `scripts/build_garden.py` / `requirements-agent.txt` | Builds the two-document read-only garden and defines the lean package set installed in the harness image. |
 | `scripts/verify_container.sh` | Verifies containment invariants against a running stack. |
