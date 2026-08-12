@@ -29,6 +29,29 @@ def test_clip_keeps_at_least_the_latest_message():
     assert out[0] == msgs[0]
 
 
+def test_clip_pins_first_user_message_under_tight_budget():
+    msgs = [{"role": "system", "content": "S"}, {"role": "user", "content": "seed"}]
+    msgs += [{"role": "assistant", "content": f"{i:02d}" + "y" * 4000} for i in range(20)]
+    out = chassis.clip_to_window(msgs, budget_tokens=2000)
+    assert out[0] == msgs[0]
+    assert out[1] == msgs[1]
+    assert out[-1] == msgs[-1]
+    assert len(out) < len(msgs)
+    assert msgs[2] not in out
+
+
+def test_clip_does_not_duplicate_first_user_message_when_in_tail():
+    msgs = [{"role": "system", "content": "S"}]
+    msgs += [{"role": "assistant", "content": f"{i:02d}" + "y" * 4000} for i in range(10)]
+    msgs += [{"role": "user", "content": "seed"}, {"role": "assistant", "content": "tail"}]
+    out = chassis.clip_to_window(msgs, budget_tokens=2000)
+    assert len(out) < len(msgs)
+    assert msgs[1] not in out
+    assert out[0] == msgs[0]
+    assert out[-1] == msgs[-1]
+    assert sum(1 for m in out if m.get("role") == "user") == 1
+
+
 def test_clip_never_starts_on_an_orphan_tool_result():
     msgs = [
         {"role": "system", "content": "S"},

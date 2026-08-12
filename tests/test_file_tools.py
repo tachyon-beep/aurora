@@ -25,7 +25,7 @@ def test_write_file_replaces_a_line(tmp_path, monkeypatch):
     f.write_text("one\ntwo\nthree\n", encoding="utf-8")
     monkeypatch.setattr(agent, "_resolve_path", lambda p: str(f))
     msg = agent.write_file("replace", 2, "TWO")
-    assert "replaced line 2" in msg
+    assert msg == "Changed line 2: two to TWO"
     assert f.read_text(encoding="utf-8") == "one\nTWO\nthree\n"
 
 
@@ -34,7 +34,7 @@ def test_write_file_inserts_a_line(tmp_path, monkeypatch):
     f.write_text("one\ntwo\n", encoding="utf-8")
     monkeypatch.setattr(agent, "_resolve_path", lambda p: str(f))
     msg = agent.write_file("insert", 2, "MID")
-    assert "inserted line 2" in msg
+    assert msg == "Changed line 2: two to MID"
     assert f.read_text(encoding="utf-8") == "one\nMID\ntwo\n"
 
 
@@ -43,7 +43,7 @@ def test_write_file_deletes_a_line(tmp_path, monkeypatch):
     f.write_text("one\ntwo\nthree\n", encoding="utf-8")
     monkeypatch.setattr(agent, "_resolve_path", lambda p: str(f))
     msg = agent.write_file("delete", 2)
-    assert "deleted line 2" in msg
+    assert msg == "Changed line 2: two to "
     assert f.read_text(encoding="utf-8") == "one\nthree\n"
 
 
@@ -87,7 +87,7 @@ def test_write_file_insert_out_of_range_lands_at_end(tmp_path, monkeypatch):
     f.write_text("one\n", encoding="utf-8")
     monkeypatch.setattr(agent, "_resolve_path", lambda p: str(f))
     msg = agent.write_file("insert", 99, "x")
-    assert msg == "inserted line 2 in agent.py"
+    assert msg == "Changed line 2:  to x"
     assert f.read_text(encoding="utf-8") == "one\nx\n"
 
 

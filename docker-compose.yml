@@ -4,8 +4,12 @@ services:
     build: .
     entrypoint: ["python", "/opt/agent/proxy.py"]
     environment:
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?set OPENROUTER_API_KEY in .env}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
       TRANSCRIPT_DIR: /transcripts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - transcripts:/transcripts
     networks: [internal, egress]
@@ -24,6 +28,8 @@ services:
       OPENROUTER_API_KEY: "sk-dummy"
       OPENROUTER_BASE_URL: "http://recorder:8088/api/v1"
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-v4-pro}
+      LLM_MODEL: ${LLM_MODEL:-}
+      CONTEXT_WINDOW_TOKENS: ${CONTEXT_WINDOW_TOKENS:-120000}
     volumes:
       - diode:/diode
     networks: [internal]

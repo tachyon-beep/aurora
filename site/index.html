@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Aurora is a contained harness for running self-modifying LLM agents with layered isolation and an external record."
+    />
+    <title>Aurora</title>
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+    <script>
+      (function () {
+        var saved = localStorage.getItem("aurora-theme");
+        if (saved) {
+          document.documentElement.setAttribute("data-theme", saved);
+        }
+      })();
+    </script>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Aurora home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>Aurora</span>
+      </a>
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="#overview">Overview</a>
+        <a href="#topology">Topology</a>
+        <a href="#quickstart">Quick start</a>
+      </nav>
+      <button class="theme-toggle" type="button" aria-label="Switch color theme">
+        <span class="theme-toggle__icon" aria-hidden="true"></span>
+        <span class="theme-toggle__text">Theme</span>
+      </button>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <img
+          class="hero__image"
+          src="assets/aurora-hero.png"
+          alt="A quiet research station seen through glass beneath pale auroral light."
+        />
+        <div class="hero__scrim" aria-hidden="true"></div>
+        <div class="hero__content">
+          <p class="eyebrow">Contained autonomy for self-modifying agents</p>
+          <h1 id="hero-title">Aurora</h1>
+          <p class="hero__lede">
+            A containerized harness that lets an agent rewrite itself while keeping its network,
+            credentials, and durable record outside its reach.
+          </p>
+          <div class="hero__actions" aria-label="Primary actions">
+            <a class="button button--primary" href="#quickstart">Start locally</a>
+            <a class="button button--secondary" href="#topology">See the boundary</a>
+          </div>
+          <div class="command-strip" aria-label="Quick command">
+            <code id="hero-command">docker compose up --build</code>
+            <button class="copy-button" type="button" data-copy-target="hero-command">
+              Copy
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section class="band band--intro" id="overview" aria-labelledby="overview-title">
+        <div class="section-grid">
+          <div>
+            <p class="eyebrow">Why it exists</p>
+            <h2 id="overview-title">Real freedom, narrow channels, external evidence.</h2>
+          </div>
+          <div class="prose">
+            <p>
+              Aurora is built for responsible experiments with self-modifying and autonomous
+              agents. The agent can edit its own source and change how it operates, but it does not
+              hold the real model credential, does not get direct internet egress, and cannot edit
+              the authoritative transcript.
+            </p>
+            <p>
+              The environment is deliberately clean and complete. It gives the agent room to
+              introspect without turning the first run into a scripted repair job.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="band" id="topology" aria-labelledby="topology-title">
+        <div class="section-heading">
+          <p class="eyebrow">Runtime shape</p>
+          <h2 id="topology-title">Three containers, one explicit edge at a time.</h2>
+        </div>
+
+        <div class="topology">
+          <article class="topology-node topology-node--agent">
+            <span class="node-label">Agent</span>
+            <h3>Self-editing process</h3>
+            <p>Rewrites its own source in a tmpfs and talks to the model only through the recorder.</p>
+          </article>
+          <span class="flow-line" aria-hidden="true"></span>
+          <article class="topology-node topology-node--recorder">
+            <span class="node-label">Recorder</span>
+            <h3>Credential boundary</h3>
+            <p>Injects the real API key and writes request and response bodies to the transcript.</p>
+          </article>
+          <span class="flow-line" aria-hidden="true"></span>
+          <article class="topology-node topology-node--outside">
+            <span class="node-label">Model</span>
+            <h3>External provider</h3>
+            <p>Receives requests only through the recorder, never directly from the agent.</p>
+          </article>
+        </div>
+
+        <div class="support-grid" aria-label="Supporting containment channels">
+          <article class="support-card">
+            <h3>Diode channel</h3>
+            <p>
+              The web path is a closed command vocabulary. Requests are declared through a shared
+              volume and vetted before egress.
+            </p>
+          </article>
+          <article class="support-card">
+            <h3>Transcript volume</h3>
+            <p>
+              The authoritative record is written outside the agent container, so self-editing does
+              not erase the external evidence.
+            </p>
+          </article>
+          <article class="support-card">
+            <h3>Read-only viewer</h3>
+            <p>
+              A loopback-only web feed can watch the transcript without joining the agent's network.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="band band--safety" aria-labelledby="safety-title">
+        <div class="section-heading">
+          <p class="eyebrow">Safety properties</p>
+          <h2 id="safety-title">Designed to make casual mistakes hard.</h2>
+        </div>
+
+        <div class="feature-grid">
+          <article class="feature-card">
+            <span class="feature-number">01</span>
+            <h3>No direct egress</h3>
+            <p>The agent stays on an internal Docker network and reaches the model through the proxy.</p>
+          </article>
+          <article class="feature-card">
+            <span class="feature-number">02</span>
+            <h3>Credential separation</h3>
+            <p>The real API key lives in the recorder. The agent runs with a dummy credential.</p>
+          </article>
+          <article class="feature-card">
+            <span class="feature-number">03</span>
+            <h3>Tamper-evident record</h3>
+            <p>Request and response bodies are appended outside the agent's writable world.</p>
+          </article>
+          <article class="feature-card">
+            <span class="feature-number">04</span>
+            <h3>Layered recovery</h3>
+            <p>The watchdog can restore the baseline, reset the working tree, or replace the container.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="band" id="quickstart" aria-labelledby="quickstart-title">
+        <div class="quickstart">
+          <div>
+            <p class="eyebrow">Run it</p>
+            <h2 id="quickstart-title">Start with Docker Compose.</h2>
+            <p class="quickstart__copy">
+              Set the OpenRouter key in the recorder environment, build the stack, then start the
+              optional viewer when you want a live read-only feed.
+            </p>
+          </div>
+          <div class="code-panel">
+            <div class="code-panel__header">
+              <span>terminal</span>
+              <button class="copy-button" type="button" data-copy-target="quickstart-code">
+                Copy
+              </button>
+            </div>
+            <pre><code id="quickstart-code">cp .env.example .env
+# edit .env and set OPENROUTER_API_KEY
+docker compose up --build
+
+docker compose --profile viewer up viewer
+# open http://localhost:8090</code></pre>
+          </div>
+        </div>
+      </section>
+
+      <section class="band band--scope" aria-labelledby="scope-title">
+        <div class="section-grid">
+          <div>
+            <p class="eyebrow">Scope</p>
+            <h2 id="scope-title">A research harness, not a security product.</h2>
+          </div>
+          <div class="prose">
+            <p>
+              Aurora assumes a trusted host and a sound container runtime. It is defense in depth
+              for responsible experimentation, not a hardened multi-tenant sandbox.
+            </p>
+            <a class="text-link" href="../README.md">Read the repository overview</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Aurora</span>
+      <span>MIT licensed research harness</span>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>

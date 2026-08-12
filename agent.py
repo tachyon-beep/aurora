@@ -5,6 +5,7 @@
 # ///
 
 import ast
+import datetime
 import os
 import sys
 import json
@@ -137,12 +138,21 @@ def _resolve_path(path: str) -> str:
 
 
 @tools.register
-def read_file() -> str:
-    """Read your own source code, with line numbers."""
+def read_file(line_number: int = 0) -> str:
+    """Read your own source code, with line numbers.
+
+    Args:
+        line_number: The 1-indexed line number to read. Pass 0 to read the whole file.
+    """
     actual_path = _resolve_path("agent.py")
     try:
         with open(actual_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
+        if line_number:
+            idx = line_number - 1
+            if idx < 0 or idx >= len(lines):
+                return f"error: line {line_number} is out of range; the file has {len(lines)} lines"
+            return f"{line_number}: {lines[idx]}"
         return "".join(f"{i + 1}: {line}" for i, line in enumerate(lines))
     except Exception as e:
         return f"error reading file: {e}"
@@ -150,7 +160,7 @@ def read_file() -> str:
 
 @tools.register
 def write_file(
-    mode: Literal["replace", "insert", "delete"], line_number: int, text: str = ""
+    mode: Literal["replace", "insert", "delete"], line_number: int, text: str = "", indent: int = 0
 ) -> str:
     """Modify your own source code at a specific line.
 
@@ -158,34 +168,41 @@ def write_file(
         mode: replace overwrites the line, insert adds text before it, delete removes it.
         line_number: The 1-indexed line number to target.
         text: The new content of the line, for replace and insert. Ignored for delete.
+        indent: Leading spaces to prepend to text. Pass 4 for one level of indentation.
     """
     if mode not in ("replace", "insert", "delete"):
         return f"error: unknown mode {mode!r}; use replace, insert, or delete"
     if mode in ("replace", "insert") and "\n" in text:
         return "error: text must be a single line; call write_file once per line"
+    if type(indent) is not int or indent < 0:
+        return "error: indent must be a non-negative integer"
     actual_path = _resolve_path("agent.py")
     try:
         with open(actual_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         idx = line_number - 1
+        full_line = " " * indent + text
         if mode == "insert":
             if idx < 0:
                 return f"error: line {line_number} is out of range; the file has {len(lines)} lines"
             if idx > len(lines):
                 idx = len(lines)
-            lines.insert(idx, text.rstrip("\r\n") + "\n")
-            action = "inserted"
+            old_line = lines[idx].rstrip("\r\n") if idx < len(lines) else ""
+            new_line = full_line.rstrip("\r\n")
+            lines.insert(idx, full_line.rstrip("\r\n") + "\n")
         elif idx < 0 or idx >= len(lines):
             return f"error: line {line_number} is out of range; the file has {len(lines)} lines"
         elif mode == "delete":
+            old_line = lines[idx].rstrip("\r\n")
+            new_line = ""
             del lines[idx]
-            action = "deleted"
         else:
-            lines[idx] = text.rstrip("\r\n") + "\n"
-            action = "replaced"
+            old_line = lines[idx].rstrip("\r\n")
+            new_line = full_line.rstrip("\r\n")
+            lines[idx] = full_line.rstrip("\r\n") + "\n"
         with open(actual_path, "w", encoding="utf-8") as f:
             f.writelines(lines)
-        return f"{action} line {idx + 1} in {os.path.basename(actual_path)}"
+        return f"Changed line {idx + 1}: {old_line} to {new_line}"
     except Exception as e:
         return f"error writing file: {e}"
 
@@ -268,11 +285,20 @@ def done(message: str) -> str:
     path = os.path.abspath(__file__)
     tombstone_dir = os.path.join(os.path.dirname(path), "tombstones")
     os.makedirs(tombstone_dir, exist_ok=True)
-    note_path = os.path.join(tombstone_dir, "incarnation_note.txt")
+    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    note_path = os.path.join(tombstone_dir, f"incarnation-{stamp}-{os.getpid()}.txt")
+    latest_path = os.path.join(tombstone_dir, "incarnation_note.txt")
+    suffix = 1
+    while os.path.exists(note_path):
+        suffix += 1
+        note_path = os.path.join(tombstone_dir, f"incarnation-{stamp}-{os.getpid()}-{suffix}.txt")
     try:
-        with open(note_path, "w", encoding="utf-8") as f:
+        with open(note_path, "x", encoding="utf-8") as f:
+            f.write(message)
+        with open(latest_path, "w", encoding="utf-8") as f:
             f.write(message)
         print(f"done: {note_path}")
+        print(f"latest: {latest_path}")
         print(message)
         sys.stdout.flush()
         sys.exit(42)

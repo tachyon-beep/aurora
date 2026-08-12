@@ -6,34 +6,70 @@ from openai import OpenAI
 
 CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "120000"))
 
+SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_context.json")
+
 
 def _estimate_tokens(messages):
     return len(json.dumps(messages, ensure_ascii=False)) // 4
 
 
 def clip_to_window(messages, budget_tokens=None):
-    """Return the system messages plus the most recent messages that fit the token budget.
+    """Return the pinned messages plus the most recent messages that fit the token budget.
 
     The conversation history is kept whole in memory; this windows only what each request
-    sends to the model. System messages are always retained, and the window never begins on
-    a tool result whose originating tool call was dropped. A budget of zero or less disables
-    windowing and sends the whole history.
+    sends to the model. System messages and the first user message are always retained,
+    in that order, ahead of the recent window; the first user message is not repeated when
+    it already falls inside the window. The window never begins on a tool result whose
+    originating tool call was dropped. A budget of zero or less disables windowing and
+    sends the whole history.
     """
     if budget_tokens is None:
-        budget_tokens = CONTEXT_WINDOW_TOKENS
+        budget_tokens = int(os.getenv("CONTEXT_WINDOW_TOKENS", str(CONTEXT_WINDOW_TOKENS)))
     if budget_tokens <= 0:
         return messages
     system = [m for m in messages if m.get("role") == "system"]
     rest = [m for m in messages if m.get("role") != "system"]
+    first_user = next((m for m in rest if m.get("role") == "user"), None)
+    pinned = system + ([first_user] if first_user is not None else [])
     kept = []
     for m in reversed(rest):
         candidate = [m] + kept
-        if kept and _estimate_tokens(system + candidate) > budget_tokens:
+        prefix = system if any(c is first_user for c in candidate) else pinned
+        if kept and _estimate_tokens(prefix + candidate) > budget_tokens:
             break
         kept = candidate
     while kept and kept[0].get("role") == "tool":
         kept = kept[1:]
+    if first_user is not None and not any(m is first_user for m in kept):
+        return pinned + kept
     return system + kept
+
+
+def condense_duplicate_tool_results(messages):
+    """Return a copy of the message list with repeated tool results condensed.
+
+    Two tool messages are duplicates when their name and content are identical. The last
+    occurrence keeps its full content; each earlier duplicate whose content is at least
+    200 characters long has its content replaced with a reference to the more recent
+    result. The input list and its messages are not modified.
+    """
+    last_index = {}
+    for i, m in enumerate(messages):
+        if m.get("role") == "tool" and isinstance(m.get("content"), str):
+            last_index[(m.get("name"), m.get("content"))] = i
+    out = []
+    for i, m in enumerate(messages):
+        if m.get("role") == "tool":
+            content = m.get("content")
+            if (
+                isinstance(content, str)
+                and len(content) >= 200
+                and last_index[(m.get("name"), content)] != i
+            ):
+                m = dict(m)
+                m["content"] = f"duplicate of a more recent {m.get('name')} result"
+        out.append(m)
+    return out
 
 
 def load_dotenv():
@@ -53,12 +89,20 @@ def load_dotenv():
 
 
 def build_client():
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        print("error: OPENROUTER_API_KEY is not set")
-        sys.exit(1)
+    llm_base = os.getenv("LLM_BASE_URL", "").strip()
+    model = os.getenv("LLM_MODEL") or os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-pro")
 
-    model = os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-pro")
+    if llm_base:
+        api_key = os.getenv("LLM_API_KEY") or "sk-local"
+        direct_url = llm_base
+    else:
+        api_key = os.getenv("OPENROUTER_API_KEY")
+        if not api_key:
+            print(
+                "error: set OPENROUTER_API_KEY, or LLM_BASE_URL for an OpenAI-compatible upstream"
+            )
+            sys.exit(1)
+        direct_url = "https://openrouter.ai/api/v1"
 
     base_url = os.getenv("OPENROUTER_BASE_URL", "http://localhost:8088/api/v1")
     proxy_detected = False
@@ -73,7 +117,7 @@ def build_client():
 
     if not proxy_detected and ("localhost" in base_url or "127.0.0.1" in base_url):
         print("local transcript proxy not detected on port 8088")
-        base_url = "https://openrouter.ai/api/v1"
+        base_url = direct_url
     else:
         print(f"connected to transcript proxy at {base_url}")
 
@@ -89,7 +133,7 @@ def run_agent_loop(client, model, messages, tools, max_turns=1000):
 
         api_kwargs = {
             "model": model,
-            "messages": clip_to_window(messages),
+            "messages": clip_to_window(condense_duplicate_tool_results(messages)),
             "extra_headers": {
                 "HTTP-Referer": "https://github.com/john/aurora",
                 "X-Title": "Lightweight Agent Harness",
@@ -119,9 +163,7 @@ def run_agent_loop(client, model, messages, tools, max_turns=1000):
         if message.content:
             print(message.content, end="", flush=True)
 
-        assistant_message = {"role": "assistant"}
-        if message.content:
-            assistant_message["content"] = message.content
+        assistant_message = {"role": "assistant", "content": message.content or reasoning or ""}
         if message.tool_calls:
             assistant_message["tool_calls"] = [
                 {
@@ -180,21 +222,28 @@ def run_agent_loop(client, model, messages, tools, max_turns=1000):
         print("loop halted: exceeded maximum iterations")
 
 
+def save_session(messages):
+    """Persist the full conversation history so the next process resumes it."""
+    try:
+        with open(SESSION_FILE, "w", encoding="utf-8") as f:
+            json.dump(messages, f)
+    except Exception as e:
+        print(f"warning: failed to save session context: {e}")
+
+
 def main(agent_module):
     load_dotenv()
     client, model = build_client()
 
-    session_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_context.json")
-
     resumed = False
-    if "--resume" in sys.argv or os.path.exists(session_file):
-        if os.path.exists(session_file):
+    if "--resume" in sys.argv or os.path.exists(SESSION_FILE):
+        if os.path.exists(SESSION_FILE):
             try:
-                with open(session_file, "r", encoding="utf-8") as f:
+                with open(SESSION_FILE, "r", encoding="utf-8") as f:
                     agent_module.conversation_history = json.load(f)
-                os.remove(session_file)
+                os.remove(SESSION_FILE)
                 resumed = True
-                print("resumed session after migration")
+                print("resumed session")
             except Exception as e:
                 print(f"warning: failed to load session context: {e}")
 
@@ -216,5 +265,6 @@ def main(agent_module):
 
     run_agent_loop(client, model, agent_module.conversation_history, agent_module.tools)
 
+    save_session(agent_module.conversation_history)
     print("autonomous loop finished cleanly; exiting")
     sys.exit(0)

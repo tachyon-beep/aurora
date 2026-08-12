@@ -14,6 +14,29 @@ PLAIN_TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.txt"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
+def upstream_url():
+    """Return the upstream chat-completions URL.
+
+    When LLM_BASE_URL is set, the recorder forwards to that OpenAI-compatible
+    endpoint; otherwise it forwards to OpenRouter.
+    """
+    base = os.environ.get("LLM_BASE_URL", "").strip()
+    if base:
+        return base.rstrip("/") + "/chat/completions"
+    return OPENROUTER_URL
+
+
+def upstream_api_key():
+    """Return the API key injected into upstream requests.
+
+    LLM_API_KEY (possibly empty, for no-auth local servers) applies when
+    LLM_BASE_URL is set; otherwise OPENROUTER_API_KEY applies.
+    """
+    if os.environ.get("LLM_BASE_URL", "").strip():
+        return os.environ.get("LLM_API_KEY", "")
+    return os.environ.get("OPENROUTER_API_KEY", "")
+
+
 def build_forward_headers(headers, api_key):
     """Build the headers forwarded upstream.
 
@@ -47,12 +70,10 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             req_data = {"raw_body": req_body.decode("utf-8", errors="replace")}
 
-        headers_to_forward = build_forward_headers(
-            self.headers, os.environ.get("OPENROUTER_API_KEY", "")
-        )
+        headers_to_forward = build_forward_headers(self.headers, upstream_api_key())
 
         req = urllib.request.Request(
-            OPENROUTER_URL,
+            upstream_url(),
             data=req_body,
             headers=headers_to_forward,
             method="POST",
@@ -242,10 +263,15 @@ class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
 
 
 def main():
+    if not os.environ.get("LLM_BASE_URL", "").strip() and not os.environ.get("OPENROUTER_API_KEY"):
+        print("error: set OPENROUTER_API_KEY, or LLM_BASE_URL for an OpenAI-compatible upstream")
+        sys.exit(1)
+
     print("=" * 60)
-    print("      OPENROUTER TRANSCRIPT PROXY SERVER")
+    print("      TRANSCRIPT PROXY SERVER")
     print("=" * 60)
-    print(f"Listening on: http://localhost:{PORT}")
+    print(f"Listening on:  http://localhost:{PORT}")
+    print(f"Forwarding to: {upstream_url()}")
     print(f"Logging to:    {TRANSCRIPT_FILE}")
     print("-" * 60)
 

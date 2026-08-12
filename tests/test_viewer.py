@@ -31,7 +31,7 @@ def test_load_turns_since_offset(tmp_path):
     assert [t["timestamp"] for t in turns] == ["T1", "T2"]
 
 
-def test_load_turns_skips_malformed_lines(tmp_path):
+def test_load_turns_retries_malformed_final_line(tmp_path):
     p = tmp_path / "t.jsonl"
     with open(p, "w", encoding="utf-8") as f:
         f.write(
@@ -42,9 +42,29 @@ def test_load_turns_skips_malformed_lines(tmp_path):
         )
         f.write("{ this is a half-written line\n")  # malformed / mid-append
     turns, total = viewer.load_turns(str(p), 0)
-    # total counts physical lines; the malformed one is skipped from turns
-    assert total == 2
+    assert total == 1
     assert [t["index"] for t in turns] == [0]
+
+
+def test_load_turns_skips_malformed_nonfinal_lines(tmp_path):
+    p = tmp_path / "t.jsonl"
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {"timestamp": "T0", "request": {"model": "m", "messages": []}, "response": {}}
+            )
+            + "\n"
+        )
+        f.write("{ this is corrupt and not coming back }\n")
+        f.write(
+            json.dumps(
+                {"timestamp": "T2", "request": {"model": "m", "messages": []}, "response": {}}
+            )
+            + "\n"
+        )
+    turns, total = viewer.load_turns(str(p), 0)
+    assert total == 3
+    assert [t["index"] for t in turns] == [0, 2]
 
 
 def test_summarize_extracts_request_messages():
@@ -148,8 +168,27 @@ def test_http_serves_page_and_api(tmp_path, monkeypatch):
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/") as r:
             assert r.status == 200
+            assert r.headers["Cache-Control"] == "no-store"
+            assert r.headers["X-Content-Type-Options"] == "nosniff"
+            assert r.headers["Referrer-Policy"] == "no-referrer"
+            assert "default-src 'none'" in r.headers["Content-Security-Policy"]
+            assert "connect-src 'self'" in r.headers["Content-Security-Policy"]
+            assert "img-src 'self' data:" in r.headers["Content-Security-Policy"]
             body = r.read().decode("utf-8")
             assert "<!doctype html>" in body.lower()
+            assert '<link rel="icon" href="data:,">' in body
+            assert 'role="search"' in body
+            assert 'id="searchInput"' in body
+            assert 'id="typeFilter"' in body
+            assert 'id="visibleCount"' in body
+            assert 'id="clearFiltersButton"' in body
+            assert 'id="followButton"' in body
+            assert "function resetFeed()" in body
+            assert "function focusSearch()" in body
+            assert "function clearFilters()" in body
+            assert "grid-template-columns: auto auto auto auto minmax(0, 1fr);" in body
+            assert ".head .what { grid-column: 1 / -1;" in body
+            assert "summary::before" not in body
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/turns?since=0") as r:
             assert r.status == 200
             data = json.loads(r.read().decode("utf-8"))
