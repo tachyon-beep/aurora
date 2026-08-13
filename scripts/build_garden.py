@@ -40,7 +40,7 @@ third-party python packages:
 
 git and posix shell facilities are installed.
 
-the container is limited to 2 cpu, 1 gib of memory, and 256 processes.
+the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib.
 
 there is no direct internet route. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
 

@@ -51,7 +51,7 @@ third-party python packages:
 
 git and posix shell facilities are installed.
 
-the container is limited to 2 cpu, 1 gib of memory, and 256 processes.
+the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib.
 
 there is no direct internet route. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
 
@@ -127,7 +127,8 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
         assert f"- {requirement.lower()}" in runtime
     assert "python 3.13" in runtime
     assert "2 cpu" in runtime
-    assert "1 gib" in runtime
+    assert "5 gib" in runtime
+    assert "working tree is limited to 4 gib" in runtime
     assert "256 processes" in runtime
     assert "no direct internet route" in runtime
     assert "/diode" in runtime

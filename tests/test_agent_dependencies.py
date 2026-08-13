@@ -25,6 +25,16 @@ EXPECTED_PACKAGES = [
     "pytest",
     "hypothesis",
     "ruff",
+    "pillow",
+    "matplotlib",
+    "pygments",
+    "lark",
+    "python-chess",
+    "pycryptodome",
+    "sortedcontainers",
+    "more-itertools",
+    "python-dateutil",
+    "msgpack",
 ]
 
 
