@@ -356,6 +356,7 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "lives_ended",
         "ended_by_choice",
         "error_count",
+        "self_calls",
     }
     assert set(snap["diode"]) == {"outputs", "published", "published_total"}
     assert isinstance(snap["now"], float)

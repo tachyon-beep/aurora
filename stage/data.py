@@ -377,6 +377,11 @@ def code_stats(work_dir):
     return result
 
 
+def loop_turns(turns):
+    """The agent's own turns, with its tools' sub-calls removed."""
+    return [turn for turn in turns if turn.get("kind") != "subcall"]
+
+
 def incarnation_stats(
     turns,
     total,
@@ -390,6 +395,8 @@ def incarnation_stats(
     """Derive incarnation number, model, timing, and the counters the page reports."""
     if now is None:
         now = time.time()
+    sub_calls = [turn for turn in turns if turn.get("kind") == "subcall"]
+    turns = loop_turns(turns)
     notes = tombstone_paths(work_dir)
     incarnation = len(notes) + 1
     if deaths is None:
@@ -429,6 +436,9 @@ def incarnation_stats(
         "lives_ended": len(notes),
         "ended_by_choice": sum(1 for entry in entries if entry.get("kind") == "declared"),
         "error_count": sum(1 for turn in counted if turn.get("error")),
+        "self_calls": sum(
+            1 for turn in sub_calls if turn.get("life") is None or turn.get("life") == incarnation
+        ),
     }
 
 
@@ -483,6 +493,8 @@ def self_modification_events(turns, limit=6, life=None):
     events = []
     for turn in turns:
         if life is not None and turn.get("life") != life:
+            continue
+        if turn.get("kind") == "subcall":
             continue
         for tc in turn.get("tool_calls", []) or []:
             name = tc.get("name")
@@ -572,7 +584,7 @@ def lineage(work_dir, turns, limit=5, now=None):
         )
     if out:
         return out
-    for turn in reversed(turns):
+    for turn in reversed(loop_turns(turns)):
         for tc in turn.get("tool_calls", []) or []:
             if tc.get("name") == "done":
                 message = _load_arguments(tc.get("arguments")).get("message")

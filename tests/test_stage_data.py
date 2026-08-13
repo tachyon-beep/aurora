@@ -63,6 +63,7 @@ def test_incarnation_stats(tmp_path):
         "lives_ended": 0,
         "ended_by_choice": 0,
         "error_count": 0,
+        "self_calls": 0,
     }
     tomb = tmp_path / "tombstones"
     tomb.mkdir()
@@ -647,3 +648,55 @@ def test_subcall_prompt_is_capped_and_tolerates_junk():
     assert data._subcall_prompt({"messages": []}) == ""
     assert data._subcall_prompt({"messages": [{"role": "user", "content": None}]}) == ""
     assert data._subcall_prompt({"messages": ["not a dict"]}) == ""
+
+
+def _turn(index, kind="loop", model="m", tool_calls=None, error=None, life=None, epoch=None):
+    return {
+        "index": index,
+        "kind": kind,
+        "model": model,
+        "timestamp": f"T{index}",
+        "epoch": epoch,
+        "life": life,
+        "tool_calls": [{"name": n, "arguments": a} for n, a in (tool_calls or [])],
+        "error": error,
+    }
+
+
+def test_loop_turns_filters_subcalls():
+    turns = [_turn(0), _turn(1, kind="subcall"), _turn(2)]
+    assert [t["index"] for t in data.loop_turns(turns)] == [0, 2]
+
+
+def test_incarnation_stats_ignores_subcalls(tmp_path):
+    turns = [
+        _turn(0, model="deepseek/loop"),
+        _turn(1, kind="subcall", model="other/sub", error={"message": "boom"}),
+        _turn(2, model="deepseek/loop"),
+        _turn(3, kind="subcall", model="other/sub"),
+    ]
+    stats = data.incarnation_stats(turns, 4, str(tmp_path))
+    assert stats["model"] == "deepseek/loop"
+    assert stats["turns_this_life"] == 2
+    assert stats["error_count"] == 0
+    assert stats["self_calls"] == 2
+    assert stats["last_timestamp"] == "T2"
+
+
+def test_self_modification_events_ignores_subcalls():
+    turns = [
+        _turn(0, kind="subcall", tool_calls=[("write_file", "{}")]),
+        _turn(1, tool_calls=[("write_file", '{"start_line": 1, "end_line": 2, "content": "x"}')]),
+    ]
+    events = data.self_modification_events(turns)
+    assert [e["index"] for e in events] == [1]
+
+
+def test_lineage_transcript_fallback_ignores_subcalls(tmp_path):
+    turns = [
+        _turn(4, kind="subcall", tool_calls=[("done", '{"message": "not a real ending."}')]),
+        _turn(5, tool_calls=[("done", '{"message": "the real ending."}')]),
+    ]
+    out = data.lineage(str(tmp_path), turns)
+    assert len(out) == 1
+    assert out[0]["summary"] == "the real ending."
