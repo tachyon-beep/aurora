@@ -4,8 +4,9 @@
 **Status:** Approved (design discussion in session)
 **Context:** Phase 4a of the stream-demonstration project
 (`docs/superpowers/specs/2026-08-13-stream-demonstration-design.md`, "Diode enrichment").
-The diode's closed command vocabulary grows from four commands to ten, giving agents more
-of the outside world to reach — through the same egress-only, gated, budgeted channel.
+The diode's closed command vocabulary grows from four commands to eleven, giving agents more
+of the outside world to reach — and one way to speak into it — through the same egress-only,
+gated, budgeted channel.
 
 ## Commands
 
@@ -20,6 +21,12 @@ opens gates by setting variables in `console.json`; `HELP.md` lists every gate n
 | `arxiv <query>` | `enable_papers` | Fetch `https://export.arxiv.org/api/query?search_query=all:<quoted>&max_results=5` (Atom); write title/summary/link per entry |
 | `abc` | `enable_news` | Fetch `https://www.abc.net.au/news/feed/51120/rss.xml`; write `headline — link` lines via the feed parser |
 | `entropy <n>` | `enable_entropy` | Write `os.urandom(n)` as hex; `n` capped to 1–256; no network |
+| `publish <text>` | `enable_publishing` | Write the text to `published/<UTC stamp>.txt` in the diode volume; text capped at 4000 characters; no network, no budget |
+
+`publish` is deliberately ambiguous about audience but never false: the diode volume genuinely
+leaves the agent's container and is read from outside (the operator console browses it; the
+stream page may render posts in phase 3). Help text states only "make text available outside
+the container". The confirmation output is factual: the filename it was recorded under.
 
 ## Shared mechanics
 
