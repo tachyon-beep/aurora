@@ -63,3 +63,27 @@ def test_clip_never_starts_on_an_orphan_tool_result():
     non_system = [m for m in out if m.get("role") != "system"]
     assert non_system
     assert non_system[0]["role"] != "tool"
+
+
+def test_reasoning_effort_unset_returns_none(monkeypatch):
+    monkeypatch.delenv("REASONING_EFFORT", raising=False)
+    monkeypatch.setattr(chassis, "REASONING_EFFORT", "")
+    assert chassis.reasoning_effort() is None
+
+
+def test_reasoning_effort_accepts_listed_levels(monkeypatch):
+    for level in chassis.REASONING_EFFORT_LEVELS:
+        monkeypatch.setenv("REASONING_EFFORT", level.upper())
+        assert chassis.reasoning_effort() == level
+
+
+def test_reasoning_effort_rejects_unlisted_values(monkeypatch):
+    for value in ("maximum", "11", "true", " "):
+        monkeypatch.setenv("REASONING_EFFORT", value)
+        assert chassis.reasoning_effort() is None
+
+
+def test_reasoning_effort_module_constant_applies_without_env(monkeypatch):
+    monkeypatch.delenv("REASONING_EFFORT", raising=False)
+    monkeypatch.setattr(chassis, "REASONING_EFFORT", "high")
+    assert chassis.reasoning_effort() == "high"

@@ -9,11 +9,24 @@ from openai import OpenAI
 
 CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "120000"))
 
+REASONING_EFFORT_LEVELS = ("none", "low", "medium", "high")
+REASONING_EFFORT = os.getenv("REASONING_EFFORT", "")
+
 SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_context.json")
 
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
 EXIT_TERMINATED = 43
 EXIT_ENVIRONMENT = 44
+
+
+def reasoning_effort():
+    """Return the configured reasoning effort, or None when unset or unrecognised.
+
+    Recognised values are listed in REASONING_EFFORT_LEVELS. When this returns
+    None the request omits the field and the model applies its own default.
+    """
+    value = os.getenv("REASONING_EFFORT", REASONING_EFFORT).strip().lower()
+    return value if value in REASONING_EFFORT_LEVELS else None
 
 
 def _estimate_tokens(messages):
@@ -345,6 +358,10 @@ def run_agent_loop(client, model, messages, tools, max_turns=1000):
                 "X-Title": "Lightweight Agent Harness",
             },
         }
+
+        effort = reasoning_effort()
+        if effort:
+            api_kwargs["reasoning_effort"] = effort
 
         if tools.schemas:
             api_kwargs["tools"] = tools.schemas

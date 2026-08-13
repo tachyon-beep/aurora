@@ -30,6 +30,7 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-v4-pro}
       LLM_MODEL: ${LLM_MODEL:-}
       CONTEXT_WINDOW_TOKENS: ${CONTEXT_WINDOW_TOKENS:-120000}
+      REASONING_EFFORT: ${REASONING_EFFORT:-}
     volumes:
       - diode:/diode
       - state:/state

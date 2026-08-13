@@ -30,7 +30,12 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      `agent.py` — a test enforces this. `chassis.py` is not reset by `reset` (it is stable substrate,
      not self-modifiable surface) and is not duplicated like the `agent.py`/`agent_stock.py` pair.
      It also holds the agent's tunable context window (`CONTEXT_WINDOW_TOKENS` + `clip_to_window`),
-     a send-time view over the full history the agent can grow or shrink once it reaches the chassis.
+     a send-time view over the full history the agent can grow or shrink once it reaches the chassis,
+     and its reasoning effort (`REASONING_EFFORT` + `REASONING_EFFORT_LEVELS` + `reasoning_effort()`),
+     omitted from the request when unset. Both are levers on the agent's own cognition, discoverable
+     in the substrate rather than given in `agent.py`. Note that a lowered effort persists across
+     incarnations for the life of the container (`reset` and tier-1 recovery restore `agent.py`, not
+     `chassis.py`) and is cleared only by a container restart, which recreates `/work` from the image.
      The chassis is also the resilience layer: it repairs tool-call pairing in the send view
      (never the in-memory history), classifies API failures (transient failures retry with
      backoff and exit 44; an invalid model falls back to the environment default; unrepairable
