@@ -79,6 +79,8 @@ def rotate_if_needed(path, max_bytes=None):
         if not os.path.exists(path) or os.path.getsize(path) < max_bytes:
             return None
         final = archive_name(path)
+        if os.path.exists(final):
+            return None
         tmp = final + ".tmp"
         with open(path, "rb") as src, gzip.open(tmp, "wb") as dst:
             shutil.copyfileobj(src, dst, 65536)

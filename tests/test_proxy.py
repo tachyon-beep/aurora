@@ -122,3 +122,22 @@ def test_rotate_if_needed_non_oserror_is_contained(tmp_path, monkeypatch):
     assert result is None
     assert live.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_rotate_if_needed_never_overwrites_an_existing_archive(tmp_path, monkeypatch):
+    proxy = _proxy()
+    live = tmp_path / "agent_life_transcript.jsonl"
+    live.write_text('{"a": 1}\n' * 100, encoding="utf-8")
+    monkeypatch.setattr(
+        proxy, "archive_name", lambda path, stamp=None: str(tmp_path / "fixed.jsonl.gz")
+    )
+    first = proxy.rotate_if_needed(str(live), max_bytes=10)
+    assert first == str(tmp_path / "fixed.jsonl.gz")
+    live.write_text('{"b": 2}\n' * 100, encoding="utf-8")
+    second = proxy.rotate_if_needed(str(live), max_bytes=10)
+    assert second is None
+    assert live.read_text(encoding="utf-8") == '{"b": 2}\n' * 100
+    import gzip
+
+    with gzip.open(str(tmp_path / "fixed.jsonl.gz"), "rt", encoding="utf-8") as f:
+        assert f.read() == '{"a": 1}\n' * 100
