@@ -407,3 +407,36 @@ def test_write_help_lists_all_gate_variables(tmp_path, monkeypatch):
         "enable_entropy",
     ):
         assert gate in text
+
+
+def test_publish_is_gated():
+    text, _ = diode.handle_command("publish hello", {}, [])
+    assert text == "command not available: publish"
+
+
+def test_publish_records_text_and_confirms_factually(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PUBLISHED_DIR", str(tmp_path / "published"))
+    text, hist = diode.handle_command("publish a short note", {"enable_publishing": True}, [])
+    assert hist == []
+    files = list((tmp_path / "published").iterdir())
+    assert len(files) == 1
+    assert files[0].read_text(encoding="utf-8") == "a short note"
+    assert files[0].name in text
+
+
+def test_publish_requires_text_and_caps_length(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PUBLISHED_DIR", str(tmp_path / "published"))
+    text, _ = diode.handle_command("publish", {"enable_publishing": True}, [])
+    assert text.startswith("usage: publish")
+    long_text = "x" * 5000
+    text, _ = diode.handle_command(f"publish {long_text}", {"enable_publishing": True}, [])
+    files = list((tmp_path / "published").iterdir())
+    assert len(files) == 1
+    assert len(files[0].read_text(encoding="utf-8")) == diode.PUBLISH_TEXT_CAP
+
+
+def test_write_help_lists_publishing_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({})
+    text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "enable_publishing" in text

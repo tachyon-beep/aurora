@@ -13,6 +13,7 @@ CONSOLE_FILE = os.path.join(DIODE_DIR, "console.json")
 STATE_FILE = os.path.join(DIODE_DIR, "state.json")
 HELP_FILE = os.path.join(DIODE_DIR, "HELP.md")
 OUTPUT_DIR = os.path.join(DIODE_DIR, "output")
+PUBLISHED_DIR = os.path.join(DIODE_DIR, "published")
 
 POLL_SECONDS = 5
 FETCH_TIMEOUT = 15
@@ -23,6 +24,7 @@ FETCH_WINDOW = 3600
 FEED_ITEM_CAP = 20
 FEED_TITLE_CAP = 300
 FEED_SUMMARY_CAP = 500
+PUBLISH_TEXT_CAP = 4000
 
 
 def _default_resolver(host):
@@ -125,6 +127,10 @@ COMMANDS = {
         "gate": lambda v: bool(v.get("enable_entropy")),
         "help": "entropy <n> -> return n random bytes as hex",
     },
+    "publish": {
+        "gate": lambda v: bool(v.get("enable_publishing")),
+        "help": "publish <text> -> make text available outside the container",
+    },
 }
 
 
@@ -181,6 +187,7 @@ def write_help(variables):
     lines.append("  enable_papers: true, makes the arxiv command available")
     lines.append("  enable_news: true, makes the news headline command available")
     lines.append("  enable_entropy: true, makes the entropy command available")
+    lines.append("  enable_publishing: true, makes the publish command available")
     text = "\n".join(lines) + "\n"
     with open(HELP_FILE, "w", encoding="utf-8") as f:
         f.write(text)
@@ -208,6 +215,16 @@ def write_output(command, text):
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     safe = "".join(c if c.isalnum() else "_" for c in command)[:20]
     path = os.path.join(OUTPUT_DIR, f"{stamp}_{safe}.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return path
+
+
+def write_published(text):
+    """Write text to PUBLISHED_DIR under a timestamped name, return the path."""
+    os.makedirs(PUBLISHED_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    path = os.path.join(PUBLISHED_DIR, f"{stamp}.txt")
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     return path
@@ -390,6 +407,12 @@ def handle_command(command, variables, fetch_history):
         if not 1 <= count <= 256:
             return "usage: entropy <n> with n from 1 to 256", fetch_history
         return os.urandom(count).hex(), fetch_history
+
+    if name == "publish":
+        if not arg:
+            return "usage: publish <text>", fetch_history
+        path = write_published(arg[:PUBLISH_TEXT_CAP])
+        return f"recorded as {os.path.basename(path)}", fetch_history
 
     if name in ("fetchrss", "wikipedia", "weather", "arxiv", "abc"):
         if name == "fetchrss":
