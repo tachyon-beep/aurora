@@ -42,6 +42,15 @@ def test_env_example_documents_stage_settings():
     text = _read(".env.example")
     assert "STAGE_CONSOLE_TOKEN" in text
     assert "TUNNEL_TOKEN" in text
+    compose = _read("docker-compose.yml")
+    for name in (
+        "STAGE_SUMMARY_API_KEY",
+        "STAGE_SUMMARY_BASE_URL",
+        "STAGE_SUMMARY_MODEL",
+        "STAGE_SUMMARY_INTERVAL_SECONDS",
+    ):
+        assert name in text
+        assert name in compose
 
 
 def test_verify_script_checks_stage_containment():

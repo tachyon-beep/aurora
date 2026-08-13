@@ -1,16 +1,79 @@
+import datetime
+import difflib
 import glob
 import json
 import os
+import re
+import threading
+import time
 
 SELF_MOD_TOOLS = ("write_file", "migrate", "reset", "done")
 TAIL_READ_BYTES = 4_000_000
 TOMBSTONE_READ_BYTES = 4096
+HEAD_READ_BYTES = 8192
+CODE_READ_BYTES = 524_288
+PUBLISHED_READ_BYTES = 4096
+PUBLISHED_TEXT_CAP = 400
+MAX_EPOCH_AGE_SECONDS = 30 * 86400
+
+DIODE_VERBS = {
+    "weather": "read the weather",
+    "wikipedia": "looked something up",
+    "reference": "looked something up",
+    "entropy": "pulled random bytes",
+    "news": "read the headlines",
+    "abc": "read the headlines",
+    "arxiv": "fetched a paper",
+    "paper": "fetched a paper",
+    "papers": "fetched a paper",
+    "feed": "read a feed",
+    "fetchrss": "read a feed",
+    "fetchlinks": "followed a link",
+    "links": "followed a link",
+    "fetchhttp": "fetched a page",
+    "publish": "spoke to the outside",
+}
+
+
+def _plural(count, noun):
+    """A count and its noun, pluralised with a trailing s when count is not one."""
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def contained_file(root, path):
+    """The real path of path when it is a regular file inside root, else None.
+
+    Symbolic links are resolved before the containment test. The agent can plant
+    links in /work and /diode, and the watchdog mirror copies links as links, so
+    every stage-side read of those roots resolves the target and rejects it when
+    it lands outside the mount. Non-regular files are rejected too: a fifo would
+    otherwise block the reading thread.
+    """
+    root_real = os.path.realpath(root)
+    candidate = os.path.realpath(path)
+    if candidate != root_real and not candidate.startswith(root_real + os.sep):
+        return None
+    if not os.path.isfile(candidate):
+        return None
+    return candidate
+
 
 _line_count_state = {}
+_code_stat_state = {}
+_state_lock = threading.Lock()
 
 
 def _count_lines(path):
-    """Count lines in a file, scanning only bytes appended since the previous call."""
+    """Count lines in a file, scanning only bytes appended since the previous call.
+
+    The memo is read-modify-written under a lock: request threads and the
+    summariser's refresh thread call this concurrently.
+    """
+    with _state_lock:
+        return _count_lines_locked(path)
+
+
+def _count_lines_locked(path):
     scanned, count, ends_with_newline = _line_count_state.get(path, (0, 0, True))
     try:
         if os.path.getsize(path) < scanned:
@@ -93,32 +156,310 @@ def load_tail_turns(transcript_path, max_turns=40):
     return turns, total
 
 
-def incarnation_stats(turns, total, work_dir):
-    """Derive incarnation number, current model, and session-file presence."""
-    notes = glob.glob(os.path.join(work_dir, "tombstones", "incarnation-*.txt"))
+def parse_epoch(timestamp):
+    """Epoch seconds for an ISO-8601 timestamp, or None when it cannot be parsed."""
+    if not isinstance(timestamp, str) or not timestamp.strip():
+        return None
+    text = timestamp.strip()
+    if text.endswith("Z") or text.endswith("z"):
+        text = text[:-1] + "+00:00"
+    try:
+        moment = datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=datetime.timezone.utc)
+    try:
+        return moment.timestamp()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def first_transcript_epoch(transcript_path, read_bytes=None):
+    """Epoch of the first parseable transcript entry, from a bounded head read."""
+    if read_bytes is None:
+        read_bytes = HEAD_READ_BYTES
+    try:
+        with open(transcript_path, "rb") as f:
+            raw = f.read(read_bytes)
+    except OSError:
+        return None
+    for text in raw.decode("utf-8", errors="replace").splitlines():
+        line = text.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        epoch = parse_epoch(entry.get("timestamp"))
+        if epoch is not None:
+            return epoch
+    return None
+
+
+def tombstone_paths(work_dir):
+    """Mirrored incarnation tombstone paths, newest first by filename.
+
+    Entries that resolve outside the mirror, or that are not regular files, are
+    dropped.
+    """
+    found = glob.glob(os.path.join(work_dir, "tombstones", "incarnation-*.txt"))
+    return sorted(
+        (path for path in found if contained_file(work_dir, path) is not None),
+        reverse=True,
+    )
+
+
+def _sane_epoch(epoch, now):
+    """The epoch when it is neither in the future nor absurdly old, else None."""
+    if epoch is None:
+        return None
+    age = now - epoch
+    if age < 0 or age > MAX_EPOCH_AGE_SECONDS:
+        return None
+    return epoch
+
+
+def _stamp_epoch(name):
+    """Epoch parsed from a naive local `%Y%m%d_%H%M%S_%f` tombstone filename stamp."""
+    match = re.search(r"incarnation-(\d{8}_\d{6}_\d{6})-", name)
+    if not match:
+        return None
+    try:
+        return datetime.datetime.strptime(match.group(1), "%Y%m%d_%H%M%S_%f").timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _tombstone_epoch(path, now):
+    """When an incarnation ended: mirrored mtime first, filename stamp second."""
+    try:
+        epoch = _sane_epoch(os.stat(path).st_mtime, now)
+    except OSError:
+        epoch = None
+    if epoch is not None:
+        return epoch
+    return _sane_epoch(_stamp_epoch(os.path.basename(path)), now)
+
+
+def tombstone_deaths(work_dir, now=None):
+    """Datable death epochs for the mirrored tombstones, oldest first."""
+    if now is None:
+        now = time.time()
+    deaths = []
+    for path in tombstone_paths(work_dir):
+        epoch = _tombstone_epoch(path, now)
+        if epoch is not None:
+            deaths.append(epoch)
+    return sorted(deaths)
+
+
+def classify_life(epoch, deaths, incarnation):
+    """Which incarnation a moment belongs to, or None when it cannot be placed."""
+    if epoch is None:
+        return None
+    if not deaths:
+        return 1 if incarnation == 1 else None
+    life = 1 + sum(1 for death in deaths if death <= epoch)
+    return min(life, incarnation)
+
+
+def annotate_lives(turns, deaths, incarnation):
+    """Add epoch and life to each turn summary in place, and return the turns."""
+    for turn in turns:
+        epoch = parse_epoch(turn.get("timestamp"))
+        turn["epoch"] = epoch
+        turn["life"] = classify_life(epoch, deaths, incarnation)
+    return turns
+
+
+def _read_capped(path, cap):
+    """The first cap characters of a text file, or None when it cannot be read."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read(cap)
+    except OSError:
+        return None
+
+
+def code_stats(work_dir):
+    """Line counts added and removed between the mirrored seed and the live source.
+
+    Only the two integers cross the boundary; no source text is returned. The
+    diff is memoised on the size and mtime of both files, so it runs on change
+    rather than on every poll.
+    """
+    current_path = contained_file(work_dir, os.path.join(work_dir, "agent.py"))
+    stock_path = contained_file(work_dir, os.path.join(work_dir, "agent_stock.py"))
+    unavailable = {"available": False, "added": 0, "removed": 0}
+    if current_path is None or stock_path is None:
+        with _state_lock:
+            _code_stat_state.pop(work_dir, None)
+        return dict(unavailable)
+    try:
+        current_stat = os.stat(current_path)
+        stock_stat = os.stat(stock_path)
+    except OSError:
+        with _state_lock:
+            _code_stat_state.pop(work_dir, None)
+        return dict(unavailable)
+    key = (
+        current_stat.st_mtime,
+        current_stat.st_size,
+        stock_stat.st_mtime,
+        stock_stat.st_size,
+    )
+    with _state_lock:
+        cached = _code_stat_state.get(work_dir)
+    if cached is not None and cached[0] == key:
+        return dict(cached[1])
+    current = _read_capped(current_path, CODE_READ_BYTES)
+    stock = _read_capped(stock_path, CODE_READ_BYTES)
+    if current is None or stock is None:
+        return dict(unavailable)
+    added = 0
+    removed = 0
+    diff = difflib.unified_diff(stock.splitlines(), current.splitlines(), n=0, lineterm="")
+    for line in diff:
+        if line.startswith("+++") or line.startswith("---"):
+            continue
+        if line.startswith("+"):
+            added += 1
+        elif line.startswith("-"):
+            removed += 1
+    result = {"available": True, "added": added, "removed": removed}
+    with _state_lock:
+        _code_stat_state[work_dir] = (key, dict(result))
+    return result
+
+
+def incarnation_stats(
+    turns,
+    total,
+    work_dir,
+    display_turns=None,
+    lineage_entries=None,
+    deaths=None,
+    transcript_path=None,
+    now=None,
+):
+    """Derive incarnation number, model, timing, and the counters the page reports."""
+    if now is None:
+        now = time.time()
+    notes = tombstone_paths(work_dir)
+    incarnation = len(notes) + 1
+    if deaths is None:
+        deaths = tombstone_deaths(work_dir, now=now)
     last = turns[-1] if turns else {}
+    last_epoch = parse_epoch(last.get("timestamp"))
+    candidates = [deaths[-1]] if deaths else []
+    if transcript_path:
+        head = first_transcript_epoch(transcript_path)
+        if head is not None:
+            candidates.append(head)
+    started_epoch = max(candidates) if candidates else None
+    lives = [turn.get("life") for turn in turns]
+    if any(life is not None for life in lives):
+        turns_this_life = sum(1 for life in lives if life == incarnation)
+    elif started_epoch is not None:
+        turns_this_life = sum(
+            1
+            for turn in turns
+            if turn.get("epoch") is not None and turn.get("epoch") >= started_epoch
+        )
+    else:
+        turns_this_life = len(turns)
+    exact = bool(turns) and turns_this_life != len(turns) and started_epoch is not None
+    counted = display_turns if display_turns is not None else turns
+    entries = lineage_entries or []
     return {
-        "incarnation": len(notes) + 1,
+        "incarnation": incarnation,
         "model": last.get("model"),
         "transcript_turns": total,
+        "turns_this_life": turns_this_life,
+        "turns_this_life_exact": exact,
         "last_timestamp": last.get("timestamp"),
+        "last_epoch": last_epoch,
+        "started_epoch": started_epoch,
         "session_file_present": os.path.exists(os.path.join(work_dir, "session_context.json")),
+        "lives_ended": len(notes),
+        "ended_by_choice": sum(1 for entry in entries if entry.get("kind") == "declared"),
+        "error_count": sum(1 for turn in counted if turn.get("error")),
     }
 
 
-def self_modification_events(turns, limit=12):
-    """Collect recent write_file/migrate/reset/done tool calls from turn summaries."""
+def _load_arguments(arguments):
+    """A tool call's arguments as a dict; malformed or non-object input yields {}."""
+    try:
+        args = json.loads(arguments or "{}")
+    except ValueError:
+        return {}
+    return args if isinstance(args, dict) else {}
+
+
+def _phrase_event(name, arguments):
+    """(kind, headline, summary, quoted) describing one self-modification tool call."""
+    args = _load_arguments(arguments)
+    raw = " ".join((arguments or "").split())[:90]
+    if name == "migrate":
+        reason = args.get("reason")
+        if isinstance(reason, str) and reason.strip():
+            return "migrate", "RESTARTED INTO NEW SOURCE", " ".join(reason.split())[:90], True
+        return "migrate", "RESTARTED INTO NEW SOURCE", raw, False
+    if name == "reset":
+        return "reset", "RESTORED THE CLEAN SEED", "everything written this life is gone", False
+    if name == "done":
+        message = args.get("message")
+        if isinstance(message, str) and message.strip():
+            return "done", "ENDED ITSELF", first_sentence(message, 90), True
+        return "done", "ENDED ITSELF", raw, False
+    try:
+        start = int(args["start_line"])
+        end = int(args["end_line"])
+    except (KeyError, TypeError, ValueError):
+        return "write", "REWROTE ITS OWN SOURCE", raw, False
+    content = args.get("content")
+    lines_in = content.count("\n") + 1 if isinstance(content, str) else 0
+    lines_out = max(end - start + 1, 0)
+    where = f"LINE {start}" if start == end else f"LINES {start}-{end}"
+    return (
+        "write",
+        f"REWROTE {where}",
+        f"{_plural(lines_out, 'line')} out, {_plural(lines_in, 'line')} in",
+        False,
+    )
+
+
+def self_modification_events(turns, limit=6, life=None):
+    """Recent write_file/migrate/reset/done calls, phrased for display.
+
+    When life is given, only turns classified into that incarnation are
+    considered, so an older life's edits cannot crowd out the current one's.
+    """
     events = []
     for turn in turns:
+        if life is not None and turn.get("life") != life:
+            continue
         for tc in turn.get("tool_calls", []) or []:
-            if tc.get("name") in SELF_MOD_TOOLS:
-                events.append(
-                    {
-                        "index": turn.get("index"),
-                        "name": tc.get("name"),
-                        "detail": (tc.get("arguments") or "")[:120],
-                    }
-                )
+            name = tc.get("name")
+            if name not in SELF_MOD_TOOLS:
+                continue
+            arguments = tc.get("arguments") or ""
+            kind, headline, summary, quoted = _phrase_event(name, arguments)
+            events.append(
+                {
+                    "index": turn.get("index"),
+                    "name": name,
+                    "kind": kind,
+                    "headline": headline[:120],
+                    "detail": arguments[:120],
+                    "summary": summary[:160],
+                    "quoted": quoted,
+                }
+            )
     return events[-limit:]
 
 
@@ -134,41 +475,81 @@ def first_sentence(text, cap=140):
     return text
 
 
-def lineage(work_dir, turns, limit=3):
-    """One-line summaries of recent incarnation endings, newest first."""
-    notes = sorted(
-        glob.glob(os.path.join(work_dir, "tombstones", "incarnation-*.txt")),
-        reverse=True,
-    )
+def _ending_kind(text):
+    """How an incarnation ended, read from the head of its tombstone note."""
+    if not text.strip():
+        return "unknown"
+    if "terminated by the harness" in text[:200]:
+        return "harness"
+    return "declared"
+
+
+def _ending_turn(text):
+    """The turn number named in a note's opening, or None when it names none."""
+    match = re.search(r"\bturn (\d{1,6})\b", text[:400])
+    return int(match.group(1)) if match else None
+
+
+def _lineage_entry(source, label, text, ordinal, kind, turn, ended_epoch):
+    """One ending, in the single key set the page renders for every source."""
+    collapsed = " ".join(text.split())
+    return {
+        "source": source,
+        "label": label,
+        "summary": first_sentence(text),
+        "ordinal": ordinal,
+        "kind": kind,
+        "turn": turn,
+        "ended_epoch": ended_epoch,
+        "sentence": first_sentence(text, cap=320),
+        "sentence_chars": len(collapsed),
+    }
+
+
+def lineage(work_dir, turns, limit=5, now=None):
+    """Recent incarnation endings, newest first, with how and when each ended."""
+    if now is None:
+        now = time.time()
+    notes = tombstone_paths(work_dir)
     out = []
-    for path in notes[:limit]:
+    for position, path in enumerate(notes[:limit]):
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read(TOMBSTONE_READ_BYTES)
         except OSError:
             continue
         out.append(
-            {
-                "source": "tombstone",
-                "label": os.path.basename(path),
-                "summary": first_sentence(text),
-            }
+            _lineage_entry(
+                "tombstone",
+                os.path.basename(path),
+                text,
+                len(notes) - position,
+                _ending_kind(text),
+                _ending_turn(text),
+                _tombstone_epoch(path, now),
+            )
         )
     if out:
         return out
     for turn in reversed(turns):
         for tc in turn.get("tool_calls", []) or []:
             if tc.get("name") == "done":
-                try:
-                    message = json.loads(tc.get("arguments") or "{}").get("message", "")
-                except ValueError:
+                message = _load_arguments(tc.get("arguments")).get("message")
+                if not isinstance(message, str):
                     message = tc.get("arguments") or ""
+                epoch = turn.get("epoch")
+                if epoch is None:
+                    epoch = parse_epoch(turn.get("timestamp"))
                 out.append(
-                    {
-                        "source": "transcript",
-                        "label": f"turn {turn.get('index')}",
-                        "summary": first_sentence(message),
-                    }
+                    _lineage_entry(
+                        "transcript",
+                        f"turn {turn.get('index')}",
+                        message,
+                        None,
+                        "declared",
+                        None,
+                        _sane_epoch(epoch, now),
+                    )
                 )
                 if len(out) >= limit:
                     return out
@@ -176,6 +557,8 @@ def lineage(work_dir, turns, limit=3):
 
 
 def _capped_text(path, cap=2000):
+    if path is None:
+        return ""
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             return f.read(cap)
@@ -183,8 +566,37 @@ def _capped_text(path, cap=2000):
         return ""
 
 
-def diode_activity(diode_dir, limit=8):
-    """Newest diode output files plus the console and state file bodies."""
+def _filename_epoch(name):
+    """Epoch from a leading UTC filename stamp in either diode format, else None."""
+    match = re.match(r"(\d{8}T\d{6}Z|\d{8}_\d{6}_\d{6})", name)
+    if not match:
+        return None
+    stamp = match.group(1)
+    fmt = "%Y%m%dT%H%M%SZ" if "T" in stamp else "%Y%m%d_%H%M%S_%f"
+    try:
+        moment = datetime.datetime.strptime(stamp, fmt)
+    except ValueError:
+        return None
+    return moment.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def output_slug(name):
+    """The command text carried in a diode output filename, without its stamp."""
+    stem = os.path.splitext(name)[0]
+    stem = re.sub(r"^[0-9TZ_:-]+", "", stem)
+    return stem.replace("_", " ").strip().lower()[:24]
+
+
+def output_verb(slug):
+    """A phrase for what a diode command did, from its first word."""
+    head = slug.split(" ")[0] if slug else ""
+    if not head:
+        return "reached out"
+    return DIODE_VERBS.get(head, f"ran {head}")[:40]
+
+
+def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
+    """Newest diode output files, phrased, plus the console and state file bodies."""
     output_dir = os.path.join(diode_dir, "output")
     outputs = []
     try:
@@ -192,14 +604,68 @@ def diode_activity(diode_dir, limit=8):
     except OSError:
         names = []
     for name in names:
-        full = os.path.join(output_dir, name)
+        full = contained_file(diode_dir, os.path.join(output_dir, name))
+        if full is None:
+            continue
         try:
             stat = os.stat(full)
         except OSError:
             continue
-        outputs.append({"name": name, "size": stat.st_size, "mtime": stat.st_mtime})
+        epoch = _filename_epoch(name)
+        if epoch is None:
+            epoch = stat.st_mtime
+        slug = output_slug(name)
+        life = None
+        if incarnation is not None:
+            life = classify_life(epoch, deaths or [], incarnation)
+        outputs.append(
+            {
+                "name": name,
+                "slug": slug,
+                "verb": output_verb(slug),
+                "epoch": epoch,
+                "size": stat.st_size,
+                "life": life,
+            }
+        )
+    outputs.sort(key=lambda entry: entry["epoch"], reverse=True)
     return {
         "outputs": outputs,
-        "console": _capped_text(os.path.join(diode_dir, "console.json")),
-        "state": _capped_text(os.path.join(diode_dir, "state.json")),
+        "console": _capped_text(contained_file(diode_dir, os.path.join(diode_dir, "console.json"))),
+        "state": _capped_text(contained_file(diode_dir, os.path.join(diode_dir, "state.json"))),
     }
+
+
+def diode_published(diode_dir, limit=2):
+    """(newest published excerpts, total count) from the diode's published directory."""
+    published_dir = os.path.join(diode_dir, "published")
+    try:
+        names = sorted(os.listdir(published_dir), reverse=True)
+    except OSError:
+        return [], 0
+    total = len(names)
+    out = []
+    for name in names[:limit]:
+        full = contained_file(diode_dir, os.path.join(published_dir, name))
+        if full is None:
+            continue
+        try:
+            stat = os.stat(full)
+        except OSError:
+            continue
+        text = _read_capped(full, PUBLISHED_READ_BYTES)
+        if text is None:
+            continue
+        chars = len(text) if len(text) < PUBLISHED_READ_BYTES else stat.st_size
+        epoch = _filename_epoch(name)
+        if epoch is None:
+            epoch = stat.st_mtime
+        out.append(
+            {
+                "name": name,
+                "epoch": epoch,
+                "text": text[:PUBLISHED_TEXT_CAP],
+                "chars": chars,
+            }
+        )
+    return out, total

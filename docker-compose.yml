@@ -100,6 +100,12 @@ services:
       DIODE_DIR: /diode
       TELEMETRY_DIR: /telemetry
       STAGE_CONSOLE_TOKEN: ${STAGE_CONSOLE_TOKEN:-}
+      # Optional narrative recap. Empty disables the feature; the key is the
+      # stage's own and is never the recorder's upstream credential.
+      STAGE_SUMMARY_API_KEY: ${STAGE_SUMMARY_API_KEY:-}
+      STAGE_SUMMARY_BASE_URL: ${STAGE_SUMMARY_BASE_URL:-}
+      STAGE_SUMMARY_MODEL: ${STAGE_SUMMARY_MODEL:-}
+      STAGE_SUMMARY_INTERVAL_SECONDS: ${STAGE_SUMMARY_INTERVAL_SECONDS:-}
     volumes:
       - transcripts:/transcripts:ro
       - diode:/diode:ro

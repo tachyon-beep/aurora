@@ -2,16 +2,34 @@ import hmac
 import json
 import os
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from stage import browse, data, pages
+
+try:
+    from stage import summary
+except Exception:
+    summary = None
 
 TRANSCRIPT_DIR = os.environ.get("TRANSCRIPT_DIR", "/transcripts")
 DIODE_DIR = os.environ.get("DIODE_DIR", "/diode")
 TELEMETRY_DIR = os.environ.get("TELEMETRY_DIR", "/telemetry")
 STREAM_PORT = int(os.environ.get("STREAM_PORT", "8091"))
 CONSOLE_PORT = int(os.environ.get("CONSOLE_PORT", "8092"))
+
+DISPLAY_TURNS = 6
+DISPLAY_OUTPUTS = 4
+DISPLAY_PUBLISHED = 2
+TEXT_CAP = 8000
+ARGUMENTS_CAP = 400
+ERROR_CAP = 600
+CODE_CAP = 40
+STORY_CAP = 1200
+MODEL_CAP = 60
+NAME_CAP = 64
+TIMESTAMP_CAP = 40
 
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -181,31 +199,171 @@ def _clip(text, cap):
     return text[:cap]
 
 
+def _clipped_field(value, cap):
+    """(clipped text, true length, whether it was clipped) for one public text field."""
+    text = value if isinstance(value, str) else ""
+    return text[:cap], len(text), len(text) > cap
+
+
+def _error_code(code):
+    """An upstream error code as an int or a short string; other shapes yield None."""
+    if isinstance(code, bool):
+        return None
+    if isinstance(code, int):
+        return code
+    if isinstance(code, str):
+        return code[:CODE_CAP]
+    return None
+
+
+def _public_error(error):
+    """An upstream error as a capped message and a code, whatever shape it arrived in."""
+    if error is None:
+        return None
+    if isinstance(error, dict):
+        return {
+            "message": _clip(str(error.get("message", "")), ERROR_CAP),
+            "code": _error_code(error.get("code")),
+        }
+    return {"message": _clip(str(error), ERROR_CAP), "code": None}
+
+
 def _public_turn(turn):
-    """A turn summary with content, reasoning, and tool call arguments capped for public display."""
+    """A turn summary with every field enumerated and capped for public display."""
+    reasoning, reasoning_chars, reasoning_truncated = _clipped_field(
+        turn.get("reasoning"), TEXT_CAP
+    )
+    content, content_chars, content_truncated = _clipped_field(turn.get("content"), TEXT_CAP)
+    tool_calls = []
+    names = []
+    for tc in turn.get("tool_calls") or []:
+        arguments, arguments_chars, arguments_truncated = _clipped_field(
+            tc.get("arguments"), ARGUMENTS_CAP
+        )
+        name = _clip(str(tc.get("name") or ""), NAME_CAP) or None
+        names.append(name)
+        tool_calls.append(
+            {
+                "name": name,
+                "arguments": arguments,
+                "arguments_chars": arguments_chars,
+                "arguments_truncated": arguments_truncated,
+            }
+        )
     return {
-        **turn,
-        "content": _clip(turn.get("content"), 2000),
-        "reasoning": _clip(turn.get("reasoning"), 2000),
-        "tool_calls": [
-            {**tc, "arguments": _clip(tc.get("arguments"), 400)}
-            for tc in turn.get("tool_calls") or []
-        ],
+        "index": turn.get("index"),
+        "timestamp": _clip(str(turn.get("timestamp") or ""), TIMESTAMP_CAP) or None,
+        "epoch": turn.get("epoch"),
+        "life": turn.get("life"),
+        "reasoning": reasoning,
+        "reasoning_chars": reasoning_chars,
+        "reasoning_truncated": reasoning_truncated,
+        "content": content,
+        "content_chars": content_chars,
+        "content_truncated": content_truncated,
+        "tool_calls": tool_calls,
+        "error": _public_error(turn.get("error")),
+        "is_edit": any(name in ("write_file", "migrate") for name in names),
+        "is_end": any(name == "done" for name in names),
+    }
+
+
+def _public_story():
+    """The generated recap, capped, or None when the summariser is off or unavailable."""
+    if summary is None:
+        return None
+    try:
+        story = summary.cached_story()
+    except Exception:
+        return None
+    if not isinstance(story, dict):
+        return None
+    text = story.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    generated_at = story.get("generated_at")
+    if isinstance(generated_at, bool) or not isinstance(generated_at, (int, float)):
+        generated_at = time.time()
+    return {
+        "text": text[:STORY_CAP],
+        "generated_at": float(generated_at),
+        "model": _clip(str(story.get("model") or ""), MODEL_CAP),
+    }
+
+
+def _empty_snapshot(now):
+    """The full key set with nothing in it, so a failed read still renders a page."""
+    return {
+        "now": now,
+        "stats": {
+            "incarnation": 1,
+            "model": None,
+            "transcript_turns": 0,
+            "turns_this_life": 0,
+            "turns_this_life_exact": False,
+            "last_timestamp": None,
+            "last_epoch": None,
+            "started_epoch": None,
+            "session_file_present": False,
+            "lives_ended": 0,
+            "ended_by_choice": 0,
+            "error_count": 0,
+        },
+        "code": {"available": False, "added": 0, "removed": 0},
+        "turns": [],
+        "events": [],
+        "diode": {"outputs": [], "published": [], "published_total": 0},
+        "lineage": [],
+        "story": None,
+    }
+
+
+def _assemble_snapshot(now):
+    """Read every source and project it into the public snapshot shape."""
+    work = os.path.join(TELEMETRY_DIR, "work")
+    turns, total = data.load_tail_turns(transcript_path())
+    incarnation = len(data.tombstone_paths(work)) + 1
+    deaths = data.tombstone_deaths(work, now=now)
+    data.annotate_lives(turns, deaths, incarnation)
+    display = turns[-DISPLAY_TURNS:]
+    lineage = data.lineage(work, turns, limit=5, now=now)
+    stats = data.incarnation_stats(
+        turns,
+        total,
+        work,
+        display_turns=display,
+        lineage_entries=lineage,
+        deaths=deaths,
+        transcript_path=transcript_path(),
+        now=now,
+    )
+    stats["model"] = _clip(str(stats.get("model") or ""), MODEL_CAP) or None
+    life = stats["incarnation"] if any(t.get("life") is not None for t in turns) else None
+    diode = data.diode_activity(DIODE_DIR, deaths=deaths, incarnation=incarnation)
+    published, published_total = data.diode_published(DIODE_DIR, limit=DISPLAY_PUBLISHED)
+    return {
+        "now": now,
+        "stats": stats,
+        "code": data.code_stats(work),
+        "turns": [_public_turn(t) for t in display],
+        "events": data.self_modification_events(turns, limit=6, life=life),
+        "diode": {
+            "outputs": diode["outputs"][:DISPLAY_OUTPUTS],
+            "published": published,
+            "published_total": published_total,
+        },
+        "lineage": lineage,
+        "story": _public_story(),
     }
 
 
 def stream_snapshot():
-    """Assemble the stream page's data snapshot."""
-    work = os.path.join(TELEMETRY_DIR, "work")
-    turns, total = data.load_tail_turns(transcript_path())
-    diode = data.diode_activity(DIODE_DIR)
-    return {
-        "turns": [_public_turn(t) for t in turns],
-        "stats": data.incarnation_stats(turns, total, work),
-        "events": data.self_modification_events(turns),
-        "diode": {"outputs": diode["outputs"]},
-        "lineage": data.lineage(work, turns),
-    }
+    """Assemble the stream page's data snapshot; never raises, never omits a key."""
+    now = time.time()
+    try:
+        return _assemble_snapshot(now)
+    except Exception:
+        return _empty_snapshot(now)
 
 
 class StreamHandler(_BaseHandler):
@@ -227,6 +385,11 @@ def make_server(port, handler):
 def main():
     console = make_server(CONSOLE_PORT, ConsoleHandler)
     threading.Thread(target=console.serve_forever, daemon=True).start()
+    if summary is not None:
+        try:
+            summary.start_background_refresh(TELEMETRY_DIR, transcript_path())
+        except Exception:
+            pass
     print(f"stage: stream on :{STREAM_PORT}, console on :{CONSOLE_PORT}")
     make_server(STREAM_PORT, StreamHandler).serve_forever()
 

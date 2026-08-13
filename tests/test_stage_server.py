@@ -252,9 +252,15 @@ def test_stream_snapshot_caps_and_slims_public_data(tmp_path, monkeypatch):
     assert "console" not in snap["diode"]
     assert "state" not in snap["diode"]
     turn = snap["turns"][-1]
-    assert len(turn["content"]) <= 2000
-    assert len(turn["reasoning"]) <= 2000
+    assert len(turn["content"]) <= 8000
+    assert len(turn["reasoning"]) <= 8000
     assert len(turn["tool_calls"][0]["arguments"]) <= 400
+    assert turn["content_chars"] == 10_000
+    assert turn["content_truncated"] is True
+    assert turn["reasoning_chars"] == 10_000
+    assert turn["reasoning_truncated"] is True
+    assert turn["tool_calls"][0]["arguments_chars"] == 5_000
+    assert turn["tool_calls"][0]["arguments_truncated"] is True
 
 
 def test_stream_port_has_no_mutating_routes(stream):
@@ -300,3 +306,287 @@ def test_download_streams_large_files_without_loading_them(console, tmp_path):
     assert received == 320 * 65536
     assert resp.getheader("Content-Length") == str(320 * 65536)
     assert peak < 8_000_000
+
+
+def _turn_entry(index, error=None, reasoning=None, tool_calls=None, timestamp="T"):
+    message = {"content": f"c{index}"}
+    if reasoning is not None:
+        message["reasoning_content"] = reasoning
+    if tool_calls is not None:
+        message["tool_calls"] = [{"function": {"name": n, "arguments": a}} for n, a in tool_calls]
+    response = {"error": error} if error is not None else {"choices": [{"message": message}]}
+    return {"timestamp": timestamp, "request": {"model": "m"}, "response": response}
+
+
+def _snapshot(tmp_path, monkeypatch, entries, tombstones=(), diode=()):
+    telemetry = tmp_path / "telemetry"
+    (telemetry / "work" / "tombstones").mkdir(parents=True)
+    for name, text in tombstones:
+        (telemetry / "work" / "tombstones" / name).write_text(text, encoding="utf-8")
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    with open(transcripts / "agent_life_transcript.jsonl", "w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+    diode_dir = tmp_path / "diode"
+    diode_dir.mkdir()
+    for relative, text in diode:
+        target = diode_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text, encoding="utf-8")
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(telemetry))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(transcripts))
+    monkeypatch.setattr(server, "DIODE_DIR", str(diode_dir))
+    return server.stream_snapshot()
+
+
+def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
+    assert set(snap) == {"now", "stats", "code", "turns", "events", "diode", "lineage", "story"}
+    assert set(snap["stats"]) == {
+        "incarnation",
+        "model",
+        "transcript_turns",
+        "turns_this_life",
+        "turns_this_life_exact",
+        "last_timestamp",
+        "last_epoch",
+        "started_epoch",
+        "session_file_present",
+        "lives_ended",
+        "ended_by_choice",
+        "error_count",
+    }
+    assert set(snap["diode"]) == {"outputs", "published", "published_total"}
+    assert isinstance(snap["now"], float)
+    assert snap["code"] == {"available": False, "added": 0, "removed": 0}
+
+
+def test_stream_snapshot_story_is_null_when_the_summariser_is_disabled(tmp_path, monkeypatch):
+    monkeypatch.delenv("STAGE_SUMMARY_API_KEY", raising=False)
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
+    assert snap["story"] is None
+
+
+def test_stream_snapshot_survives_a_missing_summary_module(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "summary", None)
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
+    assert snap["story"] is None
+
+
+def test_stream_snapshot_caps_and_clips_a_generated_story(tmp_path, monkeypatch):
+    class FakeSummary:
+        @staticmethod
+        def cached_story():
+            return {"text": "s" * 4000, "generated_at": 1.0, "model": "m" * 200}
+
+    monkeypatch.setattr(server, "summary", FakeSummary)
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
+    assert len(snap["story"]["text"]) == 1200
+    assert len(snap["story"]["model"]) == 60
+    assert snap["story"]["generated_at"] == 1.0
+
+
+def test_stream_snapshot_ignores_a_broken_summary_module(tmp_path, monkeypatch):
+    class Broken:
+        @staticmethod
+        def cached_story():
+            raise RuntimeError("upstream is on fire")
+
+    monkeypatch.setattr(server, "summary", Broken)
+    assert _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])["story"] is None
+
+
+def test_stream_snapshot_ignores_a_malformed_story(tmp_path, monkeypatch):
+    class Malformed:
+        @staticmethod
+        def cached_story():
+            return {"text": "", "generated_at": None, "model": None}
+
+    monkeypatch.setattr(server, "summary", Malformed)
+    assert _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])["story"] is None
+
+
+def test_stream_snapshot_story_always_carries_a_numeric_generated_at(tmp_path, monkeypatch):
+    class NoTimestamp:
+        @staticmethod
+        def cached_story():
+            return {"text": "a recap.", "generated_at": None, "model": "m"}
+
+    monkeypatch.setattr(server, "summary", NoTimestamp)
+    story = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])["story"]
+    assert isinstance(story["generated_at"], float)
+
+
+def test_stream_snapshot_publishes_only_the_newest_six_turns(tmp_path, monkeypatch):
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(i) for i in range(12)])
+    assert len(snap["turns"]) == 6
+    assert [t["index"] for t in snap["turns"]] == [6, 7, 8, 9, 10, 11]
+    assert snap["stats"]["transcript_turns"] == 12
+
+
+def test_stream_snapshot_error_field_is_capped_for_both_shapes(tmp_path, monkeypatch):
+    entries = [
+        _turn_entry(0, error={"message": "z" * 5000, "code": 400}),
+        _turn_entry(1, error="a bare string failure " * 100),
+        _turn_entry(2, error={"message": "x", "code": {"nested": "y" * 5000}}),
+        _turn_entry(3, error={"message": "x", "code": "rate_limit_exceeded_" + "q" * 500}),
+    ]
+    snap = _snapshot(tmp_path, monkeypatch, entries)
+    first, second, third, fourth = snap["turns"]
+    assert third["error"]["code"] is None
+    assert len(fourth["error"]["code"]) == 40
+    assert len(first["error"]["message"]) == 600
+    assert first["error"]["code"] == 400
+    assert len(second["error"]["message"]) == 600
+    assert second["error"]["code"] is None
+    assert snap["stats"]["error_count"] == 4
+
+
+def test_stream_snapshot_marks_edits_and_endings(tmp_path, monkeypatch):
+    entries = [
+        _turn_entry(0, tool_calls=[("validate", "{}")]),
+        _turn_entry(1, tool_calls=[("write_file", '{"start_line": 1, "end_line": 2}')]),
+        _turn_entry(2, tool_calls=[("done", '{"message": "enough. really."}')]),
+    ]
+    snap = _snapshot(tmp_path, monkeypatch, entries)
+    assert [t["is_edit"] for t in snap["turns"]] == [False, True, False]
+    assert [t["is_end"] for t in snap["turns"]] == [False, False, True]
+    assert snap["events"][0]["headline"] == "REWROTE LINES 1-2"
+    assert snap["events"][1]["summary"] == "enough."
+    assert snap["events"][1]["quoted"] is True
+
+
+def test_stream_snapshot_reports_diff_statistics_but_no_source(tmp_path, monkeypatch):
+    telemetry = tmp_path / "telemetry"
+    (telemetry / "work").mkdir(parents=True)
+    (telemetry / "work" / "agent_stock.py").write_text("a\nb\n", encoding="utf-8")
+    (telemetry / "work" / "agent.py").write_text("a\nSECRETLINE\nb\n", encoding="utf-8")
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    (transcripts / "agent_life_transcript.jsonl").write_text(
+        json.dumps(_turn_entry(0)) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(telemetry))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(transcripts))
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path / "diode"))
+    snap = server.stream_snapshot()
+    assert snap["code"] == {"available": True, "added": 1, "removed": 0}
+    assert "SECRETLINE" not in json.dumps(snap)
+
+
+def test_stream_snapshot_carries_published_transmissions(tmp_path, monkeypatch):
+    diode = [
+        ("output/20260814T041050Z-fetchlinks.txt", "links"),
+        ("output/20260814T040012Z-wikipedia.md", "summary"),
+        ("published/20260814_041231_004411.txt", "p" * 900),
+        ("published/20260814_041000_000001.txt", "older"),
+        ("published/20260813_041000_000001.txt", "oldest"),
+    ]
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)], diode=diode)
+    assert snap["diode"]["published_total"] == 3
+    assert len(snap["diode"]["published"]) == 2
+    assert len(snap["diode"]["published"][0]["text"]) == 400
+    assert snap["diode"]["published"][0]["chars"] == 900
+    assert snap["diode"]["outputs"][0]["verb"] == "followed a link"
+    assert "name" in snap["diode"]["outputs"][0]
+    epochs = [o["epoch"] for o in snap["diode"]["outputs"]]
+    assert epochs == sorted(epochs, reverse=True)
+
+
+def test_stream_snapshot_limits_diode_outputs_to_four(tmp_path, monkeypatch):
+    diode = [(f"output/2026081{i}T041050Z-weather.txt", "x") for i in range(9)]
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)], diode=diode)
+    assert len(snap["diode"]["outputs"]) == 4
+    assert snap["diode"]["published"] == []
+    assert snap["diode"]["published_total"] == 0
+
+
+def test_stream_snapshot_never_raises_on_missing_directories(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(tmp_path / "nope" / "telemetry"))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(tmp_path / "nope" / "transcripts"))
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path / "nope" / "diode"))
+    snap = server.stream_snapshot()
+    assert set(snap) == {"now", "stats", "code", "turns", "events", "diode", "lineage", "story"}
+    assert snap["turns"] == []
+    assert snap["stats"]["incarnation"] == 1
+    assert snap["lineage"] == []
+
+
+def test_stream_snapshot_returns_the_full_key_set_when_a_reader_fails(tmp_path, monkeypatch):
+    def explode(*args, **kwargs):
+        raise RuntimeError("mirror vanished mid-read")
+
+    monkeypatch.setattr(server.data, "load_tail_turns", explode)
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
+    snap = server.stream_snapshot()
+    assert set(snap) == {"now", "stats", "code", "turns", "events", "diode", "lineage", "story"}
+    assert snap["story"] is None
+
+
+def test_stream_endpoint_returns_200_when_every_source_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(tmp_path / "absent"))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(tmp_path / "absent"))
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path / "absent"))
+    httpd = server.make_server(0, server.StreamHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        status, body = _plain_get(httpd.server_address[1], "/api/stream")
+    finally:
+        httpd.shutdown()
+    assert status == 200
+    assert json.loads(body)["turns"] == []
+
+
+def test_stream_snapshot_stays_small_with_the_longest_legal_payload(tmp_path, monkeypatch):
+    entries = [
+        _turn_entry(
+            i,
+            reasoning="r" * 12_000,
+            tool_calls=[("write_file", "z" * 5_000) for _ in range(5)],
+        )
+        for i in range(10)
+    ]
+    snap = _snapshot(tmp_path, monkeypatch, entries)
+    body = json.dumps(snap)
+    assert len(snap["turns"]) == 6
+    assert all(t["reasoning_chars"] == 12_000 for t in snap["turns"])
+    assert all(len(t["reasoning"]) == 8_000 for t in snap["turns"])
+    assert len(body) < 130_000
+
+
+def test_stream_snapshot_first_boot_does_not_look_like_a_dead_life(tmp_path, monkeypatch):
+    entries = [
+        _turn_entry(0, timestamp="2026-08-14T04:11:02Z"),
+        _turn_entry(1, timestamp="2026-08-14T04:12:02Z"),
+    ]
+    snap = _snapshot(tmp_path, monkeypatch, entries)
+    assert snap["stats"]["incarnation"] == 1
+    assert snap["stats"]["lives_ended"] == 0
+    assert [t["life"] for t in snap["turns"]] == [1, 1]
+    assert snap["stats"]["turns_this_life"] == 2
+    assert snap["lineage"] == []
+
+
+def test_stream_snapshot_turns_are_ascending_and_carry_no_model(tmp_path, monkeypatch):
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(i) for i in range(3)])
+    indexes = [t["index"] for t in snap["turns"]]
+    assert indexes == sorted(indexes)
+    assert set(snap["turns"][0]) == {
+        "index",
+        "timestamp",
+        "epoch",
+        "life",
+        "reasoning",
+        "reasoning_chars",
+        "reasoning_truncated",
+        "content",
+        "content_chars",
+        "content_truncated",
+        "tool_calls",
+        "error",
+        "is_edit",
+        "is_end",
+    }
