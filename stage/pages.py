@@ -274,6 +274,13 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   white-space: pre-wrap; cursor: default; word-break: break-all; }
 .tool .t-name { word-break: normal; }
 .tool .t-args { opacity: .7; }
+.subrow { display: grid; grid-template-columns: 22px 1fr 52px; column-gap: 8px;
+  align-items: baseline; margin-top: 6px; font: 400 12px/19px var(--mono);
+  color: var(--paper-faint); }
+.subrow .s-mark { color: var(--rule-2); }
+.subrow .s-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0; }
+.subrow .s-time { text-align: right; font-variant-numeric: tabular-nums; }
 .err { font: 400 14px/21px var(--mono); color: var(--fault); max-width: 76ch; }
 
 .divider { height: 34px; display: flex; align-items: center; gap: 14px; margin: 14px 0; flex: none; }
@@ -326,7 +333,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   100% { transform: scale(1) } }
 #subj-model { font: 400 13px/19px var(--mono); color: var(--paper-dim); margin-top: 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#subj-stats { display: grid; grid-template-rows: repeat(6, 18px); align-content: start; }
+#subj-stats { display: grid; grid-template-rows: repeat(7, 17px); align-content: start; }
 .srow { display: grid; grid-template-columns: 104px 1fr; align-items: baseline;
   font: 400 13px/18px var(--mono); font-variant-numeric: tabular-nums; }
 .srow .k { color: var(--paper-faint); }
@@ -501,6 +508,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
           <div class="srow"><span class="k">self-edits</span><span class="v" id="v-edits">&mdash;</span></div>
           <div class="srow"><span class="k">reached out</span><span class="v" id="v-reach">&mdash;</span></div>
           <div class="srow" id="row-mem"><span class="k">memory file</span><span class="v" id="v-mem">&mdash;</span></div>
+          <div class="srow" id="row-self"><span class="k">self-calls</span><span class="v" id="v-self">&mdash;</span></div>
           <div class="srow src"><span class="k">source</span><span class="v" id="v-src">&mdash;</span></div>
         </div>
       </div>
@@ -764,6 +772,7 @@ function buildTurn() {
   el("div", "spacer", node);
   node.__col = el("div", "col", node);
   node.__tools = [];
+  node.__subs = [];
   return node;
 }
 function ensureThink(node) {
@@ -837,6 +846,25 @@ function updateTurn(node, t, prevEpoch, sameLife) {
     setText(node.__err, errLine(t.error));
   }
 }
+function updateSubRows(node, subs) {
+  for (var i = 0; i < subs.length; i++) {
+    var row = node.__subs[i];
+    if (!row) {
+      row = el("div", "subrow", node.__col);
+      row.__mark = el("span", "s-mark", row);
+      row.__text = el("span", "s-text", row);
+      row.__time = el("span", "s-time", row);
+      row.__mark.textContent = "↳";
+      node.__subs[i] = row;
+    }
+    row.hidden = false;
+    var s = subs[i];
+    var prompt = norm(s.prompt || "");
+    setText(row.__text, prompt ? "SELF-CALL · " + prompt : "SELF-CALL");
+    setText(row.__time, hhmmss(s.timestamp));
+  }
+  for (var k = subs.length; k < node.__subs.length; k++) node.__subs[k].hidden = true;
+}
 function buildDivider(life) {
   var d = el("div", "divider");
   el("i", null, d);
@@ -846,7 +874,9 @@ function buildDivider(life) {
 }
 function reconcileFeed() {
   var list = snap.turns || [], wanted = new Set(), i;
-  for (i = 0; i < list.length; i++) wanted.add(turnKey(list[i]));
+  for (i = 0; i < list.length; i++) {
+    if (list[i].kind !== "subcall") wanted.add(turnKey(list[i]));
+  }
   turnNodes.forEach(function (node, key) {
     if (!wanted.has(key)) {
       node.remove(); turnNodes.delete(key);
@@ -859,7 +889,10 @@ function reconcileFeed() {
 
   var prevLife = null, prevEpoch = null;
   for (i = 0; i < list.length; i++) {
-    var t = list[i], key = turnKey(t);
+    var t = list[i];
+    if (t.kind === "subcall") continue;
+    var key = turnKey(t), subs = [];
+    for (var s = i + 1; s < list.length && list[s].kind === "subcall"; s++) subs.push(list[s]);
     var sameLife = !(t.life != null && prevLife != null && t.life !== prevLife);
     if (!sameLife && !dividers.has(key)) {
       var d = buildDivider(prevLife);
@@ -883,6 +916,7 @@ function reconcileFeed() {
       turnNodes.set(key, node);
     }
     updateTurn(node, t, prevEpoch, sameLife);
+    updateSubRows(node, subs);
     prevLife = t.life; prevEpoch = t.epoch;
   }
 
@@ -989,6 +1023,9 @@ function renderSubject() {
   var edits = 0, ev = snap.events || [];
   for (var i = 0; i < ev.length; i++) if (ev[i].kind === "write" || ev[i].kind === "migrate") edits++;
   setText($("v-edits"), String(edits));
+  var selfCalls = st.self_calls || 0;
+  setText($("v-self"), String(selfCalls));
+  setClass($("row-self"), "dimv", selfCalls === 0);
 
   var outs = (snap.diode && snap.diode.outputs) || [], reach = 0, anyLife = false;
   for (i = 0; i < outs.length; i++) {
