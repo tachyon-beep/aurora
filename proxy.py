@@ -86,12 +86,12 @@ def rotate_if_needed(path, max_bytes=None):
         with open(path, "w", encoding="utf-8"):
             pass
         return final
-    except OSError as e:
+    except Exception as e:
         print(f"Error rotating transcript: {e}", file=sys.stderr)
         if tmp is not None:
             try:
                 os.remove(tmp)
-            except OSError:
+            except Exception:
                 pass
         return None
 

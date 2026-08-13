@@ -106,3 +106,19 @@ def test_rotate_if_needed_failure_leaves_live_file_intact(tmp_path, monkeypatch)
     assert result is None
     assert live.read_text(encoding="utf-8") == original
     assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_rotate_if_needed_non_oserror_is_contained(tmp_path, monkeypatch):
+    proxy = _proxy()
+    live = tmp_path / "agent_life_transcript.jsonl"
+    original = '{"a": 1}\n' * 100
+    live.write_text(original, encoding="utf-8")
+
+    def broken_copyfileobj(src, dst, bufsize):
+        raise RuntimeError("zlib boom")
+
+    monkeypatch.setattr(proxy.shutil, "copyfileobj", broken_copyfileobj)
+    result = proxy.rotate_if_needed(str(live), max_bytes=100)
+    assert result is None
+    assert live.read_text(encoding="utf-8") == original
+    assert not list(tmp_path.glob("*.tmp"))
