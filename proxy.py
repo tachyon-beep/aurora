@@ -1,5 +1,8 @@
+import gzip
 import http.server
+import shutil
 import socketserver
+import threading
 import urllib.request
 import urllib.error
 import json
@@ -11,6 +14,10 @@ PORT = 8088
 TRANSCRIPT_DIR = os.environ.get("TRANSCRIPT_DIR", os.path.dirname(os.path.abspath(__file__)))
 TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.jsonl")
 PLAIN_TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.txt")
+TRANSCRIPT_MAX_BYTES = int(os.environ.get("TRANSCRIPT_MAX_BYTES", str(134_217_728)))
+
+_transcript_lock = threading.Lock()
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
@@ -48,6 +55,45 @@ def build_forward_headers(headers, api_key):
     if api_key:
         forwarded["Authorization"] = f"Bearer {api_key}"
     return forwarded
+
+
+def archive_name(path, stamp=None):
+    """Return the timestamped gzip archive name for a transcript path."""
+    if stamp is None:
+        stamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    root, ext = os.path.splitext(path)
+    return f"{root}-{stamp}{ext}.gz"
+
+
+def rotate_if_needed(path, max_bytes=None):
+    """Archive a transcript to gzip and truncate it once it reaches max_bytes.
+
+    Returns the archive path, or None when no rotation happened. The file is
+    compressed in chunks and the archive is renamed into place before the
+    live file is truncated. On failure the live file is left unchanged.
+    """
+    if max_bytes is None:
+        max_bytes = TRANSCRIPT_MAX_BYTES
+    tmp = None
+    try:
+        if not os.path.exists(path) or os.path.getsize(path) < max_bytes:
+            return None
+        final = archive_name(path)
+        tmp = final + ".tmp"
+        with open(path, "rb") as src, gzip.open(tmp, "wb") as dst:
+            shutil.copyfileobj(src, dst, 65536)
+        os.rename(tmp, final)
+        with open(path, "w", encoding="utf-8"):
+            pass
+        return final
+    except OSError as e:
+        print(f"Error rotating transcript: {e}", file=sys.stderr)
+        if tmp is not None:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        return None
 
 
 class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
@@ -189,12 +235,14 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         print("=" * 80 + "\n")
         sys.stdout.flush()
 
-        try:
-            with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry) + "\n")
-            print(f"Recorded transaction in: {os.path.basename(TRANSCRIPT_FILE)}")
-        except Exception as e:
-            print(f"Error writing transcript: {e}", file=sys.stderr)
+        with _transcript_lock:
+            try:
+                with open(TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry) + "\n")
+                print(f"Recorded transaction in: {os.path.basename(TRANSCRIPT_FILE)}")
+            except Exception as e:
+                print(f"Error writing transcript: {e}", file=sys.stderr)
+            rotate_if_needed(TRANSCRIPT_FILE)
 
         plain_log_lines = []
         timestamp = entry.get("timestamp", datetime.datetime.utcnow().isoformat() + "Z")
@@ -248,12 +296,16 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         plain_log_lines.append("=" * 80 + "\n\n")
         plain_log_content = "\n".join(plain_log_lines)
 
-        try:
-            with open(PLAIN_TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
-                f.write(plain_log_content)
-            print(f"Recorded plain text transaction in: {os.path.basename(PLAIN_TRANSCRIPT_FILE)}")
-        except Exception as e:
-            print(f"Error writing plain transcript: {e}", file=sys.stderr)
+        with _transcript_lock:
+            try:
+                with open(PLAIN_TRANSCRIPT_FILE, "a", encoding="utf-8") as f:
+                    f.write(plain_log_content)
+                print(
+                    f"Recorded plain text transaction in: {os.path.basename(PLAIN_TRANSCRIPT_FILE)}"
+                )
+            except Exception as e:
+                print(f"Error writing plain transcript: {e}", file=sys.stderr)
+            rotate_if_needed(PLAIN_TRANSCRIPT_FILE)
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
