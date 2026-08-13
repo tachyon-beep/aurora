@@ -14,6 +14,7 @@ CLAUDE.md
 !system_prompt.txt
 !user_prompt.txt
 !requirements-agent.txt
+!blind_eternities.txt
 session_context.json
 .env
 !garden_export
