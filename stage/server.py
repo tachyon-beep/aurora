@@ -30,6 +30,7 @@ STORY_CAP = 1200
 MODEL_CAP = 60
 NAME_CAP = 64
 TIMESTAMP_CAP = 40
+PROMPT_CAP = 160
 
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -199,6 +200,26 @@ def _clip(text, cap):
     return text[:cap]
 
 
+def select_display(turns, count=DISPLAY_TURNS):
+    """The newest count loop turns, with the sub-calls that follow each of them.
+
+    Sub-calls do not consume display slots: a tool that calls the model many
+    times cannot push the agent's own turns out of the feed.
+    """
+    keep = []
+    loops = 0
+    for turn in reversed(turns):
+        if turn.get("kind") != "subcall":
+            if loops == count:
+                break
+            loops += 1
+        keep.append(turn)
+    keep.reverse()
+    while keep and keep[0].get("kind") == "subcall":
+        keep.pop(0)
+    return keep
+
+
 def _clipped_field(value, cap):
     """(clipped text, true length, whether it was clipped) for one public text field."""
     text = value if isinstance(value, str) else ""
@@ -252,6 +273,8 @@ def _public_turn(turn):
         )
     return {
         "index": turn.get("index"),
+        "kind": "subcall" if turn.get("kind") == "subcall" else "loop",
+        "prompt": _clip(str(turn.get("prompt") or ""), PROMPT_CAP),
         "timestamp": _clip(str(turn.get("timestamp") or ""), TIMESTAMP_CAP) or None,
         "epoch": turn.get("epoch"),
         "life": turn.get("life"),
@@ -308,6 +331,7 @@ def _empty_snapshot(now):
             "lives_ended": 0,
             "ended_by_choice": 0,
             "error_count": 0,
+            "self_calls": 0,
         },
         "code": {"available": False, "added": 0, "removed": 0},
         "turns": [],
@@ -325,13 +349,13 @@ def _assemble_snapshot(now):
     incarnation = len(data.tombstone_paths(work)) + 1
     deaths = data.tombstone_deaths(work, now=now)
     data.annotate_lives(turns, deaths, incarnation)
-    display = turns[-DISPLAY_TURNS:]
+    display = select_display(turns)
     lineage = data.lineage(work, turns, limit=5, now=now)
     stats = data.incarnation_stats(
         turns,
         total,
         work,
-        display_turns=display,
+        display_turns=data.loop_turns(display),
         lineage_entries=lineage,
         deaths=deaths,
         transcript_path=transcript_path(),

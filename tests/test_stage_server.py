@@ -577,6 +577,8 @@ def test_stream_snapshot_turns_are_ascending_and_carry_no_model(tmp_path, monkey
     assert indexes == sorted(indexes)
     assert set(snap["turns"][0]) == {
         "index",
+        "kind",
+        "prompt",
         "timestamp",
         "epoch",
         "life",
@@ -591,3 +593,38 @@ def test_stream_snapshot_turns_are_ascending_and_carry_no_model(tmp_path, monkey
         "is_edit",
         "is_end",
     }
+
+
+def test_select_display_counts_loop_turns_only():
+    turns = [
+        {"index": 0, "kind": "loop"},
+        {"index": 1, "kind": "subcall"},
+        {"index": 2, "kind": "loop"},
+        {"index": 3, "kind": "subcall"},
+        {"index": 4, "kind": "subcall"},
+        {"index": 5, "kind": "loop"},
+    ]
+    got = server.select_display(turns, count=2)
+    assert [t["index"] for t in got] == [2, 3, 4, 5]
+    got = server.select_display(turns, count=1)
+    assert [t["index"] for t in got] == [5]
+
+
+def test_select_display_drops_orphan_leading_subcalls():
+    turns = [{"index": 0, "kind": "subcall"}, {"index": 1, "kind": "loop"}]
+    assert [t["index"] for t in server.select_display(turns, count=5)] == [1]
+
+
+def test_public_turn_carries_kind_and_capped_prompt():
+    public = server._public_turn(
+        {"index": 1, "kind": "subcall", "prompt": "y" * 500, "tool_calls": []}
+    )
+    assert public["kind"] == "subcall"
+    assert len(public["prompt"]) == server.PROMPT_CAP
+    loop = server._public_turn({"index": 2, "kind": "loop", "prompt": "", "tool_calls": []})
+    assert loop["kind"] == "loop"
+    assert loop["prompt"] == ""
+
+
+def test_empty_snapshot_reports_self_calls():
+    assert server._empty_snapshot(0.0)["stats"]["self_calls"] == 0
