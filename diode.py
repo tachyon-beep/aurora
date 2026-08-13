@@ -214,8 +214,8 @@ def parse_feed(text):
     """
     import xml.etree.ElementTree as ET
 
-    head = text[:4096].lower()
-    if "<!doctype" in head or "<!entity" in head:
+    lowered = text.lower()
+    if "<!doctype" in lowered or "<!entity" in lowered:
         return None
     try:
         root = ET.fromstring(text)
@@ -230,14 +230,24 @@ def parse_feed(text):
         if local(element.tag) not in ("item", "entry"):
             continue
         title, link, summary = "", "", ""
+        links = []
         for child in element:
             name = local(child.tag)
             if name == "title":
                 title = (child.text or "").strip()
-            elif name == "link" and not link:
-                link = (child.get("href") or child.text or "").strip()
+            elif name == "link":
+                href = (child.get("href") or child.text or "").strip()
+                rel = child.get("rel", "")
+                if href:
+                    links.append((href, rel))
             elif name in ("description", "summary"):
                 summary = (child.text or "").strip()
+        for href, rel in links:
+            if not rel or rel == "alternate":
+                link = href
+                break
+        if not link and links:
+            link = links[0][0]
         items.append(
             {
                 "title": title[:FEED_TITLE_CAP],

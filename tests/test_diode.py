@@ -249,3 +249,31 @@ def test_weather_lines_reads_current():
     assert "weather_code: 3" in text
     assert diode._weather_lines("{}") == "(no current conditions found)"
     assert diode._weather_lines("not json") == "could not parse response"
+
+
+def test_parse_feed_rejects_doctype_with_leading_padding():
+    padded = "<!-- " + "x" * 5000 + ' -->\n<!DOCTYPE rss [<!ENTITY a "b">]><rss/>'
+    assert diode.parse_feed(padded) is None
+
+
+def test_parse_feed_prefers_link_alternate_over_self():
+    feed = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Feed</title>
+<entry><title>Paper</title>
+<link rel="self" href="https://example.com/self"/>
+<link rel="alternate" href="https://example.com/article"/>
+</entry>
+</feed>"""
+    items = diode.parse_feed(feed)
+    assert items[0]["link"] == "https://example.com/article"
+
+
+def test_parse_feed_fallback_to_self_link_when_no_alternate():
+    feed = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Feed</title>
+<entry><title>Paper</title>
+<link rel="self" href="https://example.com/self"/>
+</entry>
+</feed>"""
+    items = diode.parse_feed(feed)
+    assert items[0]["link"] == "https://example.com/self"
