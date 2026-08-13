@@ -4,7 +4,7 @@ RUN pip install --no-cache-dir trafilatura
 
 RUN useradd --create-home --uid 1000 diodeuser
 
-COPY --chown=diodeuser:diodeuser diode.py /opt/diode/diode.py
+COPY --chown=diodeuser:diodeuser diode.py blind_eternities.txt /opt/diode/
 
 # Pre-create the shared /diode mountpoint owned by uid 1000 so Docker seeds the
 # fresh named volume with non-root ownership. Both the diode (diodeuser) and the

@@ -440,3 +440,46 @@ def test_write_help_lists_publishing_gate(tmp_path, monkeypatch):
     diode.write_help({})
     text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
     assert "enable_publishing" in text
+
+
+def test_blind_is_absent_from_listings_and_help(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    all_gates = {
+        "enable_fetchlinks": True,
+        "enable_clock": True,
+        "enable_feeds": True,
+        "enable_reference": True,
+        "enable_weather": True,
+        "enable_papers": True,
+        "enable_news": True,
+        "enable_entropy": True,
+        "enable_publishing": True,
+    }
+    assert "blind" not in diode.available_commands(all_gates)
+    diode.write_help(all_gates)
+    assert "blind" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
+
+
+def test_blind_returns_the_text_without_gate_or_budget(tmp_path, monkeypatch):
+    source = tmp_path / "text.txt"
+    source.write_text("first line\n\nsecond line\n", encoding="utf-8")
+    monkeypatch.setattr(diode, "BLIND_TEXT_FILE", str(source))
+    text, hist = diode.handle_command("blind", {}, [])
+    assert text == "first line\n\nsecond line\n"
+    assert hist == []
+
+
+def test_blind_missing_source_is_factual(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "BLIND_TEXT_FILE", str(tmp_path / "absent.txt"))
+    text, hist = diode.handle_command("blind", {}, [])
+    assert text == "not available"
+    assert hist == []
+
+
+def test_state_reports_undocumented_command_count(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    diode.write_state({}, [])
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state["undocumented_commands"] == 1
+    assert "blind" not in state["available_commands"]

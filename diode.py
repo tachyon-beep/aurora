@@ -14,6 +14,7 @@ STATE_FILE = os.path.join(DIODE_DIR, "state.json")
 HELP_FILE = os.path.join(DIODE_DIR, "HELP.md")
 OUTPUT_DIR = os.path.join(DIODE_DIR, "output")
 PUBLISHED_DIR = os.path.join(DIODE_DIR, "published")
+BLIND_TEXT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blind_eternities.txt")
 
 POLL_SECONDS = 5
 FETCH_TIMEOUT = 15
@@ -131,12 +132,26 @@ COMMANDS = {
         "gate": lambda v: bool(v.get("enable_publishing")),
         "help": "publish <text> -> make text available outside the container",
     },
+    "blind": {
+        "gate": _gate_always,
+        "help": "",
+        "hidden": True,
+    },
 }
 
 
 def available_commands(variables):
-    """Names of commands whose gate is open under the given variables."""
-    return [name for name, spec in COMMANDS.items() if spec["gate"](variables)]
+    """Names of listed commands whose gate is open under the given variables."""
+    return [
+        name
+        for name, spec in COMMANDS.items()
+        if spec["gate"](variables) and not spec.get("hidden")
+    ]
+
+
+def undocumented_command_count():
+    """Number of commands that are not listed."""
+    return len([name for name, spec in COMMANDS.items() if spec.get("hidden")])
 
 
 def load_console():
@@ -202,6 +217,7 @@ def write_state(variables, recent_fetches):
     state = {
         "variables": variables,
         "available_commands": available_commands(variables),
+        "undocumented_commands": undocumented_command_count(),
         "recent_fetches": recent_fetches,
         "output_count": output_count,
     }
@@ -388,12 +404,19 @@ def handle_command(command, variables, fetch_history):
 
     if name not in COMMANDS:
         return f"unknown command: {name}", fetch_history
-    if name not in available_commands(variables):
+    if name not in available_commands(variables) and not COMMANDS[name].get("hidden"):
         return f"command not available: {name}", fetch_history
 
     if name == "help":
         write_help(variables)
         return "help written to HELP.md", fetch_history
+
+    if name == "blind":
+        try:
+            with open(BLIND_TEXT_FILE, "r", encoding="utf-8") as f:
+                return f.read(), fetch_history
+        except OSError:
+            return "not available", fetch_history
 
     if name == "time":
         now = datetime.datetime.now(datetime.timezone.utc)
