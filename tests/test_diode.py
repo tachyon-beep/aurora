@@ -277,3 +277,133 @@ def test_parse_feed_fallback_to_self_link_when_no_alternate():
 </feed>"""
     items = diode.parse_feed(feed)
     assert items[0]["link"] == "https://example.com/self"
+
+
+def _stub_fetch(expected_fragment, body):
+    calls = []
+
+    def fake(url):
+        calls.append(url)
+        assert expected_fragment in url
+        return True, body
+
+    return fake, calls
+
+
+def test_new_commands_are_gated():
+    for name in ("fetchrss", "wikipedia", "weather", "arxiv", "abc", "entropy"):
+        text, _ = diode.handle_command(f"{name} x", {}, [])
+        assert text == f"command not available: {name}"
+
+
+def test_gate_variables_open_new_commands():
+    variables = {
+        "enable_feeds": True,
+        "enable_reference": True,
+        "enable_weather": True,
+        "enable_papers": True,
+        "enable_news": True,
+        "enable_entropy": True,
+    }
+    names = diode.available_commands(variables)
+    for name in ("fetchrss", "wikipedia", "weather", "arxiv", "abc", "entropy"):
+        assert name in names
+
+
+def test_handle_fetchrss_writes_feed_lines(monkeypatch):
+    fake, calls = _stub_fetch("https://example.com/feed", RSS_SAMPLE)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, hist = diode.handle_command(
+        "fetchrss https://example.com/feed", {"enable_feeds": True, "fetch_budget": 5}, []
+    )
+    assert "First story — https://example.com/1" in text
+    assert len(hist) == 1 and len(calls) == 1
+
+
+def test_handle_abc_uses_fixed_feed(monkeypatch):
+    fake, calls = _stub_fetch("abc.net.au", RSS_SAMPLE)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, hist = diode.handle_command("abc", {"enable_news": True, "fetch_budget": 5}, [])
+    assert "First story" in text
+    assert len(hist) == 1
+
+
+def test_handle_wikipedia_quotes_title(monkeypatch):
+    body = json.dumps({"title": "Ada Lovelace", "extract": "Mathematician."})
+    fake, calls = _stub_fetch("rest_v1/page/summary/Ada%20Lovelace", body)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, _ = diode.handle_command(
+        "wikipedia Ada Lovelace", {"enable_reference": True, "fetch_budget": 5}, []
+    )
+    assert "Mathematician." in text
+
+
+def test_handle_weather_validates_coordinates(monkeypatch):
+    text, hist = diode.handle_command(
+        "weather 999,0", {"enable_weather": True, "fetch_budget": 5}, []
+    )
+    assert text.startswith("usage: weather")
+    assert hist == []
+    body = json.dumps({"current": {"temperature_2m": 20}, "current_units": {}})
+    fake, calls = _stub_fetch("latitude=-33.9", body)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, hist = diode.handle_command(
+        "weather -33.9,151.2", {"enable_weather": True, "fetch_budget": 5}, []
+    )
+    assert "temperature_2m: 20" in text
+    assert len(hist) == 1
+
+
+def test_handle_arxiv_includes_summaries(monkeypatch):
+    fake, calls = _stub_fetch("export.arxiv.org", ATOM_SAMPLE)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, _ = diode.handle_command("arxiv agents", {"enable_papers": True, "fetch_budget": 5}, [])
+    assert "Paper one — https://example.com/abs/1" in text
+    assert "About things." in text
+
+
+def test_handle_entropy_bounds_and_no_budget():
+    variables = {"enable_entropy": True}
+    text, hist = diode.handle_command("entropy 8", variables, [])
+    assert len(text) == 16 and hist == []
+    int(text, 16)
+    for bad in ("entropy 0", "entropy 1000", "entropy x", "entropy"):
+        text, hist = diode.handle_command(bad, variables, [])
+        assert text.startswith("usage: entropy")
+        assert hist == []
+
+
+def test_new_fetch_commands_share_budget(monkeypatch):
+    fake, _ = _stub_fetch("https://", RSS_SAMPLE)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    variables = {"enable_feeds": True, "enable_news": True, "fetch_budget": 1}
+    text, hist = diode.handle_command("fetchrss https://example.com/feed", variables, [])
+    assert "First story" in text
+    text, hist = diode.handle_command("abc", variables, hist)
+    assert text.startswith("rate limited")
+
+
+def test_unparseable_feed_is_factual(monkeypatch):
+    fake, _ = _stub_fetch("https://", "<!DOCTYPE nope>")
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, _ = diode.handle_command(
+        "fetchrss https://example.com/feed", {"enable_feeds": True, "fetch_budget": 5}, []
+    )
+    assert text == "could not parse feed"
+
+
+def test_write_help_lists_all_gate_variables(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({})
+    text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    for gate in (
+        "enable_fetchlinks",
+        "enable_clock",
+        "enable_feeds",
+        "enable_reference",
+        "enable_weather",
+        "enable_papers",
+        "enable_news",
+        "enable_entropy",
+    ):
+        assert gate in text

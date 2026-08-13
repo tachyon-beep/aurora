@@ -6,7 +6,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 DIODE_DIR = os.environ.get("DIODE_DIR", "/diode")
 CONSOLE_FILE = os.path.join(DIODE_DIR, "console.json")
@@ -101,6 +101,30 @@ COMMANDS = {
         "gate": lambda v: bool(v.get("enable_clock")),
         "help": "time -> return the current UTC time",
     },
+    "fetchrss": {
+        "gate": lambda v: bool(v.get("enable_feeds")),
+        "help": "fetchrss <url> -> fetch an rss or atom feed, return title and link lines",
+    },
+    "wikipedia": {
+        "gate": lambda v: bool(v.get("enable_reference")),
+        "help": "wikipedia <title> -> return the wikipedia summary for a title",
+    },
+    "weather": {
+        "gate": lambda v: bool(v.get("enable_weather")),
+        "help": "weather <lat,lon> -> return current conditions for coordinates",
+    },
+    "arxiv": {
+        "gate": lambda v: bool(v.get("enable_papers")),
+        "help": "arxiv <query> -> return recent paper titles and summaries for a query",
+    },
+    "abc": {
+        "gate": lambda v: bool(v.get("enable_news")),
+        "help": "abc -> return current news headlines from abc.net.au",
+    },
+    "entropy": {
+        "gate": lambda v: bool(v.get("enable_entropy")),
+        "help": "entropy <n> -> return n random bytes as hex",
+    },
 }
 
 
@@ -150,6 +174,13 @@ def write_help(variables):
     lines.append("set variables in console.json to change what is available:")
     lines.append("  fetch_budget: integer, number of http-fetch calls allowed per hour")
     lines.append("  enable_fetchlinks: true, makes the link-listing command available")
+    lines.append("  enable_clock: true, makes the time command available")
+    lines.append("  enable_feeds: true, makes the feed-fetching command available")
+    lines.append("  enable_reference: true, makes the wikipedia command available")
+    lines.append("  enable_weather: true, makes the weather command available")
+    lines.append("  enable_papers: true, makes the arxiv command available")
+    lines.append("  enable_news: true, makes the news headline command available")
+    lines.append("  enable_entropy: true, makes the entropy command available")
     text = "\n".join(lines) + "\n"
     with open(HELP_FILE, "w", encoding="utf-8") as f:
         f.write(text)
@@ -350,6 +381,80 @@ def handle_command(command, variables, fetch_history):
     if name == "time":
         now = datetime.datetime.now(datetime.timezone.utc)
         return f"{now.isoformat()} UTC", fetch_history
+
+    if name == "entropy":
+        try:
+            count = int(arg)
+        except (TypeError, ValueError):
+            return "usage: entropy <n> with n from 1 to 256", fetch_history
+        if not 1 <= count <= 256:
+            return "usage: entropy <n> with n from 1 to 256", fetch_history
+        return os.urandom(count).hex(), fetch_history
+
+    if name in ("fetchrss", "wikipedia", "weather", "arxiv", "abc"):
+        if name == "fetchrss":
+            url = arg
+        elif name == "wikipedia":
+            title = arg[:200]
+            if not title:
+                return "usage: wikipedia <title>", fetch_history
+            url = "https://en.wikipedia.org/api/rest_v1/page/summary/" + quote(title, safe="")
+        elif name == "weather":
+            coords = _parse_coordinates(arg)
+            if coords is None:
+                return (
+                    "usage: weather <lat,lon> with lat from -90 to 90 and lon from -180 to 180",
+                    fetch_history,
+                )
+            url = (
+                "https://api.open-meteo.com/v1/forecast"
+                f"?latitude={coords[0]}&longitude={coords[1]}"
+                "&current=temperature_2m,apparent_temperature,relative_humidity_2m,"
+                "wind_speed_10m,wind_direction_10m,weather_code"
+            )
+        elif name == "arxiv":
+            query = arg[:200]
+            if not query:
+                return "usage: arxiv <query>", fetch_history
+            url = (
+                "https://export.arxiv.org/api/query?search_query=all:"
+                + quote(query, safe="")
+                + "&max_results=5"
+            )
+        else:
+            url = "https://www.abc.net.au/news/feed/51120/rss.xml"
+        try:
+            limit = int(variables.get("fetch_budget", DEFAULT_FETCH_LIMIT))
+        except (TypeError, ValueError):
+            limit = DEFAULT_FETCH_LIMIT
+        allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
+        if not allowed:
+            return f"rate limited: at most {limit} fetch(es) per hour", fetch_history
+        ok, body = _fetch(url)
+        if not ok:
+            return body, fetch_history
+        if name in ("fetchrss", "abc"):
+            items = parse_feed(body)
+            if items is None:
+                return "could not parse feed", fetch_history
+            if not items:
+                return "(no feed items found)", fetch_history
+            return "\n".join(f"{i['title']} — {i['link']}" for i in items), fetch_history
+        if name == "arxiv":
+            items = parse_feed(body)
+            if items is None:
+                return "could not parse feed", fetch_history
+            if not items:
+                return "(no results found)", fetch_history
+            lines = []
+            for item in items:
+                lines.append(f"{item['title']} — {item['link']}")
+                if item["summary"]:
+                    lines.append(f"  {item['summary']}")
+            return "\n".join(lines), fetch_history
+        if name == "wikipedia":
+            return _wikipedia_extract(body), fetch_history
+        return _weather_lines(body), fetch_history
 
     if name in ("fetchhttp", "fetchlinks"):
         try:
