@@ -38,11 +38,13 @@ services:
     read_only: true
     tmpfs:
       - /tmp
-      - /work:size=256m,uid=1000,gid=1000
+      # /work is RAM-backed; its size and mem_limit below must move together
+      # (tmpfs pages count against the container's memory cgroup).
+      - /work:size=4g,uid=1000,gid=1000
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     pids_limit: 256
-    mem_limit: 1g
+    mem_limit: 5g
     cpus: 2
     restart: unless-stopped
 

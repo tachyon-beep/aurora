@@ -48,3 +48,10 @@ def test_verify_script_checks_stage_containment():
     text = _read("scripts/verify_container.sh")
     assert "8091" in text and "8092" in text
     assert "aurora-stage" in text
+
+
+def test_agent_work_allocation_and_memory_move_together():
+    text = _read("docker-compose.yml")
+    agent_block = text.split("\n  agent:\n")[1].split("\n  diode:\n")[0]
+    assert "/work:size=4g,uid=1000,gid=1000" in agent_block
+    assert "mem_limit: 5g" in agent_block
