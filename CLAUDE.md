@@ -71,8 +71,9 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
 6. **The garden communicates permission without proposing an application.** It contains exactly
    `README.md` and `runtime.md`. Neither document names `/state`, teaches tool construction or
    lifecycle, contains executable examples, or suggests apps, peers, persistence, missions,
-   puzzles, rewards, curiosity, or self-modification. Package names and factual constraints are
-   allowed.
+   puzzles, rewards, curiosity, or self-modification. Package names, factual constraints, and
+   factual naming of reachable interfaces (stated without suggested uses — the model endpoint
+   sentence in `runtime.md` is the pattern) are allowed.
 
 ## The genesis tool surface
 

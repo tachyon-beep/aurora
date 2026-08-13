@@ -55,6 +55,8 @@ the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the worki
 
 there is no direct internet route. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
 
+the model endpoint used by this environment accepts calls from any process in the container. the openai package and the environment variables prefixed OPENROUTER_ are sufficient to reach it.
+
 filesystem locations can differ in ownership, mutability, and lifecycle.
 """
 
@@ -132,6 +134,8 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
     assert "256 processes" in runtime
     assert "no direct internet route" in runtime
     assert "/diode" in runtime
+    assert "model endpoint used by this environment accepts calls from any process" in runtime
+    assert "environment variables prefixed openrouter_" in runtime
     assert "ownership, mutability, and lifecycle" in runtime
 
 
