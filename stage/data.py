@@ -15,6 +15,8 @@ CODE_READ_BYTES = 524_288
 PUBLISHED_READ_BYTES = 4096
 PUBLISHED_TEXT_CAP = 400
 MAX_EPOCH_AGE_SECONDS = 30 * 86400
+SUBCALL_MESSAGE_LIMIT = 2
+SUBCALL_PROMPT_CHARS = 200
 
 DIODE_VERBS = {
     "weather": "read the weather",
@@ -96,9 +98,46 @@ def _count_lines_locked(path):
     return count
 
 
+def classify_entry_kind(request):
+    """Whether a transcript entry is an agent loop turn or a tool's own sub-call.
+
+    A loop turn carries the agent's tool schemas; a sub-call is a bare one- or
+    two-message request made by a tool the agent built for itself. A request
+    matching neither shape is reported as a loop turn, so an unrecognised shape
+    keeps its place in the feed instead of disappearing from it.
+    """
+    if not isinstance(request, dict):
+        return "loop"
+    if request.get("tools"):
+        return "loop"
+    messages = request.get("messages")
+    if not isinstance(messages, list):
+        return "loop"
+    if 1 <= len(messages) <= SUBCALL_MESSAGE_LIMIT:
+        return "subcall"
+    return "loop"
+
+
+def _subcall_prompt(request):
+    """The last message text in a request, whitespace-collapsed and capped."""
+    if not isinstance(request, dict):
+        return ""
+    messages = request.get("messages")
+    if not isinstance(messages, list) or not messages:
+        return ""
+    last = messages[-1]
+    if not isinstance(last, dict):
+        return ""
+    content = last.get("content")
+    if not isinstance(content, str):
+        return ""
+    return " ".join(content.split())[:SUBCALL_PROMPT_CHARS]
+
+
 def _summarize(entry, index):
     request = entry.get("request") or {}
     response = entry.get("response") or {}
+    kind = classify_entry_kind(request)
     reasoning = None
     content = None
     tool_calls = []
@@ -114,6 +153,8 @@ def _summarize(entry, index):
         "index": index,
         "timestamp": entry.get("timestamp"),
         "model": request.get("model"),
+        "kind": kind,
+        "prompt": _subcall_prompt(request) if kind == "subcall" else "",
         "reasoning": reasoning,
         "content": content,
         "tool_calls": tool_calls,

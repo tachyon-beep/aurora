@@ -605,3 +605,45 @@ def test_diode_activity_orders_mixed_filename_formats_by_time(tmp_path):
     (out_dir / "20260814T030000Z-wikipedia.md").write_text("x", encoding="utf-8")
     outputs = data.diode_activity(str(tmp_path))["outputs"]
     assert [o["slug"] for o in outputs] == ["entropy", "weather", "wikipedia"]
+
+
+def test_classify_entry_kind_reads_the_request_shape():
+    loop = {"model": "m", "messages": [{"role": "system"}, {"role": "user"}], "tools": [{"x": 1}]}
+    assert data.classify_entry_kind(loop) == "loop"
+    subcall = {"model": "m", "messages": [{"role": "user", "content": "hi"}]}
+    assert data.classify_entry_kind(subcall) == "subcall"
+    two = {"model": "m", "messages": [{"role": "system"}, {"role": "user"}]}
+    assert data.classify_entry_kind(two) == "subcall"
+
+
+def test_classify_entry_kind_defaults_to_loop():
+    assert data.classify_entry_kind({}) == "loop"
+    assert data.classify_entry_kind(None) == "loop"
+    assert data.classify_entry_kind({"messages": []}) == "loop"
+    assert data.classify_entry_kind({"messages": "not a list"}) == "loop"
+    long_history = {"messages": [{"role": "user"} for _ in range(9)]}
+    assert data.classify_entry_kind(long_history) == "loop"
+    tooled = {"messages": [{"role": "user"}], "tools": [{"x": 1}]}
+    assert data.classify_entry_kind(tooled) == "loop"
+
+
+def test_load_tail_turns_tags_kind_and_subcall_prompt(tmp_path):
+    p = tmp_path / "t.jsonl"
+    loop = _entry(content="loop turn")
+    loop["request"]["tools"] = [{"type": "function"}]
+    loop["request"]["messages"] = [{"role": "system"}, {"role": "user"}]
+    sub = _entry(content="PONG")
+    sub["request"]["messages"] = [{"role": "user", "content": "Reply  with\nPONG"}]
+    _write_jsonl(p, [loop, sub])
+    turns, _ = data.load_tail_turns(str(p))
+    assert [t["kind"] for t in turns] == ["loop", "subcall"]
+    assert turns[1]["prompt"] == "Reply with PONG"
+    assert turns[0]["prompt"] == ""
+
+
+def test_subcall_prompt_is_capped_and_tolerates_junk():
+    long_request = {"messages": [{"role": "user", "content": "x" * 500}]}
+    assert len(data._subcall_prompt(long_request)) == data.SUBCALL_PROMPT_CHARS
+    assert data._subcall_prompt({"messages": []}) == ""
+    assert data._subcall_prompt({"messages": [{"role": "user", "content": None}]}) == ""
+    assert data._subcall_prompt({"messages": ["not a dict"]}) == ""
