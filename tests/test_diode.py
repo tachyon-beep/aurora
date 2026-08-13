@@ -161,3 +161,91 @@ def test_write_output_creates_file(tmp_path, monkeypatch):
     path = diode.write_output("time", "hello")
     assert os.path.exists(path)
     assert "hello" in open(path, encoding="utf-8").read()
+
+
+RSS_SAMPLE = """<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Feed</title>
+<item><title>First story</title><link>https://example.com/1</link>
+<description>Summary one</description></item>
+<item><title>Second story</title><link>https://example.com/2</link></item>
+</channel></rss>"""
+
+ATOM_SAMPLE = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><title>Feed</title>
+<entry><title>Paper one</title><link href="https://example.com/abs/1"/>
+<summary>About things.</summary></entry>
+</feed>"""
+
+
+def test_parse_feed_reads_rss():
+    items = diode.parse_feed(RSS_SAMPLE)
+    assert [i["title"] for i in items] == ["First story", "Second story"]
+    assert items[0]["link"] == "https://example.com/1"
+    assert items[0]["summary"] == "Summary one"
+    assert items[1]["summary"] == ""
+
+
+def test_parse_feed_reads_atom():
+    items = diode.parse_feed(ATOM_SAMPLE)
+    assert items == [
+        {"title": "Paper one", "link": "https://example.com/abs/1", "summary": "About things."}
+    ]
+
+
+def test_parse_feed_rejects_doctype_and_entities():
+    assert diode.parse_feed('<!DOCTYPE rss [<!ENTITY a "b">]><rss/>') is None
+    assert diode.parse_feed("<!doctype html><html></html>") is None
+
+
+def test_parse_feed_rejects_malformed_xml():
+    assert diode.parse_feed("not xml at all <<<") is None
+
+
+def test_parse_feed_caps_items_and_titles():
+    items_xml = "".join(
+        f"<item><title>{'t' * 400}</title><link>https://example.com/{i}</link></item>"
+        for i in range(30)
+    )
+    text = f"<rss><channel>{items_xml}</channel></rss>"
+    items = diode.parse_feed(text)
+    assert len(items) == diode.FEED_ITEM_CAP
+    assert len(items[0]["title"]) == diode.FEED_TITLE_CAP
+
+
+def test_parse_coordinates_bounds():
+    assert diode._parse_coordinates("-33.9,151.2") == (-33.9, 151.2)
+    assert diode._parse_coordinates("91,0") is None
+    assert diode._parse_coordinates("0,181") is None
+    assert diode._parse_coordinates("abc,1") is None
+    assert diode._parse_coordinates("1") is None
+
+
+def test_wikipedia_extract_reads_summary():
+    body = json.dumps(
+        {
+            "title": "Example",
+            "extract": "Example is a thing.",
+            "content_urls": {"desktop": {"page": "https://en.wikipedia.org/wiki/Example"}},
+        }
+    )
+    text = diode._wikipedia_extract(body)
+    assert "# Example" in text
+    assert "Example is a thing." in text
+    assert "https://en.wikipedia.org/wiki/Example" in text
+    assert diode._wikipedia_extract("{}") == "(no summary found)"
+    assert diode._wikipedia_extract("not json") == "could not parse response"
+
+
+def test_weather_lines_reads_current():
+    body = json.dumps(
+        {
+            "current": {"temperature_2m": 14.2, "wind_speed_10m": 22.0, "weather_code": 3},
+            "current_units": {"temperature_2m": "°C", "wind_speed_10m": "km/h"},
+        }
+    )
+    text = diode._weather_lines(body)
+    assert "temperature_2m: 14.2°C" in text
+    assert "wind_speed_10m: 22.0km/h" in text
+    assert "weather_code: 3" in text
+    assert diode._weather_lines("{}") == "(no current conditions found)"
+    assert diode._weather_lines("not json") == "could not parse response"

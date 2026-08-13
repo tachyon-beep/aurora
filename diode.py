@@ -20,6 +20,10 @@ MAX_RESPONSE_BYTES = 2_000_000
 DEFAULT_FETCH_LIMIT = 1
 FETCH_WINDOW = 3600
 
+FEED_ITEM_CAP = 20
+FEED_TITLE_CAP = 300
+FEED_SUMMARY_CAP = 500
+
 
 def _default_resolver(host):
     """Resolve a hostname to its IP address strings."""
@@ -200,6 +204,95 @@ def extract_links(html, base_url):
             seen.add(absolute)
             out.append(absolute)
     return "\n".join(out) if out else "(no links found)"
+
+
+def parse_feed(text):
+    """Parse RSS or Atom text into a list of title, link, summary dicts.
+
+    Returns None for documents that declare DOCTYPE or ENTITY, and for
+    XML that does not parse.
+    """
+    import xml.etree.ElementTree as ET
+
+    head = text[:4096].lower()
+    if "<!doctype" in head or "<!entity" in head:
+        return None
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError:
+        return None
+
+    def local(tag):
+        return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
+
+    items = []
+    for element in root.iter():
+        if local(element.tag) not in ("item", "entry"):
+            continue
+        title, link, summary = "", "", ""
+        for child in element:
+            name = local(child.tag)
+            if name == "title":
+                title = (child.text or "").strip()
+            elif name == "link" and not link:
+                link = (child.get("href") or child.text or "").strip()
+            elif name in ("description", "summary"):
+                summary = (child.text or "").strip()
+        items.append(
+            {
+                "title": title[:FEED_TITLE_CAP],
+                "link": link,
+                "summary": summary[:FEED_SUMMARY_CAP],
+            }
+        )
+        if len(items) >= FEED_ITEM_CAP:
+            break
+    return items
+
+
+def _parse_coordinates(arg):
+    """Parse a lat,lon argument with bounds checks; None when invalid."""
+    parts = arg.split(",")
+    if len(parts) != 2:
+        return None
+    try:
+        lat, lon = float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+    if not (-90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0):
+        return None
+    return lat, lon
+
+
+def _wikipedia_extract(body):
+    """Return title, extract, and page URL lines from a summary response."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return "could not parse response"
+    if not isinstance(data, dict) or not data.get("extract"):
+        return "(no summary found)"
+    lines = [f"# {data.get('title', '')}", "", data["extract"]]
+    page = ((data.get("content_urls") or {}).get("desktop") or {}).get("page", "")
+    if page:
+        lines += ["", page]
+    return "\n".join(lines)
+
+
+def _weather_lines(body):
+    """Return current-conditions lines from an open-meteo response."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return "could not parse response"
+    current = data.get("current") if isinstance(data, dict) else None
+    if not isinstance(current, dict) or not current:
+        return "(no current conditions found)"
+    units = data.get("current_units") or {}
+    lines = []
+    for key, value in current.items():
+        lines.append(f"{key}: {value}{units.get(key, '')}")
+    return "\n".join(lines)
 
 
 class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
