@@ -79,5 +79,14 @@ def test_transport_identity_stays_in_the_chassis():
     # loop - lives in chassis.py, which the genesis agent cannot read. Keep
     # the model/provider identity out of the surface the agent reads first.
     text = open("agent.py", encoding="utf-8").read().lower()
-    for needle in ("openrouter", "deepseek", "base_url", "chat.completions", "extra_headers"):
+    for needle in (
+        "openrouter",
+        "deepseek",
+        "base_url",
+        "chat.completions",
+        "extra_headers",
+        "llm_socket_path",
+        "af_unix",
+        "uds",
+    ):
         assert needle not in text, f"transport identity {needle!r} leaked into agent.py"

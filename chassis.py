@@ -4,6 +4,7 @@ import shutil
 import sys
 import json
 import time
+import httpx
 from openai import OpenAI
 
 
@@ -11,6 +12,9 @@ CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "120000"))
 
 REASONING_EFFORT_LEVELS = ("none", "low", "medium", "high")
 REASONING_EFFORT = os.getenv("REASONING_EFFORT", "")
+
+LLM_SOCKET_PATH = os.getenv("LLM_SOCKET_PATH", "/llm/sock/core.sock")
+SOCKET_WAIT_SECONDS = 30
 
 SESSION_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "session_context.json")
 
@@ -307,6 +311,31 @@ def load_dotenv():
             print(f"warning: failed to parse .env file: {e}")
 
 
+def socket_path():
+    """The configured model socket path, or None when it is explicitly disabled.
+
+    An unset variable takes the default path: the container has no network, so it
+    must not silently fall back to one. Only an explicitly empty value selects the
+    direct upstream, which is the path used when running outside the containers.
+    """
+    value = os.getenv("LLM_SOCKET_PATH", LLM_SOCKET_PATH)
+    return value.strip() or None
+
+
+def wait_for_socket(path, timeout=None, sleep=time.sleep):
+    """True once path exists; False when timeout elapses first."""
+    if timeout is None:
+        timeout = SOCKET_WAIT_SECONDS
+    waited = 0.0
+    while True:
+        if os.path.exists(path):
+            return True
+        if waited >= timeout:
+            return False
+        sleep(0.5)
+        waited += 0.5
+
+
 def build_client():
     llm_base = os.getenv("LLM_BASE_URL", "").strip()
     model = default_model()
@@ -323,24 +352,22 @@ def build_client():
             sys.exit(1)
         direct_url = "https://openrouter.ai/api/v1"
 
-    base_url = os.getenv("OPENROUTER_BASE_URL", "http://localhost:8088/api/v1")
-    proxy_detected = False
-    if "localhost" in base_url or "127.0.0.1" in base_url:
-        import socket
+    path = socket_path()
+    if path is None:
+        print(f"no model socket configured; connecting directly to {direct_url}")
+        return OpenAI(api_key=api_key, base_url=direct_url), model
 
-        try:
-            with socket.create_connection(("127.0.0.1", 8088), timeout=0.2):
-                proxy_detected = True
-        except Exception:
-            pass
+    if not wait_for_socket(path):
+        raise EnvironmentFailure(
+            f"model socket {path} did not appear within {SOCKET_WAIT_SECONDS}s"
+        )
 
-    if not proxy_detected and ("localhost" in base_url or "127.0.0.1" in base_url):
-        print("local transcript proxy not detected on port 8088")
-        base_url = direct_url
-    else:
-        print(f"connected to transcript proxy at {base_url}")
-
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    print(f"connected to transcript proxy at {path}")
+    client = OpenAI(
+        api_key=api_key,
+        base_url="http://localhost/api/v1",
+        http_client=httpx.Client(transport=httpx.HTTPTransport(uds=path)),
+    )
     return client, model
 
 
@@ -455,7 +482,11 @@ def save_session(messages):
 
 def main(agent_module):
     load_dotenv()
-    client, model = build_client()
+    try:
+        client, model = build_client()
+    except EnvironmentFailure as e:
+        print(f"environment failure: {e}")
+        sys.exit(EXIT_ENVIRONMENT)
 
     resumed = False
     if "--resume" in sys.argv or os.path.exists(SESSION_FILE):
