@@ -364,7 +364,8 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   white-space: nowrap; }
 #play-age { flex: none; color: var(--paper-faint); font-variant-numeric: tabular-nums; }
 #now-colour { font-family: var(--sans); font-size: 17px; line-height: 24px;
-  color: var(--paper); margin: 6px 0 0 0; }
+  color: var(--paper); margin: 6px 0 0 0; display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 #now-by { font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
   color: var(--paper-faint); margin-top: 4px; }
 /* commentary:end */
