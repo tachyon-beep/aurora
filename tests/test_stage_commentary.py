@@ -301,12 +301,19 @@ def test_the_model_is_handed_the_beat_and_never_the_raw_stream(monkeypatch):
 
 def test_background_thread_starts_once_and_is_a_daemon(monkeypatch):
     monkeypatch.setenv("STAGE_SUMMARY_API_KEY", "k")
-    monkeypatch.setattr(commentary.time, "sleep", lambda _s: (_ for _ in ()).throw(SystemExit))
+    started = []
+
+    def fake_loop(*args):
+        started.append(args)
+
+    monkeypatch.setattr(commentary, "_loop", fake_loop)
     commentary.start_background_refresh()
     first = commentary._THREAD
     commentary.start_background_refresh()
     assert commentary._THREAD is first
     assert first.daemon is True
+    first.join(timeout=2)
+    assert started == [()]
 
 
 def test_background_thread_does_not_start_without_a_key(monkeypatch):
