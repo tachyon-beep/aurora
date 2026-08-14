@@ -22,6 +22,8 @@ MAX_RESPONSE_BYTES = 2_000_000
 DEFAULT_FETCH_LIMIT = 1
 FETCH_WINDOW = 3600
 
+OUTPUT_NAME_MAX_BYTES = 160
+
 FEED_ITEM_CAP = 20
 FEED_TITLE_CAP = 300
 FEED_SUMMARY_CAP = 500
@@ -226,10 +228,17 @@ def write_state(variables, recent_fetches):
 
 
 def write_output(command, text):
-    """Write a command result to OUTPUT_DIR, return the path."""
+    """Write a command result to OUTPUT_DIR, return the path.
+
+    The command is carried in the filename with every non-alphanumeric character
+    replaced by an underscore, so no separator or traversal sequence survives. The
+    result is truncated to OUTPUT_NAME_MAX_BYTES encoded bytes rather than characters,
+    bounding the name below the filesystem limit whatever script the command is in.
+    """
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
-    safe = "".join(c if c.isalnum() else "_" for c in command)[:20]
+    safe = "".join(c if c.isalnum() else "_" for c in command)
+    safe = safe.encode("utf-8")[:OUTPUT_NAME_MAX_BYTES].decode("utf-8", "ignore")
     path = os.path.join(OUTPUT_DIR, f"{stamp}_{safe}.txt")
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)

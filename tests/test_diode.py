@@ -2,6 +2,7 @@ import json
 import os
 
 import diode
+from stage import data
 
 
 def fake_resolver_returning(ip):
@@ -161,6 +162,36 @@ def test_write_output_creates_file(tmp_path, monkeypatch):
     path = diode.write_output("time", "hello")
     assert os.path.exists(path)
     assert "hello" in open(path, encoding="utf-8").read()
+
+
+def test_write_output_keeps_the_whole_command_in_the_name(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    path = diode.write_output("weather 33.8688 151.2093", "x")
+    assert os.path.basename(path).endswith("_weather_33_8688_151_2093.txt")
+
+
+def test_write_output_name_parses_back_to_the_full_argument(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    path = diode.write_output("weather 33.8688 151.2093", "x")
+    stem = data._output_stem(os.path.basename(path))
+    assert data.output_command(stem) == "weather"
+    assert data.output_argument(stem) == "33 8688 151 2093"
+
+
+def test_write_output_bounds_the_name_in_bytes_not_characters(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    path = diode.write_output("wikipedia " + "東" * 300, "x")
+    name = os.path.basename(path)
+    assert len(name.encode("utf-8")) <= 255
+    assert len(name.encode("utf-8")) <= diode.OUTPUT_NAME_MAX_BYTES + 27
+    assert os.path.exists(path)
+
+
+def test_write_output_never_lets_a_command_escape_the_output_dir(tmp_path, monkeypatch):
+    out = tmp_path / "output"
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(out))
+    path = diode.write_output("../../etc/passwd " + "a" * 400, "x")
+    assert os.path.dirname(os.path.realpath(path)) == os.path.realpath(str(out))
 
 
 RSS_SAMPLE = """<?xml version="1.0"?>
