@@ -723,24 +723,16 @@ def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
     }
 
 
-EVENTS_TAIL_BYTES = 524_288
 INFLIGHT_MAX_AGE = 600
 
 
-def _tail_lines(path, max_bytes):
-    """The newest lines of a file, from a bounded tail read; the first partial line is dropped."""
+def _event_lines(path):
+    """Yield the recorder event log in file order without loading it into memory."""
     try:
-        size = os.path.getsize(path)
-        with open(path, "rb") as f:
-            if size > max_bytes:
-                f.seek(size - max_bytes)
-            raw = f.read(max_bytes)
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            yield from f
     except OSError:
-        return []
-    lines = raw.decode("utf-8", errors="replace").splitlines()
-    if size > max_bytes and lines:
-        lines = lines[1:]
-    return lines
+        return
 
 
 def _empty_lane(name):
@@ -777,7 +769,7 @@ def stream_lanes(events_path, now=None, window=3600):
         now = time.time()
     lanes = {"core": _empty_lane("core")}
     opens = {}
-    for text in _tail_lines(events_path, EVENTS_TAIL_BYTES):
+    for text in _event_lines(events_path):
         line = text.strip()
         if not line:
             continue

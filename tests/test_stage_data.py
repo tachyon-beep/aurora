@@ -1014,3 +1014,42 @@ def test_stream_lanes_skips_malformed_lines(tmp_path):
     (core,) = data.stream_lanes(str(path), now=now)
     assert core["bound"] is True
     assert core["in_flight"] == 0
+
+
+def _busy_event_history(now, count=5000):
+    stamp = _event_stamp(now - 60)
+    return [
+        {
+            "timestamp": stamp,
+            "event": "close",
+            "stream": "core",
+            "id": f"request-{i}",
+            "status": 200,
+            "usage": {"total_tokens": 1},
+        }
+        for i in range(count)
+    ]
+
+
+def test_stream_lanes_counts_the_full_requested_window_beyond_the_old_tail(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(tmp_path, _busy_event_history(now))
+
+    (core,) = data.stream_lanes(path, now=now)
+
+    assert core["requests_hour"] == 5000
+    assert core["tokens_hour"] == 5000
+
+
+def test_stream_lanes_preserves_a_bind_older_than_the_old_tail(tmp_path):
+    now = 1_000_000.0
+    events = [
+        {"timestamp": _event_stamp(now - 120), "event": "bind", "stream": "aux"},
+        *_busy_event_history(now),
+    ]
+    path = _write_events(tmp_path, events)
+
+    lanes = data.stream_lanes(path, now=now)
+
+    aux = next(lane for lane in lanes if lane["name"] == "aux")
+    assert aux["bound"] is True
