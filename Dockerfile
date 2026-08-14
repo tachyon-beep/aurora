@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r /tmp/requirements-agent.txt \
 
 RUN useradd --create-home --uid 1000 appuser
 
-COPY --chown=appuser:appuser agent.py agent_stock.py chassis.py watchdog.py proxy.py parse_transcripts.py system_prompt.txt user_prompt.txt /opt/agent/
+COPY --chown=appuser:appuser agent.py agent_stock.py chassis.py watchdog.py proxy.py recorder_streams.py parse_transcripts.py system_prompt.txt user_prompt.txt /opt/agent/
 COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 COPY --chown=appuser:appuser garden_export/ /garden/

@@ -108,3 +108,25 @@ def test_verifier_cleans_up_the_socket_volumes():
     text = _script()
     assert '"${COMPOSE_PROJECT_NAME}_llm_sock"' in text
     assert '"${COMPOSE_PROJECT_NAME}_llm_console"' in text
+
+
+def test_verifier_exercises_the_stream_console():
+    text = _script()
+    for phrase in (
+        "agent declares a stream in the llm console",
+        "/llm/sock/aux.sock",
+        "streams.json",
+        "rate limited",
+        "streams.json is not writable from the agent",
+    ):
+        assert phrase in text
+
+
+def test_the_image_ships_the_stream_module():
+    dockerfile = Path("Dockerfile").read_text(encoding="utf-8")
+    assert "recorder_streams.py" in dockerfile
+
+
+def test_env_example_documents_the_stream_ceiling():
+    text = Path(".env.example").read_text(encoding="utf-8")
+    assert "STREAM_HOURLY_MAX" in text

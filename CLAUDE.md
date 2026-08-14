@@ -52,14 +52,22 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      recorder, which injects it; the agent runs with a dummy key. This is the invariant — not the
      number of keys in the system. Every channel the agent has to a credentialed service is closed
      by its own guarantee, not by the absence of a channel — so when you add a channel, state which
-     guarantee closes it. Today: the **recorder socket** exposes exactly one route
-     (`POST /api/v1/chat/completions`) and forwards its body upstream verbatim; the key is protected
-     by injection at the recorder and by the header-free logging described next, not by the socket's
-     shape. The shared **`/diode` volume** carries a closed command vocabulary; the agent can cause
-     spend through a gated command (e.g. the diode's speech credential) but no command in that
-     vocabulary returns a key — each diode credential lives only in the diode's own environment. The
-     **`/llm/console` volume** is agent-writable and recorder-readable but is read by nothing today;
-     it is scaffolding for a later change and carries no guarantee yet, so nothing may depend on it.
+     guarantee closes it. Today: every **recorder socket** exposes exactly one route
+     (`POST /api/v1/chat/completions`); `core.sock` forwards its body upstream verbatim, and an
+     agent-declared stream socket replaces a closed set of body fields (model, reasoning_effort,
+     temperature, top_p, max_tokens) with the agent's own declared values before forwarding. The
+     key is protected by injection at the recorder and by the header-free logging described next,
+     not by any socket's shape. The shared **`/diode` volume** carries a closed command vocabulary;
+     the agent can cause spend through a gated command (e.g. the diode's speech credential) but no
+     command in that vocabulary returns a key — each diode credential lives only in the diode's own
+     environment. The **`/llm/console` volume** is written by the agent and read only by the
+     recorder, which validates it against a closed field vocabulary. A declaration can create model
+     sockets under `/llm/sock` and set pacing and hyperparameters for the agent's own model calls;
+     no field names a URL, a filesystem path, a credential, or an upstream, and the stream-name
+     pattern admits no path separator. The upstream target and key remain facts of the recorder's
+     environment that no console value can reach or change; each stream's allowance is clamped by
+     the operator-side `STREAM_HOURLY_MAX`. The recorder's own writes into `/llm/sock`
+     (`README.md`, `streams.json`) are agent-readable surfaces and stay within invariant 2.
      Any further credential must be reachable through none of these, and must never be mounted,
      copied, or named into the agent image.
    - The **proxy logs request/response bodies, never headers**, so the key never enters the transcript.
