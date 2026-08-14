@@ -167,3 +167,22 @@ def rate_limited_message(allowance, history, now, window=BUDGET_WINDOW):
     if status["oldest_expires_in_seconds"] is not None:
         message += f"; next available in {status['oldest_expires_in_seconds']} seconds"
     return message
+
+
+def compose_body(body_bytes, settings):
+    """Replace declared fields in a JSON-object request body.
+
+    Returns (composed_bytes, error). Only fields in COMPOSED_FIELDS are
+    applied; the budget paces the socket and never enters the body. A body
+    that is not a JSON object cannot be composed and is refused.
+    """
+    try:
+        data = json.loads(body_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        data = None
+    if not isinstance(data, dict):
+        return None, "request body is not a json object"
+    for field in COMPOSED_FIELDS:
+        if field in settings:
+            data[field] = settings[field]
+    return json.dumps(data).encode("utf-8"), None

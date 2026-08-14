@@ -176,3 +176,33 @@ def test_the_refusal_carries_a_countdown_when_one_exists():
     assert message == (
         "rate limited: at most 1 request(s) per hour on this socket; next available in 2600 seconds"
     )
+
+
+def test_compose_replaces_declared_fields_and_preserves_the_rest():
+    body = json.dumps(
+        {"model": "sent", "messages": [{"role": "user", "content": "q"}], "temperature": 1.5}
+    ).encode("utf-8")
+    composed, error = rs.compose_body(
+        body, {"model": "declared", "reasoning_effort": "low", "budget": 3}
+    )
+    assert error is None
+    data = json.loads(composed.decode("utf-8"))
+    assert data["model"] == "declared"
+    assert data["reasoning_effort"] == "low"
+    assert data["temperature"] == 1.5
+    assert data["messages"] == [{"role": "user", "content": "q"}]
+    assert "budget" not in data
+
+
+def test_compose_with_no_settings_round_trips_the_object():
+    body = json.dumps({"model": "m", "messages": []}).encode("utf-8")
+    composed, error = rs.compose_body(body, {})
+    assert error is None
+    assert json.loads(composed.decode("utf-8")) == {"model": "m", "messages": []}
+
+
+def test_compose_refuses_a_non_object_body():
+    for body in (b"[]", b"not json", b"\xff\xfe"):
+        composed, error = rs.compose_body(body, {"model": "m"})
+        assert composed is None
+        assert error == "request body is not a json object"
