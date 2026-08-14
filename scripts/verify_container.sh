@@ -200,17 +200,23 @@ echo "==> the console returns to empty for the recovery checks"
 docker compose exec -T agent sh -c 'printf "{\"streams\":{}}" > /llm/console/console.json'
 
 echo "==> recorder emits open and close events for the recorded completions"
+# The agent's own loop is running against the stub, so an open without its
+# close is legitimately in flight at any instant, and the final line can be
+# mid-write. Every close must pair with an open; unmatched opens are allowed.
 docker compose exec -T recorder python -c "
 import json
 opens, closes = set(), set()
 with open('/transcripts/events.jsonl') as f:
     for line in f:
-        event = json.loads(line)
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
         if event['event'] == 'open':
             opens.add(event['id'])
         elif event['event'] == 'close':
             closes.add(event['id'])
-assert opens and opens == closes, (len(opens), len(closes))
+assert closes and closes <= opens, (len(opens), len(closes))
 "
 
 echo "==> stage snapshot carries stream lanes"
