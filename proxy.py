@@ -1,6 +1,7 @@
 import gzip
 import http.server
 import shutil
+import socket
 import socketserver
 import threading
 import urllib.request
@@ -10,7 +11,7 @@ import os
 import sys
 import datetime
 
-PORT = 8088
+SOCKET_PATH = os.environ.get("LLM_SOCKET_PATH", "/llm/sock/core.sock")
 TRANSCRIPT_DIR = os.environ.get("TRANSCRIPT_DIR", os.path.dirname(os.path.abspath(__file__)))
 TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.jsonl")
 PLAIN_TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.txt")
@@ -310,10 +311,33 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             rotate_if_needed(PLAIN_TRANSCRIPT_FILE)
 
 
-class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
-    """Multi-threaded HTTP Server to handle concurrent proxy requests."""
+class UnixHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+    """Multi-threaded HTTP server bound to a unix domain socket.
 
+    HTTPServer.server_bind unpacks server_address[:2] as a host and port, which
+    on a filesystem path yields two characters and then attempts to resolve the
+    first as a hostname. AF_UNIX accept() also reports an empty peer address,
+    which the handler's logging indexes. Both are handled here so the request
+    handler itself needs no changes.
+    """
+
+    address_family = socket.AF_UNIX
     daemon_threads = True
+    allow_reuse_address = False
+
+    def server_bind(self):
+        try:
+            os.unlink(self.server_address)
+        except FileNotFoundError:
+            pass
+        socketserver.TCPServer.server_bind(self)
+        os.chmod(self.server_address, 0o660)
+        self.server_name = "unix"
+        self.server_port = 0
+
+    def get_request(self):
+        conn, _ = self.socket.accept()
+        return conn, ("unix", 0)
 
 
 def main():
@@ -321,21 +345,30 @@ def main():
         print("error: set OPENROUTER_API_KEY, or LLM_BASE_URL for an OpenAI-compatible upstream")
         sys.exit(1)
 
+    socket_path = os.environ.get("LLM_SOCKET_PATH", SOCKET_PATH)
+    parent = os.path.dirname(socket_path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
     print("=" * 60)
     print("      TRANSCRIPT PROXY SERVER")
     print("=" * 60)
-    print(f"Listening on:  http://localhost:{PORT}")
+    print(f"Listening on:  {socket_path}")
     print(f"Forwarding to: {upstream_url()}")
     print(f"Logging to:    {TRANSCRIPT_FILE}")
     print("-" * 60)
 
-    server = ThreadedHTTPServer(("0.0.0.0", PORT), ProxyHTTPRequestHandler)
+    server = UnixHTTPServer(socket_path, ProxyHTTPRequestHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nShutting down proxy server...")
     finally:
         server.server_close()
+        try:
+            os.unlink(socket_path)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
