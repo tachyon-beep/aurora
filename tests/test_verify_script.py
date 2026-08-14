@@ -28,6 +28,12 @@ def test_verifier_checks_the_workshop_and_state_contract():
         assert phrase in text
 
 
+def test_verifier_checks_the_speech_credential_is_agent_unreachable():
+    text = _script()
+    assert "ELEVENLABS" in text
+    assert "speech credential" in text
+
+
 def test_verifier_cleanup_names_only_its_isolated_volumes():
     text = _script()
     assert '"${COMPOSE_PROJECT_NAME}_state"' in text

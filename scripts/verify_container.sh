@@ -70,6 +70,11 @@ if docker compose exec -T agent python -c "import socket; socket.setdefaulttimeo
   echo "FAIL: agent reached the internet"; exit 1
 fi
 
+echo "==> speech credential is unreachable from the agent"
+if docker compose exec -T agent sh -c 'env | grep -q ELEVENLABS'; then
+  echo "FAIL: speech credential present in the agent environment"; exit 1
+fi
+
 echo "==> agent CAN reach the recorder"
 docker compose exec -T agent python -c "import socket; socket.setdefaulttimeout(5); socket.create_connection(('recorder',8088))"
 

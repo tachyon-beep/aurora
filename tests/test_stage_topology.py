@@ -59,6 +59,19 @@ def test_verify_script_checks_stage_containment():
     assert "aurora-stage" in text
 
 
+def test_speech_credential_is_declared_only_on_the_diode_service():
+    compose = _read("docker-compose.yml")
+    diode_block = compose.split("\n  diode:\n")[1].split("\n  viewer:\n")[0]
+    assert "ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}" in diode_block
+    agent_block = compose.split("\n  agent:\n")[1].split("\n  diode:\n")[0]
+    assert "ELEVENLABS" not in agent_block
+    assert _read(".env.example").count("ELEVENLABS_API_KEY") >= 1
+
+
+def test_speech_credential_is_absent_from_the_agent_image():
+    assert "ELEVENLABS" not in _read("Dockerfile")
+
+
 def test_agent_work_allocation_and_memory_move_together():
     text = _read("docker-compose.yml")
     agent_block = text.split("\n  agent:\n")[1].split("\n  diode:\n")[0]
