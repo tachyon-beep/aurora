@@ -642,11 +642,16 @@ def _filename_epoch(name):
     return moment.replace(tzinfo=datetime.timezone.utc).timestamp()
 
 
-def output_slug(name):
-    """The command text carried in a diode output filename, without its stamp."""
+def _output_stem(name):
+    """The command text carried in a diode output filename, without its stamp, uncapped."""
     stem = os.path.splitext(name)[0]
     stem = re.sub(r"^[0-9TZ_:-]+", "", stem)
-    return stem.replace("_", " ").strip().lower()[:24]
+    return stem.replace("_", " ").strip().lower()
+
+
+def output_slug(name):
+    """The command text carried in a diode output filename, without its stamp."""
+    return _output_stem(name)[:24]
 
 
 def output_verb(slug):
@@ -657,9 +662,18 @@ def output_verb(slug):
     return DIODE_VERBS.get(head, f"ran {head}")[:40]
 
 
-def output_command(slug):
-    """The command word carried by a diode output slug, without its argument."""
-    return slug.split(" ")[0] if slug else ""
+def output_command(stem):
+    """The command word carried by a diode output stem, without its argument."""
+    return stem.split(" ")[0][:24] if stem else ""
+
+
+def output_argument(stem):
+    """The argument text carried by a diode output stem, without its command word."""
+    if not stem:
+        return ""
+    parts = stem.split(" ", 1)
+    argument = parts[1] if len(parts) > 1 else ""
+    return argument.strip()[:40]
 
 
 def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
@@ -681,7 +695,8 @@ def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
         epoch = _filename_epoch(name)
         if epoch is None:
             epoch = stat.st_mtime
-        slug = output_slug(name)
+        stem = _output_stem(name)
+        slug = stem[:24]
         life = None
         if incarnation is not None:
             life = classify_life(epoch, deaths or [], incarnation)
@@ -689,8 +704,8 @@ def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
             {
                 "name": name,
                 "slug": slug,
-                "command": output_command(slug),
-                "argument": slug[len(output_command(slug)) :].strip(),
+                "command": output_command(stem),
+                "argument": output_argument(stem),
                 "verb": output_verb(slug),
                 "epoch": epoch,
                 "size": stat.st_size,

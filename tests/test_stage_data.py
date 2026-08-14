@@ -774,3 +774,25 @@ def test_diode_activity_separates_command_from_argument(tmp_path):
     assert entry["command"] == "weather"
     assert entry["argument"].startswith("33")
     assert entry["verb"] == data.output_verb(entry["slug"])
+
+
+def test_diode_activity_argument_survives_a_slug_longer_than_the_cap(tmp_path):
+    """`command`/`argument` come from the uncapped stem, so a long argument keeps
+
+    every character even though `slug` itself is still capped at 24. The 24-char
+    example from the design review (`weather_33.8688_151.2093`, 24 chars exactly)
+    does not actually lose anything; this filename is deliberately one character
+    longer per field so it exceeds the cap and would previously have dropped the
+    trailing digits of the second coordinate.
+    """
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    (out_dir / "20260813T192618Z_weather_33.86881_151.209312.txt").write_text(
+        "result", encoding="utf-8"
+    )
+    got = data.diode_activity(str(tmp_path))
+    entry = got["outputs"][0]
+    assert len(entry["slug"]) == 24
+    assert entry["slug"] == "weather 33.86881 151.209"
+    assert entry["command"] == "weather"
+    assert entry["argument"] == "33.86881 151.209312"
