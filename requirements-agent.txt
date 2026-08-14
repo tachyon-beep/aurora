@@ -1,4 +1,5 @@
-openai
+openai<3
+httpx
 numpy
 sympy
 networkx
