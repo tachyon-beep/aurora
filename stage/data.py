@@ -723,6 +723,114 @@ def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
     }
 
 
+EVENTS_TAIL_BYTES = 524_288
+INFLIGHT_MAX_AGE = 600
+
+
+def _tail_lines(path, max_bytes):
+    """The newest lines of a file, from a bounded tail read; the first partial line is dropped."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+            raw = f.read(max_bytes)
+    except OSError:
+        return []
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    if size > max_bytes and lines:
+        lines = lines[1:]
+    return lines
+
+
+def _empty_lane(name):
+    return {
+        "name": name,
+        "bound": False,
+        "in_flight": 0,
+        "in_flight_since": None,
+        "last_epoch": None,
+        "requests_hour": 0,
+        "errors_hour": 0,
+        "tokens_hour": 0,
+    }
+
+
+def _later(current, epoch):
+    """The later of a lane's recorded epoch and a new one; None never wins."""
+    if epoch is None:
+        return current
+    if current is None or epoch > current:
+        return epoch
+    return current
+
+
+def stream_lanes(events_path, now=None, window=3600):
+    """Per-socket activity folded from the recorder's event log, core first.
+
+    Opens without a matching close count as in flight until INFLIGHT_MAX_AGE,
+    after which they are treated as abandoned by a dead recorder. Hourly
+    counts sum closes inside the window. A lane that is unbound and did
+    nothing inside the window is dropped; core always appears.
+    """
+    if now is None:
+        now = time.time()
+    lanes = {"core": _empty_lane("core")}
+    opens = {}
+    for text in _tail_lines(events_path, EVENTS_TAIL_BYTES):
+        line = text.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        name = event.get("stream")
+        if not isinstance(name, str) or not name:
+            continue
+        kind = event.get("event")
+        epoch = parse_epoch(event.get("timestamp"))
+        lane = lanes.setdefault(name, _empty_lane(name))
+        if kind == "bind":
+            lane["bound"] = True
+        elif kind == "unbind":
+            lane["bound"] = False
+        elif kind == "open":
+            if epoch is not None:
+                opens[(name, event.get("id"))] = epoch
+                lane["last_epoch"] = _later(lane["last_epoch"], epoch)
+        elif kind == "close":
+            opens.pop((name, event.get("id")), None)
+            lane["last_epoch"] = _later(lane["last_epoch"], epoch)
+            if epoch is not None and now - epoch < window:
+                lane["requests_hour"] += 1
+                status = event.get("status")
+                if isinstance(status, int) and status >= 400:
+                    lane["errors_hour"] += 1
+                usage = event.get("usage")
+                if isinstance(usage, dict):
+                    total = usage.get("total_tokens")
+                    if isinstance(total, (int, float)) and not isinstance(total, bool):
+                        lane["tokens_hour"] += int(total)
+    for (name, _id), epoch in opens.items():
+        if now - epoch > INFLIGHT_MAX_AGE:
+            continue
+        lane = lanes[name]
+        lane["in_flight"] += 1
+        since = lane["in_flight_since"]
+        if since is None or epoch < since:
+            lane["in_flight_since"] = epoch
+    out = [lanes.pop("core")]
+    for name in sorted(lanes):
+        lane = lanes[name]
+        if not lane["bound"] and lane["requests_hour"] == 0 and lane["in_flight"] == 0:
+            continue
+        out.append(lane)
+    return out
+
+
 def diode_published(diode_dir, limit=2):
     """(newest published excerpts, total count) from the diode's published directory."""
     published_dir = os.path.join(diode_dir, "published")
