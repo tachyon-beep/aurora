@@ -72,6 +72,13 @@ def test_published_beats_a_plain_diode_output():
     assert beat["kind"] == "published"
 
 
+def test_a_stale_published_entry_gives_way_to_the_next_beat():
+    """The published gate is independently reachable — a stale entry must not win."""
+    published = [{"epoch": NOW - 200, "text": "hello"}]
+    beat = commentary.detect_beat([_turn(1, NOW - 5)], _stats(), EMPTY_DIODE, published, NOW)
+    assert beat["kind"] == "working"
+
+
 def test_reached_out_carries_the_command_word():
     diode = {"outputs": [{"command": "weather", "epoch": NOW - 20, "life": 4}]}
     beat = commentary.detect_beat([_turn(1, NOW - 5)], _stats(), diode, [], NOW)
