@@ -1,6 +1,15 @@
 import re
 
+import pytest
+
 from stage import commentary
+
+
+@pytest.fixture(autouse=True)
+def _clean_commentary_state():
+    commentary._reset_for_tests()
+    yield
+    commentary._reset_for_tests()
 
 
 def _turn(index, epoch, tools=(), error=None, reasoning=""):
@@ -210,3 +219,104 @@ def test_an_agent_built_tool_still_gets_a_tag_and_a_phrase():
     play = commentary.play_by_play([_turn(1, NOW - 5, tools=("summarise",))], EMPTY_DIODE, _stats())
     assert play["tag"] == "SU"
     assert play["phrase"].strip()
+
+
+def test_colour_falls_back_to_the_template_without_a_key(monkeypatch):
+    monkeypatch.delenv("STAGE_SUMMARY_API_KEY", raising=False)
+    beat = commentary._beat("self_edit", tool="write_file")
+    line = commentary.colour_line(beat)
+    assert line["text"] == commentary.BEAT_TEMPLATES["self_edit"]
+    assert line["generated"] is False
+
+
+def test_a_generated_line_never_survives_a_beat_change(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", "k")
+    monkeypatch.setattr(commentary.llm, "chat", lambda *a, **k: "It is rewriting itself, live.")
+    edit = commentary._beat("self_edit", tool="write_file")
+    commentary.publish_beat(edit)
+    commentary._refresh_if_due({}, now=1000.0)
+    assert commentary.colour_line(edit)["generated"] is True
+
+    reach = commentary._beat("reached_out", detail="weather")
+    got = commentary.colour_line(reach)
+    assert got["generated"] is False
+    assert got["text"] == commentary.BEAT_TEMPLATES["reached_out"]
+
+
+def test_the_regeneration_floor_holds_against_a_beat_storm(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", "k")
+    calls = []
+    monkeypatch.setattr(commentary.llm, "chat", lambda *a, **k: calls.append(1) or "A line.")
+    state = {}
+    commentary.publish_beat(commentary._beat("self_edit", tool="write_file"))
+    assert commentary._refresh_if_due(state, now=1000.0) is True
+    for offset in range(1, int(commentary.MIN_REGEN_SECONDS)):
+        commentary.publish_beat(commentary._beat("reached_out", detail=str(offset)))
+        commentary._refresh_if_due(state, now=1000.0 + offset)
+    assert len(calls) == 1
+
+
+def test_the_same_beat_is_not_regenerated(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", "k")
+    calls = []
+    monkeypatch.setattr(commentary.llm, "chat", lambda *a, **k: calls.append(1) or "A line.")
+    state = {}
+    beat = commentary._beat("working")
+    commentary.publish_beat(beat)
+    commentary._refresh_if_due(state, now=1000.0)
+    commentary._refresh_if_due(state, now=1000.0 + 10 * commentary.MIN_REGEN_SECONDS)
+    assert len(calls) == 1
+
+
+def test_a_failed_generation_leaves_the_template_showing(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", "k")
+    monkeypatch.setattr(commentary.llm, "chat", lambda *a, **k: None)
+    beat = commentary._beat("silence", span=200.0)
+    commentary.publish_beat(beat)
+    commentary._refresh_if_due({}, now=1000.0)
+    line = commentary.colour_line(beat)
+    assert line["text"] == commentary.BEAT_TEMPLATES["silence"]
+    assert line["generated"] is False
+
+
+def test_the_colour_prompt_carries_the_shared_injection_framing():
+    assert commentary.llm.RECORDS_FRAMING in commentary.COLOUR_SYSTEM_PROMPT
+
+
+def test_the_model_is_handed_the_beat_and_never_the_raw_stream(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", "k")
+    seen = {}
+
+    def fake_chat(system, user, *a, **k):
+        seen["system"], seen["user"] = system, user
+        return "A line."
+
+    monkeypatch.setattr(commentary.llm, "chat", fake_chat)
+    commentary.publish_beat(commentary._beat("reached_out", detail="weather", count=2))
+    commentary._refresh_if_due({}, now=1000.0)
+    assert "reached_out" in seen["user"]
+    assert "weather" in seen["user"]
+    assert len(seen["user"]) < 600
+
+
+def test_background_thread_starts_once_and_is_a_daemon(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", "k")
+    monkeypatch.setattr(commentary.time, "sleep", lambda _s: (_ for _ in ()).throw(SystemExit))
+    commentary.start_background_refresh()
+    first = commentary._THREAD
+    commentary.start_background_refresh()
+    assert commentary._THREAD is first
+    assert first.daemon is True
+
+
+def test_background_thread_does_not_start_without_a_key(monkeypatch):
+    monkeypatch.delenv("STAGE_SUMMARY_API_KEY", raising=False)
+    commentary.start_background_refresh()
+    assert commentary._THREAD is None
+
+
+def test_source_never_names_the_recorder_credentials():
+    with open("stage/commentary.py", "r", encoding="utf-8") as f:
+        source = f.read()
+    assert "OPENROUTER_API_KEY" not in source
+    assert "LLM_API_KEY" not in source

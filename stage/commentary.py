@@ -7,8 +7,10 @@ ever reads the cache.
 """
 
 import statistics
+import threading
+import time
 
-from stage import data
+from stage import data, llm
 
 SILENCE_SECONDS = 90
 RECENT_SECONDS = 180
@@ -271,3 +273,155 @@ def play_by_play(turns, diode, stats):
 
     name = names[-1]
     return {"tag": _tool_tag(name), "phrase": _tool_phrase(name), "epoch": epoch}
+
+
+MIN_REGEN_SECONDS = 60
+DEFAULT_INTERVAL_SECONDS = 30
+POLL_SECONDS = 5
+MAX_TOKENS = 90
+TEMPERATURE = 0.7
+MAX_COLOUR_CHARS = 180
+
+COLOUR_SYSTEM_PROMPT = (
+    "You are the colour commentator on a live stream about an AI agent that "
+    "rewrites its own source code and is replaced when it dies. You will be given "
+    "one BEAT: a machine-detected description of what the agent is doing right "
+    "now. Write exactly one sentence of at most 140 characters interpreting that "
+    "beat for a viewer who has just arrived. Refer to the agent in the third "
+    "person. State only what the beat supports and never invent an event it does "
+    "not describe. " + llm.RECORDS_FRAMING + " Do not use markdown, headings, "
+    "lists, or emoji. Do not address the viewer. Output only the sentence."
+)
+
+_LOCK = threading.Lock()
+_CACHE = {"beat_id": None, "text": None, "generated_at": 0.0}
+_PENDING = {"beat": None}
+_STATE = {"last_gen": None, "last_beat_id": None}
+_START_LOCK = threading.Lock()
+_THREAD = None
+_STARTED = False
+
+
+def interval_seconds():
+    """The colour-line refresh ceiling."""
+    return llm.interval_seconds("STAGE_COMMENTARY_INTERVAL_SECONDS", DEFAULT_INTERVAL_SECONDS)
+
+
+def model_name():
+    """The commentary model, defaulting to whatever the recap uses."""
+    return llm.model_name("STAGE_COMMENTARY_MODEL", llm.model_name())
+
+
+def publish_beat(beat):
+    """Store a copy of the current beat for the background thread.
+
+    Called from the request path; cheap and never makes a request.
+    """
+    with _LOCK:
+        _PENDING["beat"] = dict(beat) if isinstance(beat, dict) else None
+
+
+def _prompt(beat):
+    """The beat and its evidence as key: value lines, wrapped for the model.
+
+    Only fields already on the beat dict are ever rendered here — never turn
+    text, reasoning, a tombstone note, or a published statement.
+    """
+    lines = [
+        f"kind: {beat.get('kind')}",
+        f"tool: {beat.get('tool')}",
+        f"detail: {beat.get('detail')}",
+        f"count: {beat.get('count')}",
+        f"novelty: {beat.get('novelty')}",
+        f"span: {beat.get('span_seconds')}",
+    ]
+    return "BEGIN BEAT\n" + "\n".join(lines) + "\nEND BEAT"
+
+
+def _refresh_if_due(state, now=None):
+    """Generate a colour line when the policy allows; True when a request was attempted."""
+    if not llm.enabled():
+        return False
+    with _LOCK:
+        beat = _PENDING["beat"]
+    if not beat:
+        return False
+    if now is None:
+        now = time.monotonic()
+    last_gen = state.get("last_gen")
+    if last_gen is not None and now - last_gen < MIN_REGEN_SECONDS:
+        return False
+    if beat.get("id") == state.get("last_beat_id"):
+        return False
+    state["last_gen"] = now
+    state["last_beat_id"] = beat.get("id")
+    text = llm.chat(
+        COLOUR_SYSTEM_PROMPT,
+        _prompt(beat),
+        MAX_TOKENS,
+        TEMPERATURE,
+        model=model_name(),
+        max_output_chars=MAX_COLOUR_CHARS,
+    )
+    if text:
+        with _LOCK:
+            _CACHE.update({"beat_id": beat.get("id"), "text": text, "generated_at": time.time()})
+    return True
+
+
+def colour_line(beat):
+    """{"text", "generated", "beat"} for beat. Never empty; never makes a request.
+
+    Returns the cached generated text only when it was produced for this exact
+    beat id; any other beat, including one with the same kind but different
+    evidence, falls back to the template immediately.
+    """
+    beat_id = beat.get("id") if isinstance(beat, dict) else None
+    with _LOCK:
+        cached_id = _CACHE.get("beat_id")
+        cached_text = _CACHE.get("text")
+    if (
+        cached_id is not None
+        and cached_id == beat_id
+        and isinstance(cached_text, str)
+        and cached_text.strip()
+    ):
+        return {"text": cached_text, "generated": True, "beat": beat_id}
+    return {"text": template_line(beat), "generated": False, "beat": beat_id}
+
+
+def _loop():
+    """The background refresh loop; every iteration swallows its own failures."""
+    while True:
+        try:
+            _refresh_if_due(_STATE)
+        except Exception:
+            pass
+        time.sleep(POLL_SECONDS)
+
+
+def start_background_refresh():
+    """Start the colour refresh thread. No-op when disabled."""
+    global _THREAD, _STARTED
+    if not llm.enabled():
+        return None
+    with _START_LOCK:
+        if _STARTED:
+            return None
+        thread = threading.Thread(target=_loop, daemon=True, name="stage-commentary")
+        _THREAD = thread
+        _STARTED = True
+        thread.start()
+    return None
+
+
+def _reset_for_tests():
+    """Clear module state so a test can exercise a fresh colour cache."""
+    global _THREAD, _STARTED
+    with _LOCK:
+        _CACHE.update({"beat_id": None, "text": None, "generated_at": 0.0})
+        _PENDING.update({"beat": None})
+    _STATE.update({"last_gen": None, "last_beat_id": None})
+    with _START_LOCK:
+        _THREAD = None
+        _STARTED = False
