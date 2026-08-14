@@ -172,3 +172,12 @@ def test_the_playback_freshness_gate_matches_the_commentary_recency_window():
     match = re.search(r"ageMs > (\d+)", HTML)
     assert match, "the playback freshness gate moved or was renamed"
     assert int(match.group(1)) == commentary.RECENT_SECONDS * 1000
+
+
+def test_stream_page_renders_lanes():
+    html = pages.STREAM_PAGE_HTML
+    assert 'id="lanes"' in html
+    assert "renderLanes" in html
+    assert "snap.lanes" in html
+    assert "in_flight_since" in html
+    assert "tokens_hour" in html
