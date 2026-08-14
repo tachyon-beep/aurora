@@ -392,7 +392,7 @@ def _empty_snapshot(now):
             "colour": {
                 "text": commentary.BEAT_TEMPLATES["working"],
                 "generated": False,
-                "beat": "working",
+                "beat": commentary.working_beat_id(),
             },
         },
     }

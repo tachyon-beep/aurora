@@ -116,6 +116,11 @@ def _beat(kind, tool=None, detail=None, count=None, span=None, novelty="repeat",
     }
 
 
+def working_beat_id():
+    """The working beat's id, so a static placeholder never drifts from the live shape."""
+    return _beat("working")["id"]
+
+
 def detect_beat(turns, stats, diode, published, now):
     """The loudest true thing happening right now. Pure; never returns None.
 

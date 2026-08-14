@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 import pytest
 
-from stage import server
+from stage import commentary, server
 
 
 @pytest.fixture()
@@ -385,6 +385,13 @@ def test_the_empty_snapshot_carries_the_same_commentary_shape():
     snap = server._empty_snapshot(1000.0)
     assert set(snap["commentary"]) == {"play", "colour"}
     assert snap["commentary"]["colour"]["text"].strip()
+
+
+def test_the_empty_snapshot_reports_the_same_beat_shape_as_a_live_one():
+    """A consumer must not meet two shapes depending on whether the stage fell back."""
+    empty = server._empty_snapshot(1000.0)["commentary"]["colour"]["beat"]
+    live = commentary.colour_line(commentary._beat("working"))["beat"]
+    assert empty == live
 
 
 def test_beat_detection_reads_the_full_tail_not_the_display_slice(tmp_path, monkeypatch):
