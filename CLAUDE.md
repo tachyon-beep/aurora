@@ -50,21 +50,26 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      socket whose directory it mounts read-only, so it can connect but cannot unlink or shadow it.
    - **No real credential is ever reachable by the agent.** The upstream API key lives only in the
      recorder, which injects it; the agent runs with a dummy key. This is the invariant — not the
-     number of keys in the system. Any other credential must live on a service the agent has no
-     channel to, and must never be mounted, copied, or named into the agent image. The agent's only
-     channel to a credentialed service is the recorder socket, which exposes exactly one route
-     (`POST /api/v1/chat/completions`) and forwards its body upstream verbatim. That is one route,
-     not a closed command vocabulary in the diode's sense; the protection is the key injection and
-     the header-free logging below.
+     number of keys in the system. The agent has exactly two channels to credentialed services, each
+     closed by a different guarantee, not by the absence of a channel. The recorder socket exposes
+     exactly one route (`POST /api/v1/chat/completions`) and forwards its body upstream verbatim;
+     the key is protected by injection at the recorder and by the header-free logging described
+     next, not by the socket's shape. The shared `/diode` volume carries a closed command
+     vocabulary; the agent can cause spend through a gated command (e.g. the diode's speech
+     credential) but no command in that vocabulary returns a key — each diode credential lives only
+     in the diode's own environment. Any further credential must be reachable through neither
+     channel, and must never be mounted, copied, or named into the agent image.
    - The **proxy logs request/response bodies, never headers**, so the key never enters the transcript.
    - The **diode is egress-only** and executes a *closed command vocabulary* — no code or arbitrary
      paths cross it. Keep the SSRF defenses (scheme allow-list, private/loopback/reserved rejection,
      redirect re-validation).
    - The **viewer** is read-only, loopback-only, and on no shared network. It must stay that way.
    - The **stage** is outward-facing and never holds the recorder's credential. It may hold one
-     optional low-value key of its own (`STAGE_SUMMARY_API_KEY`) for generated prose. That key is
-     unreachable by the agent — the agent has no network interface and shares no volume with the
-     stage — and its absence disables generation rather than degrading any other function. The
+     optional low-value key of its own (`STAGE_SUMMARY_API_KEY`) for generated prose. That key
+     lives only in the stage's own environment and is never written to any volume; the agent has no
+     network interface and no other path into that environment, so the key is unreachable regardless
+     of the volumes the agent and stage do share (`diode`, `telemetry`, both mounted read-only into
+     the stage). Its absence disables generation rather than degrading any other function. The
      stage never mounts `/state`.
      Its console (port 8092) binds host-loopback only, requires `STAGE_CONSOLE_TOKEN` on every
      request, and is never exposed through the tunnel. The stream port (8091) serves no mutating

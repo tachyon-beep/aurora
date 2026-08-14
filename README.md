@@ -109,12 +109,15 @@ What the design provides:
   interface and an empty routing table — and reaches the model only through a unix domain socket
   served by the recorder.
 - **No real credential is reachable by the agent.** It runs with a dummy key; the recorder injects
-  the real one and keeps it out of the transcript. Any other credential in the system — the stage's
-  optional summariser key, for instance — lives on a service the agent has no channel to, and is
-  never mounted or named into the agent image. The agent's only channel to a credentialed service is
-  the recorder socket, which exposes exactly one route (`POST /api/v1/chat/completions`) and
-  forwards its body upstream verbatim — one route, not a closed command vocabulary. The protection is
-  the key injection and header-free logging above, not network topology.
+  the real one and keeps it out of the transcript. The agent has exactly two channels to
+  credentialed services, each closed by a different guarantee. The recorder socket exposes exactly
+  one route (`POST /api/v1/chat/completions`) and forwards its body upstream verbatim; the key is
+  protected by injection at the recorder and by body-only, never-header, logging — not by the
+  socket's shape. The shared `/diode` volume carries a closed command vocabulary; the agent can
+  cause spend through a gated command (the diode's speech credential) but no command returns a
+  key — each diode credential lives only in the diode's own environment. Any further credential,
+  such as the stage's optional summariser key, must be reachable through neither channel, and is
+  never mounted or named into the agent image.
 - **The record is external and tamper-evident.** Transcripts are written by the recorder to a volume
   the agent cannot reach. The agent may try to blind its own in-container view, but the authoritative
   record lives elsewhere.
