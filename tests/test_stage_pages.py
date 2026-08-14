@@ -35,6 +35,10 @@ def test_the_page_never_writes_commentary_with_inner_html():
 
 def test_the_recap_drops_its_opening_sentence():
     assert "dropLede" in HTML
+    # Pins the call site, not just the function definition: deleting the call
+    # from renderStory would leave every behavioural test below green even
+    # though dropLede would never run.
+    assert "text = dropLede(text);" in HTML
 
 
 def _drop_lede(text):

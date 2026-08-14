@@ -7,9 +7,10 @@ symbolic links and reject targets outside the mount, and every public field must
 carry a cap.
 """
 
+import datetime
 import json
 
-from stage import data, llm, server, summary
+from stage import commentary, data, llm, server, summary
 
 SECRET = "OUTSIDE_THE_MOUNT_c0ffee"
 
@@ -107,7 +108,7 @@ def test_summariser_endpoint_scheme_is_restricted():
     assert llm._permitted_url("ftp://evil.test/x") is False
 
 
-def test_agent_controlled_public_fields_are_capped():
+def test_agent_controlled_public_fields_are_capped(tmp_path, monkeypatch):
     turn = {
         "index": 1,
         "timestamp": "T" * 500,
@@ -125,6 +126,60 @@ def test_agent_controlled_public_fields_are_capped():
     assert len(public["tool_calls"][0]["name"]) <= server.NAME_CAP
     assert len(public["tool_calls"][0]["arguments"]) <= server.ARGUMENTS_CAP
     assert len(public["error"]["message"]) <= server.ERROR_CAP
+
+    # The commentary block reads tool names through a separate path
+    # (stage/commentary.py:_tool_names), not through _public_turn, so it needs
+    # its own proof of the same property against the same real snapshot
+    # assembly. A 50,000-character tool name repeated enough to trip
+    # tool_fixation is the same input that produced the original finding.
+    telemetry = tmp_path / "telemetry"
+    (telemetry / "work" / "tombstones").mkdir(parents=True)
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    huge_name = "n" * 50000
+    now = datetime.datetime.now(datetime.timezone.utc)
+    lines = []
+    for i in range(5):
+        timestamp = (now - datetime.timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        entry = {
+            "timestamp": timestamp,
+            "request": {"model": "m"},
+            "response": {
+                "choices": [
+                    {
+                        "message": {
+                            "content": "c",
+                            "tool_calls": [{"function": {"name": huge_name, "arguments": "{}"}}],
+                        }
+                    }
+                ]
+            },
+        }
+        lines.append(json.dumps(entry))
+    (transcripts / "agent_life_transcript.jsonl").write_text(
+        "\n".join(lines) + "\n", encoding="utf-8"
+    )
+    diode_dir = tmp_path / "diode"
+    diode_dir.mkdir()
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(telemetry))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(transcripts))
+    monkeypatch.setattr(server, "DIODE_DIR", str(diode_dir))
+    data._line_count_state.clear()
+
+    snapshot = server.stream_snapshot()
+
+    # Confirm the snapshot actually exercised the leaking path rather than
+    # silently falling back to _empty_snapshot (whose commentary is bounded
+    # by construction and would make this assertion pass for the wrong
+    # reason).
+    assert snapshot["commentary"]["colour"]["beat"].startswith("tool_fixation:")
+    assert len(snapshot["commentary"]["play"]["phrase"]) <= commentary.TOOL_NAME_CAP + 20
+    assert len(snapshot["commentary"]["colour"]["beat"]) <= commentary.TOOL_NAME_CAP + 20
+
+
+def test_the_commentary_tool_cap_matches_the_public_turn_cap():
+    """Two paths publish the same agent-controlled name; one cap must not outlive the other."""
+    assert commentary.TOOL_NAME_CAP == server.NAME_CAP
 
 
 def test_snapshot_model_is_capped(tmp_path, monkeypatch):

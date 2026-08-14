@@ -193,7 +193,7 @@ def test_env_example_documents_the_summariser():
     assert "#STAGE_SUMMARY_MODEL=anthropic/claude-sonnet-5" in text
     assert "#STAGE_SUMMARY_INTERVAL_SECONDS=300" in text
     assert "#STAGE_COMMENTARY_MODEL=anthropic/claude-haiku-4-5-20251001" in text
-    assert "#STAGE_COMMENTARY_INTERVAL_SECONDS=30" in text
+    assert "#STAGE_COMMENTARY_INTERVAL_SECONDS=60" in text
 
 
 def test_module_source_never_names_the_recorder_credentials():

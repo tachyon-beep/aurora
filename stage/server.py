@@ -388,7 +388,7 @@ def _empty_snapshot(now):
         "lineage": [],
         "story": None,
         "commentary": {
-            "play": {"tag": "··", "phrase": "waiting for the first word", "epoch": None},
+            "play": commentary.play_by_play([], {}, {}),
             "colour": {
                 "text": commentary.BEAT_TEMPLATES["working"],
                 "generated": False,

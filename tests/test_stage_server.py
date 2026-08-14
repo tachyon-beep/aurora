@@ -394,6 +394,15 @@ def test_the_empty_snapshot_reports_the_same_beat_shape_as_a_live_one():
     assert empty == live
 
 
+def test_the_empty_snapshot_play_matches_a_live_empty_play_by_play():
+    """The empty snapshot's play block was a hand-duplicated copy of play_by_play's
+    own empty-turns branch. play_by_play([], {}, {}) is inert (no lock, no I/O),
+    so there is no reason for the copy to exist or to be able to drift."""
+    empty = server._empty_snapshot(1000.0)["commentary"]["play"]
+    live = commentary.play_by_play([], {}, {})
+    assert empty == live
+
+
 def test_beat_detection_reads_the_full_tail_not_the_display_slice(tmp_path, monkeypatch):
     """Handing detect_beat the 6-turn display slice would hide most of the evidence."""
     seen = {}

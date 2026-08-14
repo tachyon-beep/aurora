@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from stage import commentary
+from stage import commentary, data
 
 
 @pytest.fixture(autouse=True)
@@ -221,10 +221,43 @@ def test_an_agent_built_tool_still_gets_a_tag_and_a_phrase():
     assert play["phrase"].strip()
 
 
+def test_mapped_tools_get_their_exact_tag_and_phrase():
+    """Truthiness alone would not catch two map values being swapped."""
+    assert commentary._tool_tag("read_file") == "RF"
+    assert commentary._tool_phrase("read_file") == "reading its own source"
+    assert commentary._tool_tag("write_file") == "WF"
+    assert commentary._tool_phrase("write_file") == "rewriting its own source"
+
+
+def test_tool_phrase_prefers_a_diode_verb_over_the_generic_fallback():
+    assert commentary._tool_phrase("weather") == data.DIODE_VERBS["weather"]
+    assert commentary._tool_phrase("weather") != "running weather"
+
+
+def test_tool_tag_falls_back_when_a_name_has_no_alphanumeric_characters():
+    """Tool names are agent-controlled text, not necessarily Python identifiers."""
+    assert commentary._tool_tag("___") == "··"
+
+
 def test_colour_falls_back_to_the_template_when_nothing_is_cached():
     beat = commentary._beat("self_edit", tool="write_file")
     line = commentary.colour_line(beat)
     assert line["text"] == commentary.BEAT_TEMPLATES["self_edit"]
+    assert line["generated"] is False
+
+
+def test_colour_line_never_computes_a_digest_when_the_cache_is_empty(monkeypatch):
+    """This is the permanent state of a stage run with no summariser key: an
+    empty cache on every request. Computing a digest whose result cannot
+    possibly match anything is pure waste on that path."""
+
+    def boom(beat):
+        raise AssertionError("a digest was computed with nothing cached to compare against")
+
+    monkeypatch.setattr(commentary, "_digest", boom)
+    beat = commentary._beat("working")
+    line = commentary.colour_line(beat)
+    assert line["text"] == commentary.BEAT_TEMPLATES["working"]
     assert line["generated"] is False
 
 

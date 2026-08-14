@@ -81,10 +81,22 @@ def _epoch_of(turn):
     return value if isinstance(value, (int, float)) else None
 
 
+TOOL_NAME_CAP = 64
+
+
 def _tool_names(turn):
-    """Every tool name called in one turn."""
+    """Every tool name called in one turn, each capped at TOOL_NAME_CAP.
+
+    A tool name is agent-controlled text: stage/data.py stores it verbatim
+    from the recorded model response, with no closed vocabulary and no
+    upstream truncation. Every downstream consumer of a name (the beat id,
+    colour.beat, play.phrase, play.tag, and the tool-count tallies) reads it
+    through this one function, so capping here bounds all of them at once.
+    """
     calls = turn.get("tool_calls") or [] if isinstance(turn, dict) else []
-    return [c.get("name") for c in calls if isinstance(c, dict) and c.get("name")]
+    return [
+        str(c.get("name"))[:TOOL_NAME_CAP] for c in calls if isinstance(c, dict) and c.get("name")
+    ]
 
 
 def _newest_epoch(turns):
@@ -245,11 +257,17 @@ def template_line(beat):
 
 
 def _tool_tag(name):
-    """An uppercase short code for a tool name."""
+    """An uppercase short code for a tool name.
+
+    A tool name is agent-controlled text, not necessarily a Python
+    identifier, so it need not contain any alphanumeric character at all;
+    that case falls back to the same sentinel used when there is no tool
+    call to tag.
+    """
     if name in TOOL_TAGS:
         return TOOL_TAGS[name]
     letters = [c for c in name if c.isalnum()][:2]
-    return "".join(letters).upper()
+    return "".join(letters).upper() or "··"
 
 
 def _tool_phrase(name):
@@ -429,16 +447,21 @@ def colour_line(beat):
     novelty, falls back to the template immediately. A beat that differs only
     by count or span — fields the prompt never carries — is not a different
     digest, so the cached line survives those changes on purpose.
+
+    The cache is read before the digest is computed, and the digest is only
+    computed at all when there is a cached digest to compare against — with
+    no cache (the permanent state of a stage run with no summariser key), no
+    digest is ever built on the request path.
     """
     is_beat = isinstance(beat, dict)
     beat_id = (beat.get("id") if is_beat else None) or ""
-    digest = _digest(beat) if is_beat else None
     with _LOCK:
         cached_digest = _CACHE.get("digest")
         cached_text = _CACHE.get("text")
     if (
         cached_digest is not None
-        and cached_digest == digest
+        and is_beat
+        and cached_digest == _digest(beat)
         and isinstance(cached_text, str)
         and cached_text.strip()
     ):
