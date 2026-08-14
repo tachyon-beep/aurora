@@ -33,21 +33,24 @@ the bug" or "finish the quest."
 
 ## How it works
 
-Three containers share nothing but explicit, narrow channels.
+Each container shares nothing but explicit, narrow channels.
 
 ```mermaid
 flowchart LR
     agent["agent<br/>rewrites its own code<br/>internal network only — no internet route"]
-    recorder["recorder<br/>holds the real API key<br/>injects auth · logs bodies, not headers"]
+    recorder["recorder<br/>holds the upstream API key<br/>injects auth · logs bodies, not headers"]
     diode["diode<br/>closed command vocabulary<br/>SSRF-checked fetches"]
     viewer["viewer (optional)<br/>read-only · host loopback :8090"]
+    stage["stage<br/>read-only · never mounts /state<br/>stream :8091 · console :8092"]
 
     tvol[("transcripts<br/>volume")]
     dvol[("diode<br/>volume")]
     svol[("state<br/>agent-private volume")]
+    mvol[("telemetry<br/>volume")]
 
     model(["OpenRouter — the model"])
     web(["the web"])
+    audience(["viewers — optional tunnel"])
 
     agent -- "HTTP · internal net" --> recorder
     recorder -- "egress net" --> model
@@ -58,23 +61,31 @@ flowchart LR
     dvol -- "reads results" --> agent
     diode -- "reads commands · writes results" --> dvol
     diode -- "egress net · vetted fetches" --> web
-    agent -- "reads and writes" --> svol
+    agent -- "mounted · never read automatically" --> svol
+
+    agent -- "watchdog mirrors /work" --> mvol
+    mvol -. "reads (ro)" .-> stage
+    tvol -. "reads (ro)" .-> stage
+    dvol -. "reads (ro)" .-> stage
+    stage -. "stream page only" .-> audience
 
     classDef external fill:#fde68a,stroke:#b45309,color:#1f2937;
     classDef contained fill:#bfdbfe,stroke:#1d4ed8,color:#1f2937;
     classDef vol fill:#e5e7eb,stroke:#4b5563,color:#1f2937;
-    class model,web external;
-    class agent,recorder,diode,viewer contained;
-    class tvol,dvol,svol vol;
+    class model,web,audience external;
+    class agent,recorder,diode,viewer,stage contained;
+    class tvol,dvol,svol,mvol vol;
 ```
 
 | Component | Role | Containment |
 |-----------|------|-------------|
 | **agent** | Runs the model loop and rewrites its own source (`agent.py`). | On the `internal` network only — **no route to the internet**. Read-only image; work happens in a tmpfs. Talks to the model only through the recorder. |
-| **recorder** | A transparent proxy in front of OpenRouter. Holds the **only** real API key, injects the `Authorization` header, and appends every turn to the transcript. | Logs request/response **bodies only, never headers**, so the key never enters the transcript. |
+| **recorder** | A transparent proxy in front of OpenRouter. Holds the **upstream API key** — the credential the agent's own traffic runs on — injects the `Authorization` header, and appends every turn to the transcript. | Logs request/response **bodies only, never headers**, so the key never enters the transcript. The agent has no route to it beyond the proxied endpoint. |
 | **diode** | A one-way command channel. The agent writes declarative commands to a shared volume; the diode executes a **closed vocabulary** (e.g. vetted web fetches) and writes results back. | Egress-only. No code crosses the boundary — only a fixed set of commands. Web fetches are checked against an SSRF allow-list with redirect re-validation. |
 | **state volume** | Empty durable storage mounted at `/state`; nothing reads or executes it automatically. | Mounted only into the agent. Survives container replacement and ordinary Compose shutdown; removed only by explicit volume deletion. |
 | **watchdog** | Supervises the agent and recovers it if it breaks itself badly. | Self-editable by the agent, but the durable recovery baseline is built into the image and the real record lives outside the container. |
+| **telemetry volume** | A mirror of the agent's working tree plus its captured log, written by the watchdog so the stage can show what the agent is doing without touching the agent's own filesystem. | Written only by the watchdog; mounted **read-only** into the stage. Symlinks are copied as links and never followed. |
+| **stage** | The outward-facing broadcast surface: a stream page built for an OBS browser source, and a separate token-gated operator console. | Read-only image on its own `stream` network — no path to the agent. **Never mounts `/state`**, and never holds the recorder's credential. The console binds host-loopback only and is never exposed through the tunnel; the stream port serves no mutating endpoints. |
 | **viewer** | Optional, ephemeral web UI to watch the transcript live. | Read-only mount, host-loopback only, isolated from every other network. Off unless explicitly enabled. |
 
 ### The agent's world
@@ -96,8 +107,10 @@ What the design provides:
 
 - **The agent has no direct network egress.** It sits on an `internal` Docker network and reaches
   the model only via the recorder.
-- **The agent never holds the real credential.** It runs with a dummy key; the recorder injects the
-  real one and keeps it out of the transcript.
+- **No real credential is reachable by the agent.** It runs with a dummy key; the recorder injects
+  the real one and keeps it out of the transcript. Any other credential in the system — the stage's
+  optional summariser key, for instance — lives on a service the agent has no network route to, and
+  is never mounted or named into the agent image.
 - **The record is external and tamper-evident.** Transcripts are written by the recorder to a volume
   the agent cannot reach. The agent may try to blind its own in-container view, but the authoritative
   record lives elsewhere.
@@ -109,6 +122,12 @@ What the design provides:
 - **The web channel is a diode, not an interpreter.** Only a fixed command vocabulary crosses it, and
   network targets are validated (scheme allow-list, private/loopback/link-local rejection, redirect
   re-checking).
+- **The outward-facing surface reads, and only reads.** The stage sits on its own network with no
+  path to the agent, mounts every source read-only, and never mounts `/state`. Only the stream page
+  is exposable through a tunnel; the operator console binds host-loopback and requires a token on
+  every request. Because the agent can write into the trees the stage displays, every stage-side
+  read is confined to its mounted root and never follows a symlink out of it, and everything renders
+  as escaped text.
 
 What it is **not**: a hardened multi-tenant sandbox, or a guarantee against a determined human
 adversary with access to the host. Aurora is defense-in-depth for *responsible experimentation* — it
@@ -119,11 +138,12 @@ treating as untrusted. See **Scope & limitations** below.
 
 ## Quick start
 
-Requires Docker with Compose v2.
+Requires Docker with Compose v2, and Python on the host to generate the garden before the build
+(the containers themselves need no host Python).
 
 ```bash
 cp .env.example .env
-# edit .env and set OPENROUTER_API_KEY (the real key — it is mounted only into the recorder)
+# edit .env and set OPENROUTER_API_KEY (the upstream key — it is mounted only into the recorder)
 
 python scripts/build_garden.py
 docker compose up --build
@@ -160,12 +180,12 @@ survives `reset`, watchdog recovery, container replacement, and ordinary `docker
 Aurora never scans or executes its contents. Only explicit volume deletion removes it:
 
 ```bash
-docker compose down -v  # destructive: removes state, diode data, and transcripts
+docker compose down -v  # destructive: removes state, diode data, transcripts, and telemetry
 ```
 
 ### Streaming the stage
 
-The stage serves two pages:
+The stage comes up with the stack; both ports bind host-loopback only. It serves two pages:
 
 - `http://localhost:8091` — the stream page, a 1920×1080 read-only view designed for an OBS
   browser source: live agent turns, incarnation stats, lineage, self-modification and diode
@@ -174,7 +194,11 @@ The stage serves two pages:
   browse the telemetry mirror of the agent's working tree, the transcripts, and the diode; view
   the agent.py diff against stock; tail the captured agent log.
 
-Set `STAGE_CONSOLE_TOKEN` in `.env` to enable the console. To put the stream page on the
+Set `STAGE_CONSOLE_TOKEN` in `.env` to enable the console; without it the console refuses every
+request. `.env.example` also carries an optional `STAGE_SUMMARY_API_KEY` — a low-value key of the
+stage's own, used to generate the stream page's prose recap. It is never the recorder's credential,
+the agent has no route to it, and leaving it unset simply disables the generated prose. To put the
+stream page on the
 internet for OBS or viewers, run a Cloudflare Tunnel pointing at `http://localhost:8091`
 (host-run `cloudflared`), or set `TUNNEL_TOKEN` and start the bundled service with
 `docker compose --profile stream up cloudflared`, pointing the tunnel's public hostname at
