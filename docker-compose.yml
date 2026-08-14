@@ -7,6 +7,7 @@ services:
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
+      STREAM_HOURLY_MAX: ${STREAM_HOURLY_MAX:-}
       TRANSCRIPT_DIR: /transcripts
     extra_hosts:
       - "host.docker.internal:host-gateway"

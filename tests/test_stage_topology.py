@@ -120,6 +120,11 @@ def test_the_console_volume_is_writable_by_the_agent_only():
     assert "llm_console:/llm/console:ro" in _recorder_block(text)
 
 
+def test_the_recorder_receives_the_operator_stream_ceiling():
+    recorder = _recorder_block(_read("docker-compose.yml"))
+    assert "STREAM_HOURLY_MAX: ${STREAM_HOURLY_MAX:-}" in recorder
+
+
 def test_the_socket_volumes_are_declared():
     text = _read("docker-compose.yml")
     assert "  llm_sock: {}" in text
