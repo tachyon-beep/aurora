@@ -6,6 +6,7 @@ occur. Generation happens on a background daemon thread; the request path only
 ever reads the cache.
 """
 
+import hashlib
 import statistics
 import threading
 import time
@@ -281,6 +282,7 @@ POLL_SECONDS = 5
 MAX_TOKENS = 90
 TEMPERATURE = 0.7
 MAX_COLOUR_CHARS = 180
+FIELD_CHARS = 80
 
 COLOUR_SYSTEM_PROMPT = (
     "You are the colour commentator on a live stream about an AI agent that "
@@ -294,9 +296,9 @@ COLOUR_SYSTEM_PROMPT = (
 )
 
 _LOCK = threading.Lock()
-_CACHE = {"beat_id": None, "text": None, "generated_at": 0.0}
+_CACHE = {"digest": None, "beat_id": None, "text": None, "generated_at": 0.0}
 _PENDING = {"beat": None}
-_STATE = {"last_gen": None, "last_beat_id": None}
+_STATE = {"last_gen": None, "last_digest": None}
 _START_LOCK = threading.Lock()
 _THREAD = None
 _STARTED = False
@@ -321,21 +323,39 @@ def publish_beat(beat):
         _PENDING["beat"] = dict(beat) if isinstance(beat, dict) else None
 
 
+def _field(value):
+    """One prompt value: flattened to a single line, stripped of control characters, clamped.
+
+    The agent controls some of these values (a tool name, a diode command) end
+    to end, with no closed vocabulary and no upstream truncation. Flattening to
+    one line before it is ever interpolated is what keeps a hostile value from
+    breaking out of the BEGIN BEAT / END BEAT fence or injecting instructions.
+    """
+    text = "".join(c if c.isprintable() else " " for c in str(value))
+    return " ".join(text.split())[:FIELD_CHARS]
+
+
 def _prompt(beat):
     """The beat and its evidence as key: value lines, wrapped for the model.
 
-    Only fields already on the beat dict are ever rendered here — never turn
-    text, reasoning, a tombstone note, or a published statement.
+    Only kind, tool, detail, and novelty are ever rendered, in that order,
+    skipping any that are missing — never count or span, which change every
+    turn and would make the cache digest churn, and never turn text,
+    reasoning, a tombstone note, or a published statement. Every value passes
+    through _field, so the fence cannot be broken by evidence the agent chose.
     """
-    lines = [
-        f"kind: {beat.get('kind')}",
-        f"tool: {beat.get('tool')}",
-        f"detail: {beat.get('detail')}",
-        f"count: {beat.get('count')}",
-        f"novelty: {beat.get('novelty')}",
-        f"span: {beat.get('span_seconds')}",
-    ]
-    return "BEGIN BEAT\n" + "\n".join(lines) + "\nEND BEAT"
+    fields = []
+    for key in ("kind", "tool", "detail", "novelty"):
+        value = beat.get(key)
+        if value is None or value == "":
+            continue
+        fields.append(f"{key}: {_field(value)}")
+    return "BEGIN BEAT\n" + "\n".join(fields) + "\nEND BEAT"
+
+
+def _digest(beat):
+    """A stable fingerprint of exactly the prompt the model would be handed."""
+    return hashlib.sha256(_prompt(beat).encode("utf-8")).hexdigest()
 
 
 def _refresh_if_due(state, now=None):
@@ -351,10 +371,13 @@ def _refresh_if_due(state, now=None):
     last_gen = state.get("last_gen")
     if last_gen is not None and now - last_gen < MIN_REGEN_SECONDS:
         return False
-    if beat.get("id") == state.get("last_beat_id"):
+    digest = _digest(beat)
+    aged_out = last_gen is not None and now - last_gen >= max(interval_seconds(), MIN_REGEN_SECONDS)
+    due = last_gen is None or digest != state.get("last_digest") or aged_out
+    if not due:
         return False
     state["last_gen"] = now
-    state["last_beat_id"] = beat.get("id")
+    state["last_digest"] = digest
     text = llm.chat(
         COLOUR_SYSTEM_PROMPT,
         _prompt(beat),
@@ -365,24 +388,36 @@ def _refresh_if_due(state, now=None):
     )
     if text:
         with _LOCK:
-            _CACHE.update({"beat_id": beat.get("id"), "text": text, "generated_at": time.time()})
+            _CACHE.update(
+                {
+                    "digest": digest,
+                    "beat_id": beat.get("id"),
+                    "text": text,
+                    "generated_at": time.time(),
+                }
+            )
     return True
 
 
 def colour_line(beat):
     """{"text", "generated", "beat"} for beat. Never empty; never makes a request.
 
-    Returns the cached generated text only when it was produced for this exact
-    beat id; any other beat, including one with the same kind but different
-    evidence, falls back to the template immediately.
+    Returns the cached generated text only when it was produced for a beat
+    whose prompt digest matches this beat's digest exactly; any other beat,
+    including one with the same kind but a different tool, detail, or
+    novelty, falls back to the template immediately. A beat that differs only
+    by count or span — fields the prompt never carries — is not a different
+    digest, so the cached line survives those changes on purpose.
     """
-    beat_id = beat.get("id") if isinstance(beat, dict) else None
+    is_beat = isinstance(beat, dict)
+    beat_id = (beat.get("id") if is_beat else None) or ""
+    digest = _digest(beat) if is_beat else None
     with _LOCK:
-        cached_id = _CACHE.get("beat_id")
+        cached_digest = _CACHE.get("digest")
         cached_text = _CACHE.get("text")
     if (
-        cached_id is not None
-        and cached_id == beat_id
+        cached_digest is not None
+        and cached_digest == digest
         and isinstance(cached_text, str)
         and cached_text.strip()
     ):
@@ -419,9 +454,9 @@ def _reset_for_tests():
     """Clear module state so a test can exercise a fresh colour cache."""
     global _THREAD, _STARTED
     with _LOCK:
-        _CACHE.update({"beat_id": None, "text": None, "generated_at": 0.0})
+        _CACHE.update({"digest": None, "beat_id": None, "text": None, "generated_at": 0.0})
         _PENDING.update({"beat": None})
-    _STATE.update({"last_gen": None, "last_beat_id": None})
+    _STATE.update({"last_gen": None, "last_digest": None})
     with _START_LOCK:
         _THREAD = None
         _STARTED = False
