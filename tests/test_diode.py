@@ -187,6 +187,16 @@ def test_write_output_bounds_the_name_in_bytes_not_characters(tmp_path, monkeypa
     assert os.path.exists(path)
 
 
+def test_write_output_survives_a_cut_through_a_multibyte_character(tmp_path, monkeypatch):
+    """A 5-byte prefix leaves 155 bytes, which is not a whole number of 3-byte chars."""
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    path = diode.write_output("wiki " + "東" * 300, "x")
+    name = os.path.basename(path)
+    assert len(name.encode("utf-8")) < diode.OUTPUT_NAME_MAX_BYTES + 27
+    assert name.endswith("東.txt")
+    assert os.path.exists(path)
+
+
 def test_write_output_never_lets_a_command_escape_the_output_dir(tmp_path, monkeypatch):
     out = tmp_path / "output"
     monkeypatch.setattr(diode, "OUTPUT_DIR", str(out))

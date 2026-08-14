@@ -390,7 +390,7 @@ def chat(system, user, max_tokens, temperature, model=None, max_output_chars=MAX
 Delete every moved definition. Add `from stage import llm`. Then:
 
 - Delete `DEFAULT_BASE_URL`, `DEFAULT_MODEL`, `TIMEOUT_SECONDS`, `MAX_RESPONSE_BYTES`, `_env`, `api_key`, `base_url`, `model_name`, `_strip_markup`, `_cut_to_sentence`, `_clean`, `_post_chat_completion`, `_NoRedirect`, `_permitted_url`, `_send`, `_parse_reply`.
-- Keep `_collapse` (used by `_tombstone_notes` and `_collect`) — or import it; either is acceptable, but do not leave two copies.
+- **Delete `_collapse` from `summary.py`** and replace its call sites (`_tombstone_notes`, `_collect`) with `llm._collapse`. One definition, in the module that owns text normalisation.
 - `api_key()` / `enabled()` / `base_url()` / `model_name()` become thin re-exports so existing call sites and tests keep working:
 
 ```python
@@ -836,6 +836,20 @@ def test_play_by_play_is_never_empty_without_turns():
     play = commentary.play_by_play([], EMPTY_DIODE, {})
     assert play["tag"]
     assert play["phrase"]
+
+
+def test_a_read_is_never_phrased_as_a_self_edit():
+    """data._phrase_event falls through to REWROTE ITS OWN SOURCE for every non-edit tool."""
+    for name in ("read_file", "validate", "list_dir", "llm"):
+        play = commentary.play_by_play([_turn(1, NOW - 5, tools=(name,))], EMPTY_DIODE, _stats())
+        assert "rewrot" not in play["phrase"].lower(), name
+        assert "rewrit" not in play["phrase"].lower(), name
+
+
+def test_an_agent_built_tool_still_gets_a_tag_and_a_phrase():
+    play = commentary.play_by_play([_turn(1, NOW - 5, tools=("summarise",))], EMPTY_DIODE, _stats())
+    assert play["tag"] == "SU"
+    assert play["phrase"].strip()
 ```
 
 - [ ] **Step 2: Run to verify failure**
@@ -879,9 +893,35 @@ BEAT_TEMPLATES = {
 
 `play_by_play(turns, diode, stats)` builds the deterministic line from the newest loop turn:
 
-- `tag`: an uppercase short code for the newest tool call — `WF` for `write_file`, `RF` for `read_file`, `VA` for `validate`, `MG` for `migrate`, `DN` for `done`, `RS` for `reset`, `LD` for `list_dir`, `SH` for anything else the agent built. Derive unknown tags as the first two alphanumeric characters of the tool name, uppercased. When there is no tool call, `tag` is `"··"`.
-- `phrase`: `data._phrase_event(name, arguments)[1].lower()` for the genesis tools; for a diode command use `data.DIODE_VERBS`; when there is no tool call, `"thinking it over"`. When there are no turns at all, `"waiting for the first word"`.
+- `tag`: an uppercase short code for the newest tool call, from `TOOL_TAGS` below. Derive an unknown tool's tag as the first two alphanumeric characters of its name, uppercased. When there is no tool call, `tag` is `"··"`.
+- `phrase`: from `TOOL_PHRASES` below. When there is no tool call, `"thinking it over"`. When there are no turns at all, `"waiting for the first word"`.
 - `epoch`: the newest turn's epoch, or `None`.
+
+**Do not use `data._phrase_event` for this.** It is written for the four self-modification tools only, and its final branch falls through to `("write", "REWROTE ITS OWN SOURCE", ...)` for **every** other name — verified: `data._phrase_event("read_file", "{}")[1]` returns `"REWROTE ITS OWN SOURCE"`. `self_modification_events` never hits that because it filters to the self-mod four before calling; the play-by-play does not filter, so it would mislabel every read, validate, list, and agent-built tool as a self-edit. Use the explicit maps instead:
+
+```python
+TOOL_TAGS = {
+    "read_file": "RF",
+    "write_file": "WF",
+    "validate": "VA",
+    "migrate": "MG",
+    "done": "DN",
+    "reset": "RS",
+    "list_dir": "LD",
+}
+
+TOOL_PHRASES = {
+    "read_file": "reading its own source",
+    "write_file": "rewriting its own source",
+    "validate": "checking its own syntax",
+    "migrate": "restarting into new source",
+    "done": "ending this life",
+    "reset": "restoring the clean seed",
+    "list_dir": "looking around",
+}
+```
+
+A tool name absent from both maps is one the agent built for itself. Phrase it as `f"running {name}"`, and when the name matches a key in `data.DIODE_VERBS`, prefer that verb instead.
 
 - [ ] **Step 4: Run to verify pass, then lint and commit**
 
@@ -1114,9 +1154,11 @@ git commit -m "feat: generate the colour line on a beat-bound cache"
 
 Add to `tests/test_stage_server.py`:
 
+The helper this file already provides is `_snapshot(tmp_path, monkeypatch, entries, tombstones=(), diode=())` at `tests/test_stage_server.py:321` — verified to exist, with that exact signature. Use it; do not write a new one.
+
 ```python
 def test_snapshot_carries_a_commentary_block(tmp_path, monkeypatch):
-    snap = _snapshot_with_fixture(tmp_path, monkeypatch)  # reuse this file's existing helper
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
     assert set(snap["commentary"]) == {"play", "colour"}
     assert set(snap["commentary"]["play"]) == {"tag", "phrase", "epoch"}
     assert set(snap["commentary"]["colour"]) == {"text", "generated", "beat"}
@@ -1129,7 +1171,7 @@ def test_the_empty_snapshot_carries_the_same_commentary_shape():
     assert snap["commentary"]["colour"]["text"].strip()
 
 
-def test_beat_detection_reads_the_full_tail_not_the_display_slice(monkeypatch):
+def test_beat_detection_reads_the_full_tail_not_the_display_slice(tmp_path, monkeypatch):
     """Handing detect_beat the 6-turn display slice would hide most of the evidence."""
     seen = {}
     real = server.commentary.detect_beat
@@ -1139,9 +1181,13 @@ def test_beat_detection_reads_the_full_tail_not_the_display_slice(monkeypatch):
         return real(turns, stats, diode, published, now)
 
     monkeypatch.setattr(server.commentary, "detect_beat", spy)
-    ...  # assemble a snapshot from a fixture holding more than DISPLAY_TURNS loop turns
+    entries = [_turn_entry(i) for i in range(server.DISPLAY_TURNS * 3)]
+    _snapshot(tmp_path, monkeypatch, entries)
+    assert seen["count"] == len(entries)
     assert seen["count"] > server.DISPLAY_TURNS
 ```
+
+`server.DISPLAY_TURNS` is `6` at `stage/server.py:22` — verified module-level, so the assertion tracks the constant rather than hard-coding it.
 
 Extend the three key-set assertions:
 
@@ -1252,9 +1298,14 @@ def test_the_now_block_exists_above_the_recap():
 
 
 def test_the_commentary_never_borrows_the_subjects_registers():
-    match = re.search(r"#now\b.*?(?=\n#(?!now)|\n\.[a-z])", HTML, re.S)
-    assert match, "the #now CSS block was not found"
-    block = match.group(0)
+    """The commentator is a third register. Mistaking it for the subject is the one
+    thing this block must never do, so the guard reads sentinels rather than trying
+    to infer where the CSS ends."""
+    start = HTML.index("/* commentary:start */")
+    end = HTML.index("/* commentary:end */")
+    block = HTML[start:end]
+    assert "#now-colour" in block, "the sentinels do not span the whole block"
+    assert "#now-by" in block, "the sentinels do not span the whole block"
     for token in ("--think", "--say", "--act", "--serif"):
         assert token not in block, token
 
@@ -1293,9 +1344,10 @@ Inside `<section id="story" class="panel">`, directly beneath the `ptitle` div a
 
 - [ ] **Step 4: Add the CSS**
 
-Beside the other panel rules. Only the allow-listed tokens:
+Beside the other panel rules. Only the allow-listed tokens. **The sentinel comments are load-bearing** — Step 1's guard slices on them, and a rule added outside them is not checked:
 
 ```css
+/* commentary:start */
 #now { padding: 0 0 10px 0; }
 #now-play { font-family: var(--mono); font-size: 12px; letter-spacing: .06em;
   text-transform: uppercase; color: var(--paper-dim); display: flex; gap: 8px;
@@ -1308,7 +1360,10 @@ Beside the other panel rules. Only the allow-listed tokens:
   color: var(--paper); margin: 6px 0 0 0; }
 #now-by { font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
   color: var(--paper-faint); margin-top: 4px; }
+/* commentary:end */
 ```
+
+Every rule for the commentary — including any added later — goes between the sentinels.
 
 - [ ] **Step 5: Add the render function**
 
@@ -1317,13 +1372,13 @@ function renderNow() {
   var c = (snap.commentary || {}), play = c.play || {}, colour = c.colour || {};
   setText($("play-tag"), play.tag || "··");
   setText($("play-phrase"), play.phrase || "waiting for the first word");
-  var age = play.epoch == null ? null : Math.max(0, clockNow() - play.epoch);
+  var age = play.epoch == null ? null : Math.max(0, clock() / 1000 - play.epoch);
   setText($("play-age"), age == null ? "" : dur(age));
   setText($("now-colour"), colour.text || "");
 }
 ```
 
-Use the page's existing elapsed-time helper for `clockNow()` — the same one `setState` uses to age `snap.now`, so the number ticks between polls (ruling R11). Call `renderNow()` from the same place `renderStory()` is called.
+`clock()` is the page's existing skew-corrected clock at `stage/pages.py:601` (`Date.now() + skewMs`) — it returns **milliseconds**, hence the `/ 1000` before subtracting an epoch. `dur(seconds)` at `stage/pages.py:603` formats it. Using `clock()` rather than `snap.now` is what makes the number tick between the 2 s polls (ruling R11). Call `renderNow()` from `tick()`, beside the existing `renderStory()` call, so it re-renders on every frame the page already draws rather than only on a fresh snapshot.
 
 - [ ] **Step 6: Drop the recap's opening sentence**
 

@@ -36,6 +36,7 @@ Identical to Part 2's, and binding here for the same reasons:
 |---|---|---|
 | A1 | "Verdicts are generated only for the current top five" is circular — stars are assigned by the analyst, so nothing can be ranked before generation | **Rate a bounded candidate set, then rank.** The candidates are the five most recent dead incarnations, which is exactly what `data.lineage(work, turns, limit=5)` already returns. "The top five" in the segment means those rated candidates sorted by assigned stars descending, ties broken by ordinal descending. Cost stays at five calls however long the lineage grows. |
 | A2 | The evidence row example reads `61 lines · 4 tools · 9 reaches · ended by its own hand` | **`lines` is not recoverable per dead incarnation.** `code_stats` diffs the *current* mirrored `agent.py` against the seed; there is no per-life source snapshot. The row becomes `{turns} turns · {tools} tools · {reaches} reaches · {ending}`, dropping any zero segment. |
+| A2b | Every count is a **lower bound**, not a fact | `turns` comes from the 40-turn tail and `reaches` from `diode_activity`'s `limit`. A life that took 61 turns and made 20 diode calls can render `12 turns · 2 reaches`. That would make the design's one promise — the facts beside the verdict are real — **false**, which is worse than a thin record. Two changes, both required: (1) `_assemble_snapshot` calls `data.diode_activity` with `limit=ANALYSIS_OUTPUT_LIMIT = 200` (a `listdir` plus up to 200 `stat` calls per poll — the spec's "do not raise the limits" warning is about the transcript read and the telemetry mirror, not this); the display path already slices to `DISPLAY_OUTPUTS`. (2) `evidence_line` prefixes every count with `at least` whenever `depth != "full"`. The hedge lives **in the string**, so the renderer never has to read `depth` to stay honest. |
 | A3 | How is evidence depth actually decided? | `tombstone_only` when no turn in the tail carries `life == ordinal`. `full` when the tail *also* holds a turn from an older life, which proves the tail spans this life's start boundary. `partial` otherwise. |
 | A4 | "The colour line speaks the cue" — does analysis mutate the commentary block? | **No.** The analysis block carries its own `cue` string and a `phase`. The page renders the cue *in place of* the colour line while `phase == "cue"`. Part 2's `commentary` contract is untouched, and all rotation logic lives in one module. |
 | A5 | Star range and malformed replies | Integer 1-5, clamped. A reply that yields no parseable star count produces **no verdict for that life** rather than a default rating — an invented number would break the one promise the design makes, that the facts are real. |
@@ -149,6 +150,22 @@ def test_the_evidence_line_drops_zero_segments():
     assert "ended by its own hand" in line
 
 
+def test_a_full_record_states_its_counts_plainly():
+    ev = analysis.life_evidence(_entry(), [_turn(1, 2), _turn(2, 3, tools=("read_file",))], [], [])
+    assert ev["depth"] == "full"
+    assert "at least" not in analysis.evidence_line(ev)
+
+
+def test_a_partial_record_hedges_every_count_it_states():
+    """A truncated count printed as a fact is worse than a thin record."""
+    ev = analysis.life_evidence(_entry(), [_turn(1, 3, tools=("read_file",))], [], [])
+    assert ev["depth"] == "partial"
+    line = analysis.evidence_line(ev)
+    assert "at least 1 turn" in line
+    assert "at least 1 tool" in line
+    assert "ended by its own hand" in line
+
+
 def test_a_tombstone_only_life_says_the_record_is_thin():
     ev = analysis.life_evidence(_entry(ordinal=3), [], [], [])
     line = analysis.evidence_line(ev)
@@ -253,7 +270,9 @@ def life_evidence(entry, turns, outputs, deaths):
     }
 ```
 
-`evidence_line(evidence)` builds `" · "`-joined segments: `f"{n} {data._plural(n, 'turn')}"`, then tools, reaches, edits — **each omitted when its count is zero** — then the ending, always last. When `depth == "tombstone_only"` the leading segments are replaced by the single word pair `record incomplete`. The line is never empty: with everything absent it is at least the ending string, and with no ending it is `record incomplete`.
+`evidence_line(evidence)` builds `" · "`-joined segments: `f"{n} {data._plural(n, 'turn')}"`, then tools, reaches, edits — **each omitted when its count is zero** — then the ending, always last. When `depth == "tombstone_only"` the leading segments are replaced by the single word pair `record incomplete`. When `depth == "partial"` every count segment is prefixed `at least ` (ruling A2b). The line is never empty: with everything absent it is at least the ending string, and with no ending it is `record incomplete`.
+
+`data._plural(count, noun)` exists at `stage/data.py:40` — verified.
 
 - [ ] **Step 4: Run, lint, commit**
 
@@ -580,16 +599,18 @@ git commit -m "feat: rank the analysis board and schedule the segment"
 
 - [ ] **Step 1: Write the failing tests**
 
+The helper this file already provides is `_snapshot(tmp_path, monkeypatch, entries, tombstones=(), diode=())` at `tests/test_stage_server.py:321`, with entries built by `_turn_entry(index, ...)` at line 311 — both verified to exist with those signatures. Use them; do not write new ones.
+
 ```python
 def test_snapshot_carries_an_analysis_block(tmp_path, monkeypatch):
-    snap = _snapshot_with_fixture(tmp_path, monkeypatch)  # this file's existing helper
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
     assert set(snap["analysis"]) == {"phase", "cue", "board"}
     assert isinstance(snap["analysis"]["board"], list)
 
 
 def test_no_key_means_no_segment(tmp_path, monkeypatch):
     monkeypatch.delenv("STAGE_SUMMARY_API_KEY", raising=False)
-    snap = _snapshot_with_fixture(tmp_path, monkeypatch)
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
     assert snap["analysis"]["board"] == []
     assert snap["analysis"]["cue"] is None
     assert snap["analysis"]["phase"] == "idle"
@@ -607,7 +628,7 @@ def test_every_board_row_is_shaped_for_the_page(tmp_path, monkeypatch):
         server.analysis, "board",
         lambda *a: [{"ordinal": 7, "stars": 4, "argument": "x", "evidence": "y", "depth": "full"}],
     )
-    snap = _snapshot_with_fixture(tmp_path, monkeypatch)
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
     row = snap["analysis"]["board"][0]
     assert set(row) == {"ordinal", "stars", "argument", "evidence", "depth"}
     assert 1 <= row["stars"] <= 5
@@ -622,7 +643,24 @@ Expected: the three key-set assertions fail on the missing `"analysis"` key.
 
 - [ ] **Step 3: Wire it in**
 
-In `stage/server.py`, add `analysis` to the `from stage import ...` line. In `_assemble_snapshot`, after `lineage` and the `commentary` block Part 2 added:
+In `stage/server.py`, add `analysis` to the `from stage import ...` line and `ANALYSIS_OUTPUT_LIMIT = 200` beside `DISPLAY_OUTPUTS`. Widen the existing `diode_activity` call (currently `stage/server.py:414`) so the board's `reaches` counts are not silently truncated to 8 (ruling A2b):
+
+```python
+    diode = data.diode_activity(
+        DIODE_DIR, limit=ANALYSIS_OUTPUT_LIMIT, deaths=deaths, incarnation=incarnation
+    )
+```
+
+The display path is unaffected — the returned dict is already sliced with `diode["outputs"][:DISPLAY_OUTPUTS]`. Add a test asserting that slice still holds, so widening the read cannot leak a longer list onto the page:
+
+```python
+def test_widening_the_diode_read_does_not_widen_the_displayed_list(tmp_path, monkeypatch):
+    outputs = [(f"output/2026081{i // 10}_00000{i % 10}_000001_weather.txt", "x") for i in range(30)]
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)], diode=outputs)
+    assert len(snap["diode"]["outputs"]) <= server.DISPLAY_OUTPUTS
+```
+
+Then, after `lineage` and the `commentary` block Part 2 added:
 
 ```python
     analysis.publish_candidates(lineage, turns, diode["outputs"], deaths)
@@ -694,10 +732,12 @@ def test_the_verdict_is_bylined_as_an_opinion():
 
 
 def test_the_package_never_borrows_the_subjects_registers():
-    match = re.search(r"#desk\b.*?(?=\n#(?!desk)|\n\.[a-z])", pages.STREAM_PAGE_HTML, re.S)
-    assert match, "the #desk CSS block was not found"
+    html = pages.STREAM_PAGE_HTML
+    block = html[html.index("/* desk:start */") : html.index("/* desk:end */")]
+    assert ".verdict" in block, "the sentinels do not span the whole block"
+    assert "#desk-by" in block, "the sentinels do not span the whole block"
     for token in ("--think", "--say", "--act", "--serif"):
-        assert token not in match.group(0), token
+        assert token not in block, token
 
 
 def test_stars_are_rendered_as_escaped_text_not_markup():
@@ -724,7 +764,10 @@ Inside `<section id="dead" class="panel">`, as a sibling of `#graves` (`stage/pa
 
 - [ ] **Step 4: Add the CSS**
 
+**The sentinel comments are load-bearing** — Step 1's guard slices on them, and a rule added outside them is not checked. Every desk rule goes between them.
+
 ```css
+/* desk:start */
 #desk { display: none; }
 #desk.on { display: block; }
 #graves.off { display: none; }
@@ -739,6 +782,7 @@ Inside `<section id="dead" class="panel">`, as a sibling of `#graves` (`stage/pa
   color: var(--paper-faint); margin-top: 3px; }
 #desk-by { font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
   color: var(--paper-faint); margin-top: 6px; }
+/* desk:end */
 ```
 
 Give both `#desk` and `#graves` a `transition: opacity .4s` and toggle an `.on`/`.off` class for the cross-fade the spec asks for. Do not animate `display`.
