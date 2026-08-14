@@ -336,6 +336,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #subj-stats { display: grid; grid-template-rows: repeat(7, 17px); align-content: start; }
 .srow { display: grid; grid-template-columns: 104px 1fr; align-items: baseline;
   font: 400 13px/18px var(--mono); font-variant-numeric: tabular-nums; }
+#subj-stats .srow { line-height: 17px; }
 .srow .k { color: var(--paper-faint); }
 .srow .v { color: var(--vital); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow .v .rate { color: var(--paper-faint); }
