@@ -14,6 +14,8 @@ HEAD_READ_BYTES = 8192
 CODE_READ_BYTES = 524_288
 PUBLISHED_READ_BYTES = 4096
 PUBLISHED_TEXT_CAP = 400
+SPOKEN_READ_BYTES = 4096
+SPOKEN_TEXT_CAP = 400
 MAX_EPOCH_AGE_SECONDS = 30 * 86400
 SUBCALL_MESSAGE_LIMIT = 2
 SUBCALL_PROMPT_CHARS = 200
@@ -752,4 +754,36 @@ def diode_published(diode_dir, limit=2):
                 "chars": chars,
             }
         )
+    return out, total
+
+
+def diode_spoken(diode_dir, limit=2):
+    """(newest utterances, total count) from the diode's spoken directory.
+
+    Each audio file has a same-stemmed .txt sidecar carrying the text it was
+    rendered from; both are read through contained_file, so a link out of the
+    mount drops the entry rather than the read following it.
+    """
+    spoken_dir = os.path.join(diode_dir, "spoken")
+    try:
+        names = sorted((n for n in os.listdir(spoken_dir) if n.endswith(".mp3")), reverse=True)
+    except OSError:
+        return [], 0
+    total = len(names)
+    out = []
+    for name in names[:limit]:
+        full = contained_file(diode_dir, os.path.join(spoken_dir, name))
+        if full is None:
+            continue
+        try:
+            stat = os.stat(full)
+        except OSError:
+            continue
+        stem = name[: -len(".mp3")]
+        sidecar = contained_file(diode_dir, os.path.join(spoken_dir, stem + ".txt"))
+        text = _read_capped(sidecar, SPOKEN_READ_BYTES) if sidecar else None
+        epoch = _filename_epoch(name)
+        if epoch is None:
+            epoch = stat.st_mtime
+        out.append({"name": name, "epoch": epoch, "text": (text or "")[:SPOKEN_TEXT_CAP]})
     return out, total

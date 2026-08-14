@@ -368,7 +368,13 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "error_count",
         "self_calls",
     }
-    assert set(snap["diode"]) == {"outputs", "published", "published_total"}
+    assert set(snap["diode"]) == {
+        "outputs",
+        "published",
+        "published_total",
+        "spoken",
+        "spoken_total",
+    }
     assert isinstance(snap["now"], float)
     assert snap["code"] == {"available": False, "added": 0, "removed": 0}
 
@@ -549,6 +555,27 @@ def test_stream_snapshot_carries_published_transmissions(tmp_path, monkeypatch):
     assert "name" in snap["diode"]["outputs"][0]
     epochs = [o["epoch"] for o in snap["diode"]["outputs"]]
     assert epochs == sorted(epochs, reverse=True)
+
+
+def test_stream_snapshot_carries_spoken_utterances(tmp_path, monkeypatch):
+    diode = [
+        ("spoken/20260814_120000_000000.mp3", "ID3audio"),
+        ("spoken/20260814_120000_000000.txt", "hello there"),
+        ("spoken/20260814_110000_000000.mp3", "ID3audio"),
+        ("spoken/20260814_110000_000000.txt", "older"),
+        ("spoken/20260814_100000_000000.mp3", "ID3audio"),
+        ("spoken/20260814_100000_000000.txt", "oldest"),
+    ]
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)], diode=diode)
+    assert snap["diode"]["spoken_total"] == 3
+    assert len(snap["diode"]["spoken"]) == 2
+    assert snap["diode"]["spoken"][0]["name"] == "20260814_120000_000000.mp3"
+    assert snap["diode"]["spoken"][0]["text"] == "hello there"
+
+
+def test_the_empty_snapshot_carries_the_same_diode_keys_as_a_live_one(tmp_path, monkeypatch):
+    live = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
+    assert set(server._empty_snapshot(1000.0)["diode"]) == set(live["diode"])
 
 
 def test_stream_snapshot_limits_diode_outputs_to_four(tmp_path, monkeypatch):

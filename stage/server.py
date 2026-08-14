@@ -23,6 +23,7 @@ DISPLAY_TURNS = 6
 DISPLAY_SUBCALLS = 3
 DISPLAY_OUTPUTS = 4
 DISPLAY_PUBLISHED = 2
+DISPLAY_SPOKEN = 2
 TEXT_CAP = 8000
 ARGUMENTS_CAP = 400
 ERROR_CAP = 600
@@ -384,7 +385,13 @@ def _empty_snapshot(now):
         "code": {"available": False, "added": 0, "removed": 0},
         "turns": [],
         "events": [],
-        "diode": {"outputs": [], "published": [], "published_total": 0},
+        "diode": {
+            "outputs": [],
+            "published": [],
+            "published_total": 0,
+            "spoken": [],
+            "spoken_total": 0,
+        },
         "lineage": [],
         "story": None,
         "commentary": {
@@ -421,6 +428,7 @@ def _assemble_snapshot(now):
     life = stats["incarnation"] if any(t.get("life") is not None for t in turns) else None
     diode = data.diode_activity(DIODE_DIR, deaths=deaths, incarnation=incarnation)
     published, published_total = data.diode_published(DIODE_DIR, limit=DISPLAY_PUBLISHED)
+    spoken, spoken_total = data.diode_spoken(DIODE_DIR, limit=DISPLAY_SPOKEN)
     beat = commentary.detect_beat(data.loop_turns(turns), stats, diode, published, now)
     commentary.publish_beat(beat)
     return {
@@ -433,6 +441,8 @@ def _assemble_snapshot(now):
             "outputs": diode["outputs"][:DISPLAY_OUTPUTS],
             "published": published,
             "published_total": published_total,
+            "spoken": spoken,
+            "spoken_total": spoken_total,
         },
         "lineage": lineage,
         "story": _public_story(),

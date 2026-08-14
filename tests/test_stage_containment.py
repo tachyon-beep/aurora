@@ -64,6 +64,37 @@ def test_published_does_not_follow_a_symlink(tmp_path):
     assert total == 2
 
 
+def test_spoken_does_not_follow_a_symlink(tmp_path):
+    _work, diode, secret = _roots(tmp_path)
+    spoken = diode / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_050000_000000.mp3").write_bytes(b"ID3audio")
+    (spoken / "20260814_050000_000000.txt").write_text("said", encoding="utf-8")
+    (spoken / "20260814_050001_000000.mp3").symlink_to(secret)
+    (spoken / "20260814_050001_000000.txt").write_text("also said", encoding="utf-8")
+
+    entries, total = data.diode_spoken(str(diode))
+
+    assert SECRET not in json.dumps(entries)
+    assert [e["name"] for e in entries] == ["20260814_050000_000000.mp3"]
+    assert [e["text"] for e in entries] == ["said"]
+    assert total == 2
+
+
+def test_spoken_does_not_follow_a_symlinked_sidecar(tmp_path):
+    _work, diode, secret = _roots(tmp_path)
+    spoken = diode / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_050000_000000.mp3").write_bytes(b"ID3audio")
+    (spoken / "20260814_050000_000000.txt").symlink_to(secret)
+
+    entries, total = data.diode_spoken(str(diode))
+
+    assert SECRET not in json.dumps(entries)
+    assert [e["text"] for e in entries] == [""]
+    assert total == 1
+
+
 def test_diode_output_listing_drops_a_symlink(tmp_path):
     _work, diode, secret = _roots(tmp_path)
     (diode / "output" / "20260814T050000Z-weather.txt").write_text("14C", encoding="utf-8")

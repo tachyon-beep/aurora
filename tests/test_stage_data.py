@@ -545,6 +545,54 @@ def test_diode_published_reads_only_the_head_of_huge_files(tmp_path, monkeypatch
     assert items[0]["chars"] == 100_000
 
 
+def test_diode_spoken_reads_the_sidecar_text_and_stamp(tmp_path):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_120000_000000.mp3").write_bytes(b"ID3audio")
+    (spoken / "20260814_120000_000000.txt").write_text("hello there", encoding="utf-8")
+    entries, total = data.diode_spoken(str(tmp_path))
+    assert total == 1
+    assert entries[0]["name"] == "20260814_120000_000000.mp3"
+    assert entries[0]["text"] == "hello there"
+    assert int(entries[0]["epoch"]) == int(data.parse_epoch("2026-08-14T12:00:00Z"))
+
+
+def test_diode_spoken_is_newest_first_and_limited(tmp_path):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    for stamp in ("20260814_120000_000000", "20260814_130000_000000", "20260814_140000_000000"):
+        (spoken / (stamp + ".mp3")).write_bytes(b"a")
+        (spoken / (stamp + ".txt")).write_text(stamp, encoding="utf-8")
+    entries, total = data.diode_spoken(str(tmp_path), limit=2)
+    assert total == 3
+    assert [e["name"] for e in entries] == [
+        "20260814_140000_000000.mp3",
+        "20260814_130000_000000.mp3",
+    ]
+
+
+def test_diode_spoken_missing_directory_is_empty(tmp_path):
+    assert data.diode_spoken(str(tmp_path)) == ([], 0)
+
+
+def test_diode_spoken_without_a_sidecar_reports_empty_text(tmp_path):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_120000_000000.mp3").write_bytes(b"a")
+    entries, total = data.diode_spoken(str(tmp_path))
+    assert total == 1
+    assert entries[0]["text"] == ""
+
+
+def test_diode_spoken_caps_the_text(tmp_path):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_120000_000000.mp3").write_bytes(b"a")
+    (spoken / "20260814_120000_000000.txt").write_text("x" * 5000, encoding="utf-8")
+    entries, _ = data.diode_spoken(str(tmp_path))
+    assert len(entries[0]["text"]) == data.SPOKEN_TEXT_CAP
+
+
 def test_incarnation_stats_counts_this_life_and_endings(tmp_path):
     work = tmp_path / "work"
     _tombstone(work, "incarnation-1.txt", "ended by choice.", age_seconds=3600)
