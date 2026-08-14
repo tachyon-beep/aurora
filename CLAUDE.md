@@ -50,15 +50,18 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      socket whose directory it mounts read-only, so it can connect but cannot unlink or shadow it.
    - **No real credential is ever reachable by the agent.** The upstream API key lives only in the
      recorder, which injects it; the agent runs with a dummy key. This is the invariant — not the
-     number of keys in the system. The agent has exactly two channels to credentialed services, each
-     closed by a different guarantee, not by the absence of a channel. The recorder socket exposes
-     exactly one route (`POST /api/v1/chat/completions`) and forwards its body upstream verbatim;
-     the key is protected by injection at the recorder and by the header-free logging described
-     next, not by the socket's shape. The shared `/diode` volume carries a closed command
-     vocabulary; the agent can cause spend through a gated command (e.g. the diode's speech
-     credential) but no command in that vocabulary returns a key — each diode credential lives only
-     in the diode's own environment. Any further credential must be reachable through neither
-     channel, and must never be mounted, copied, or named into the agent image.
+     number of keys in the system. Every channel the agent has to a credentialed service is closed
+     by its own guarantee, not by the absence of a channel — so when you add a channel, state which
+     guarantee closes it. Today: the **recorder socket** exposes exactly one route
+     (`POST /api/v1/chat/completions`) and forwards its body upstream verbatim; the key is protected
+     by injection at the recorder and by the header-free logging described next, not by the socket's
+     shape. The shared **`/diode` volume** carries a closed command vocabulary; the agent can cause
+     spend through a gated command (e.g. the diode's speech credential) but no command in that
+     vocabulary returns a key — each diode credential lives only in the diode's own environment. The
+     **`/llm/console` volume** is agent-writable and recorder-readable but is read by nothing today;
+     it is scaffolding for a later change and carries no guarantee yet, so nothing may depend on it.
+     Any further credential must be reachable through none of these, and must never be mounted,
+     copied, or named into the agent image.
    - The **proxy logs request/response bodies, never headers**, so the key never enters the transcript.
    - The **diode is egress-only** and executes a *closed command vocabulary* — no code or arbitrary
      paths cross it. Keep the SSRF defenses (scheme allow-list, private/loopback/reserved rejection,

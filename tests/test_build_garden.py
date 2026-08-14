@@ -119,6 +119,24 @@ def test_readme_describes_neutral_optional_activity(tmp_path: Path) -> None:
     assert "nothing here requires completion" in readme
 
 
+def test_runtime_lists_package_names_without_version_specifiers(tmp_path: Path) -> None:
+    # A pin is a build detail, not a fact about the runtime. The garden is a
+    # surface the agent reads, so "openai<3" must reach it as "openai".
+    requirements = tmp_path / "requirements.txt"
+    requirements.write_text("openai<3\nhttpx<1\nnumpy>=2,<3\nrich\n", encoding="utf-8")
+    destination = tmp_path / "garden"
+
+    build_garden.build(destination, requirements)
+
+    runtime = (destination / "runtime.md").read_text(encoding="utf-8")
+
+    assert "- openai\n" in runtime
+    assert "- httpx\n" in runtime
+    assert "- numpy\n" in runtime
+    for specifier in ("<", ">", "=", "~", "!"):
+        assert specifier not in runtime.split("third-party python packages:")[1].split("\n\n")[1]
+
+
 def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) -> None:
     destination = tmp_path / "garden"
     build_garden.build(destination)

@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_PACKAGES = [
     "openai<3",
-    "httpx",
+    "httpx<1",
     "numpy",
     "sympy",
     "networkx",

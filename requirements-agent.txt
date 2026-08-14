@@ -1,5 +1,5 @@
 openai<3
-httpx
+httpx<1
 numpy
 sympy
 networkx

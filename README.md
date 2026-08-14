@@ -109,8 +109,8 @@ What the design provides:
   interface and an empty routing table — and reaches the model only through a unix domain socket
   served by the recorder.
 - **No real credential is reachable by the agent.** It runs with a dummy key; the recorder injects
-  the real one and keeps it out of the transcript. The agent has exactly two channels to
-  credentialed services, each closed by a different guarantee. The recorder socket exposes exactly
+  the real one and keeps it out of the transcript. Each channel the agent has to a credentialed
+  service is closed by its own guarantee. The recorder socket exposes exactly
   one route (`POST /api/v1/chat/completions`) and forwards its body upstream verbatim; the key is
   protected by injection at the recorder and by body-only, never-header, logging — not by the
   socket's shape. The shared `/diode` volume carries a closed command vocabulary; the agent can

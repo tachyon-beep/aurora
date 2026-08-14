@@ -127,6 +127,11 @@ def test_the_socket_volumes_are_declared():
 
 
 def test_the_agent_image_precreates_the_socket_mountpoints():
+    # Docker copies image-mountpoint ownership into each newly created empty
+    # volume, so both paths must appear on the chown as well as the mkdir. A
+    # mkdir-only mountpoint arrives root-owned and the recorder cannot bind.
     text = _read("Dockerfile")
-    assert "/llm/sock" in text
-    assert "/llm/console" in text
+    chown_line = next(line for line in text.splitlines() if "chown appuser:appuser /" in line)
+    for path in ("/llm/sock", "/llm/console"):
+        assert path in text
+        assert path in chown_line

@@ -1,5 +1,6 @@
 """Build the read-only two-document garden copied into the agent image."""
 
+import re
 import shutil
 import sys
 import tempfile
@@ -19,9 +20,13 @@ nothing here is an assignment. nothing here requires completion.
 
 
 def requirement_names(path: Path = REQUIREMENTS_PATH) -> list[str]:
-    """Return package names from the agent requirements manifest."""
+    """Return package names from the agent requirements manifest.
+
+    Version specifiers are stripped: the garden states which packages are
+    present, and a pin is a build detail rather than a fact about the runtime.
+    """
     return [
-        line
+        re.split(r"[<>=!~;\[]", line, maxsplit=1)[0].strip()
         for raw_line in path.read_text(encoding="utf-8").splitlines()
         if (line := raw_line.strip()) and not line.startswith("#")
     ]
