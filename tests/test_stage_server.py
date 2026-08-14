@@ -342,7 +342,17 @@ def _snapshot(tmp_path, monkeypatch, entries, tombstones=(), diode=()):
 
 def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
     snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
-    assert set(snap) == {"now", "stats", "code", "turns", "events", "diode", "lineage", "story"}
+    assert set(snap) == {
+        "now",
+        "stats",
+        "code",
+        "turns",
+        "events",
+        "diode",
+        "lineage",
+        "story",
+        "commentary",
+    }
     assert set(snap["stats"]) == {
         "incarnation",
         "model",
@@ -361,6 +371,36 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
     assert set(snap["diode"]) == {"outputs", "published", "published_total"}
     assert isinstance(snap["now"], float)
     assert snap["code"] == {"available": False, "added": 0, "removed": 0}
+
+
+def test_snapshot_carries_a_commentary_block(tmp_path, monkeypatch):
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
+    assert set(snap["commentary"]) == {"play", "colour"}
+    assert set(snap["commentary"]["play"]) == {"tag", "phrase", "epoch"}
+    assert set(snap["commentary"]["colour"]) == {"text", "generated", "beat"}
+    assert snap["commentary"]["colour"]["text"].strip()
+
+
+def test_the_empty_snapshot_carries_the_same_commentary_shape():
+    snap = server._empty_snapshot(1000.0)
+    assert set(snap["commentary"]) == {"play", "colour"}
+    assert snap["commentary"]["colour"]["text"].strip()
+
+
+def test_beat_detection_reads_the_full_tail_not_the_display_slice(tmp_path, monkeypatch):
+    """Handing detect_beat the 6-turn display slice would hide most of the evidence."""
+    seen = {}
+    real = server.commentary.detect_beat
+
+    def spy(turns, stats, diode, published, now):
+        seen["count"] = len(turns)
+        return real(turns, stats, diode, published, now)
+
+    monkeypatch.setattr(server.commentary, "detect_beat", spy)
+    entries = [_turn_entry(i) for i in range(server.DISPLAY_TURNS * 3)]
+    _snapshot(tmp_path, monkeypatch, entries)
+    assert seen["count"] == len(entries)
+    assert seen["count"] > server.DISPLAY_TURNS
 
 
 def test_stream_snapshot_story_is_null_when_the_summariser_is_disabled(tmp_path, monkeypatch):
@@ -508,7 +548,17 @@ def test_stream_snapshot_never_raises_on_missing_directories(tmp_path, monkeypat
     monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(tmp_path / "nope" / "transcripts"))
     monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path / "nope" / "diode"))
     snap = server.stream_snapshot()
-    assert set(snap) == {"now", "stats", "code", "turns", "events", "diode", "lineage", "story"}
+    assert set(snap) == {
+        "now",
+        "stats",
+        "code",
+        "turns",
+        "events",
+        "diode",
+        "lineage",
+        "story",
+        "commentary",
+    }
     assert snap["turns"] == []
     assert snap["stats"]["incarnation"] == 1
     assert snap["lineage"] == []
@@ -523,7 +573,17 @@ def test_stream_snapshot_returns_the_full_key_set_when_a_reader_fails(tmp_path, 
     monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(tmp_path))
     monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
     snap = server.stream_snapshot()
-    assert set(snap) == {"now", "stats", "code", "turns", "events", "diode", "lineage", "story"}
+    assert set(snap) == {
+        "now",
+        "stats",
+        "code",
+        "turns",
+        "events",
+        "diode",
+        "lineage",
+        "story",
+        "commentary",
+    }
     assert snap["story"] is None
 
 

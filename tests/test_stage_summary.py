@@ -176,10 +176,13 @@ def test_stage_service_carries_only_its_own_summary_key():
         "STAGE_SUMMARY_BASE_URL: ${STAGE_SUMMARY_BASE_URL:-}",
         "STAGE_SUMMARY_MODEL: ${STAGE_SUMMARY_MODEL:-}",
         "STAGE_SUMMARY_INTERVAL_SECONDS: ${STAGE_SUMMARY_INTERVAL_SECONDS:-}",
+        "STAGE_COMMENTARY_MODEL: ${STAGE_COMMENTARY_MODEL:-}",
+        "STAGE_COMMENTARY_INTERVAL_SECONDS: ${STAGE_COMMENTARY_INTERVAL_SECONDS:-}",
     ):
         assert name in stage_block
     assert "OPENROUTER_API_KEY" not in stage_block
     assert "LLM_API_KEY" not in stage_block
+    assert "STAGE_COMMENTARY_API_KEY" not in stage_block
 
 
 def test_env_example_documents_the_summariser():
@@ -189,6 +192,8 @@ def test_env_example_documents_the_summariser():
     assert "#STAGE_SUMMARY_BASE_URL=https://openrouter.ai/api/v1" in text
     assert "#STAGE_SUMMARY_MODEL=anthropic/claude-sonnet-5" in text
     assert "#STAGE_SUMMARY_INTERVAL_SECONDS=300" in text
+    assert "#STAGE_COMMENTARY_MODEL=anthropic/claude-haiku-4-5-20251001" in text
+    assert "#STAGE_COMMENTARY_INTERVAL_SECONDS=30" in text
 
 
 def test_module_source_never_names_the_recorder_credentials():
