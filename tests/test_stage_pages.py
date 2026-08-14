@@ -1,6 +1,6 @@
 import re
 
-from stage import pages
+from stage import commentary, pages
 
 HTML = pages.STREAM_PAGE_HTML
 
@@ -84,3 +84,44 @@ def test_drop_lede_leaves_an_empty_string_unchanged_and_does_not_throw():
 
 def test_drop_lede_leaves_text_with_no_sentence_boundary_unchanged():
     assert _drop_lede("No periods here at all") == "No periods here at all"
+
+
+def test_stream_page_has_an_audio_element_and_caption():
+    assert 'id="speak-audio"' in HTML
+    assert 'id="speak-caption"' in HTML
+
+
+def test_the_caption_sits_above_the_foot_so_the_panel_does_not_clip_it():
+    """`#said` is a flex column inside a 136px ribbon row and `#said-foot` carries
+    `margin-top: auto`, so anything after the foot is pushed past the panel's
+    `overflow: hidden` edge and never reads. The caption must render whether or not
+    playback succeeds, so its position is behaviour, not decoration."""
+    assert HTML.index('id="said-text"') < HTML.index('id="speak-caption"')
+    assert HTML.index('id="speak-caption"') < HTML.index('id="said-foot"')
+
+
+def test_the_caption_clamps_the_published_line_to_make_room():
+    assert "#said.is-captioned #said-text" in HTML
+    assert 'setClass($("said"), "is-captioned"' in HTML
+
+
+def test_stream_page_plays_each_utterance_once_and_only_when_fresh():
+    assert "spokenPlayed" in HTML
+    assert "/audio/" in HTML
+    assert "renderSpoken(" in HTML
+
+
+def test_render_calls_render_spoken():
+    # Pins the call site, not just the function definition: deleting the call
+    # from render would leave every other assertion here green even though
+    # renderSpoken would never run.
+    assert "\n  renderSpoken();\n" in HTML
+
+
+def test_the_playback_freshness_gate_matches_the_commentary_recency_window():
+    """The page plays only what the commentator would still call recent. Deriving the
+    bound from `commentary.RECENT_SECONDS` keeps the two from drifting apart, the way
+    `test_silence_threshold_matches_the_pages_state_ladder` pins the state ladder."""
+    match = re.search(r"ageMs > (\d+)", HTML)
+    assert match, "the playback freshness gate moved or was renamed"
+    assert int(match.group(1)) == commentary.RECENT_SECONDS * 1000

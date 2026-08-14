@@ -444,6 +444,12 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 #said-text { margin: 4px 0 0; font: 400 15px/23px var(--serif); color: var(--paper);
   display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
   -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; flex: none; }
+#said.is-captioned #said-text { -webkit-line-clamp: 1; line-clamp: 1; }
+#speak-caption { font: 400 11px/16px var(--mono); color: var(--paper-dim); flex: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#said.is-captioned #speak-caption { margin-top: 4px; }
+#said.is-sparse.is-captioned #said-foot { margin-top: auto; }
+#speak-audio { display: none; }
 #said-foot { margin-top: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); flex: none; }
 
 /* ---------- expansion ---------- */
@@ -580,6 +586,8 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <div class="ptitle"><span>WHAT IT SAID TO THE WORLD</span></div>
       <div id="said-stamp"></div>
       <p id="said-text"></p>
+      <div id="speak-caption"></div>
+      <audio id="speak-audio" preload="auto"></audio>
       <div id="said-foot"></div>
     </section>
   </div>
@@ -1320,6 +1328,37 @@ function renderRibbon() {
   setClass($("said"), "is-sparse", $("said-text").scrollHeight <= 34);
 }
 
+var spokenPlayed = {};
+function renderSpoken() {
+  var sp = (snap && snap.diode && snap.diode.spoken) || [];
+  var cap = $("speak-caption");
+  if (!cap) return;
+  if (!sp.length) {
+    setText(cap, "");
+    setClass($("said"), "is-captioned", false);
+    return;
+  }
+  var newest = sp[0];
+  var caption = norm(newest.text || "");
+  setText(cap, caption);
+  setClass($("said"), "is-captioned", !!caption);
+  var name = newest.name || "";
+  if (!name || spokenPlayed[name]) return;
+  /* Marked before the freshness check on purpose: an utterance that was already
+     stale when it arrived must never play later, and a reload starts with an empty
+     set but a stale snapshot, so the age gate is what stops a replay there. */
+  spokenPlayed[name] = true;
+  var ageMs = clock() - (newest.epoch || 0) * 1000;
+  if (ageMs > 180000) return;
+  var a = $("speak-audio");
+  if (!a) return;
+  a.src = "/audio/" + encodeURIComponent(name);
+  try {
+    var p = a.play();
+    if (p && p.catch) p.catch(function () {});
+  } catch (e) {}
+}
+
 /* ---------- beats ---------- */
 function runMourn(endedOrdinal) {
   var stage = $("stage"), sweep = $("death-sweep");
@@ -1430,6 +1469,7 @@ function render(prev) {
   renderStory();
   renderDead();
   renderRibbon();
+  renderSpoken();
   reconcileFeed();
   tick();
   applyExpansion();
