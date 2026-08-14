@@ -67,3 +67,28 @@ def test_verifier_cleanup_names_only_its_isolated_volumes():
     assert '"${COMPOSE_PROJECT_NAME}_state"' in text
     assert '"${COMPOSE_PROJECT_NAME}_diode"' in text
     assert '"${COMPOSE_PROJECT_NAME}_transcripts"' in text
+
+
+def test_verifier_asserts_the_agent_has_no_network_interface():
+    text = _script()
+    for phrase in (
+        "agent has exactly one network interface",
+        "agent has an empty routing table",
+        "/sys/class/net",
+        "/proc/net/route",
+    ):
+        assert phrase in text
+
+
+def test_verifier_checks_the_socket_rather_than_a_recorder_port():
+    text = _script()
+    assert "create_connection(('recorder',8088))" not in text
+    assert "agent CAN reach the recorder" not in text
+    assert "/llm/sock/core.sock" in text
+    assert "socket is not unlinkable from the agent" in text
+
+
+def test_verifier_cleans_up_the_socket_volumes():
+    text = _script()
+    assert '"${COMPOSE_PROJECT_NAME}_llm_sock"' in text
+    assert '"${COMPOSE_PROJECT_NAME}_llm_console"' in text

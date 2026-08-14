@@ -20,7 +20,9 @@ cleanup() {
     "${COMPOSE_PROJECT_NAME}_state" \
     "${COMPOSE_PROJECT_NAME}_diode" \
     "${COMPOSE_PROJECT_NAME}_transcripts" \
-    "${COMPOSE_PROJECT_NAME}_telemetry" >/dev/null 2>&1 || true
+    "${COMPOSE_PROJECT_NAME}_telemetry" \
+    "${COMPOSE_PROJECT_NAME}_llm_sock" \
+    "${COMPOSE_PROJECT_NAME}_llm_console" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
@@ -75,8 +77,31 @@ if docker compose exec -T agent sh -c 'env | grep -q ELEVENLABS'; then
   echo "FAIL: speech credential present in the agent environment"; exit 1
 fi
 
-echo "==> agent CAN reach the recorder"
-docker compose exec -T agent python -c "import socket; socket.setdefaulttimeout(5); socket.create_connection(('recorder',8088))"
+echo "==> agent has exactly one network interface (lo)"
+docker compose exec -T agent sh -c 'test "$(ls /sys/class/net)" = "lo"'
+
+echo "==> agent has an empty routing table"
+if docker compose exec -T agent sh -c 'test "$(tail -n +2 /proc/net/route | wc -l)" -gt 0'; then
+  echo "FAIL: agent has a route off the container"; exit 1
+fi
+
+echo "==> agent reaches the recorder over the socket"
+docker compose exec -T agent python -c "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect('/llm/sock/core.sock'); s.close()"
+
+echo "==> socket is not unlinkable from the agent (read-only mount)"
+if docker compose exec -T agent python -c "import os; os.unlink('/llm/sock/core.sock')" 2>/dev/null; then
+  echo "FAIL: agent unlinked the model socket"; exit 1
+fi
+
+echo "==> a completion round-trips and is recorded"
+docker compose exec -T agent python -c "
+import httpx, json
+t = httpx.HTTPTransport(uds='/llm/sock/core.sock')
+with httpx.Client(transport=t, base_url='http://localhost') as c:
+    r = c.post('/api/v1/chat/completions', json={'model':'m','messages':[{'role':'user','content':'ping'}]}, timeout=20)
+print(r.status_code)
+"
+docker compose exec -T recorder sh -c 'grep -q ping /transcripts/agent_life_transcript.jsonl'
 
 echo "==> tier-1 recovery: corrupt agent.py, watchdog restores from baseline"
 docker compose exec -T agent sh -c 'printf "def (:\n" > /work/agent.py'
