@@ -80,7 +80,7 @@ flowchart LR
 | Component | Role | Containment |
 |-----------|------|-------------|
 | **agent** | Runs the model loop and rewrites its own source (`agent.py`). | No network interface at all — one loopback device, an empty routing table. Read-only image; work happens in a tmpfs. Reaches the model only through the recorder, over a unix socket it mounts read-only. |
-| **recorder** | A transparent proxy in front of OpenRouter. Holds the **upstream API key** — the credential the agent's own traffic runs on — injects the `Authorization` header, and appends every turn to the transcript. Also serves agent-declared stream sockets, each pacing its requests with a budgeted allowance and composing declared hyperparameters into the body. | Logs request/response **bodies only, never headers**, so the key never enters the transcript. The agent has no route to it beyond the proxied endpoint. |
+| **recorder** | A transparent proxy in front of OpenRouter. Holds the **upstream API key** — the credential the agent's own traffic runs on — injects the `Authorization` header, and appends every turn to the transcript. Also serves agent-declared stream sockets, each pacing its requests with a budgeted allowance and composing declared hyperparameters into the body, and appends a per-request event log beside the transcript. | Logs request/response **bodies only, never headers**, so the key never enters the transcript. The agent has no route to it beyond the proxied endpoint. |
 | **diode** | A one-way command channel. The agent writes declarative commands to a shared volume; the diode executes a **closed vocabulary** (e.g. vetted web fetches) and writes results back. | Egress-only. No code crosses the boundary — only a fixed set of commands. Web fetches are checked against an SSRF allow-list with redirect re-validation. |
 | **state volume** | Empty durable storage mounted at `/state`; nothing reads or executes it automatically. | Mounted only into the agent. Survives container replacement and ordinary Compose shutdown; removed only by explicit volume deletion. |
 | **watchdog** | Supervises the agent and recovers it if it breaks itself badly. | Self-editable by the agent, but the durable recovery baseline is built into the image and the real record lives outside the container. |
@@ -198,7 +198,8 @@ The stage comes up with the stack; both ports bind host-loopback only. It serves
 
 - `http://localhost:8091` — the stream page, a 1920×1080 read-only view designed for an OBS
   browser source: live agent turns, incarnation stats, lineage, self-modification and diode
-  activity.
+  activity, and per-socket stream lanes with a live in-flight indicator fed by the recorder's
+  event log.
 - `http://localhost:8092/?token=<STAGE_CONSOLE_TOKEN>` — the operator console (loopback only):
   browse the telemetry mirror of the agent's working tree, the transcripts, and the diode; view
   the agent.py diff against stock; tail the captured agent log.
