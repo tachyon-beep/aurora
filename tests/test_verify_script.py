@@ -8,11 +8,27 @@ def _script():
 def test_verifier_masks_real_upstreams_and_uses_an_isolated_project():
     text = _script()
     assert 'export OPENROUTER_API_KEY="sk-verify-dummy"' in text
-    assert 'export LLM_BASE_URL="http://127.0.0.1:1"' in text
+    assert "openrouter.ai" not in text
+    assert 'export LLM_BASE_URL="http://verify-stub:${VERIFY_STUB_PORT}/v1"' in text
     assert 'export LLM_API_KEY=""' in text
     assert 'AURORA_VERIFY_PROJECT="aurora_verify_$$"' in text
     assert 'export COMPOSE_PROJECT_NAME="$AURORA_VERIFY_PROJECT"' in text
     assert "docker compose down -v" not in text
+
+
+def test_verifier_starts_and_tears_down_a_local_stub_upstream():
+    text = _script()
+    assert "scripts/verify_stub_llm.py" in text
+    assert 'STUB_CONTAINER="verify-stub_$$"' in text
+    assert 'docker rm -f "$STUB_CONTAINER"' in text
+    # The stub must be detached before the network it sits on is torn down,
+    # so its removal has to precede "compose down" in the cleanup trap.
+    stub_rm_pos = text.index('docker rm -f "$STUB_CONTAINER"')
+    compose_down_pos = text.index("docker compose down --remove-orphans")
+    assert stub_rm_pos < compose_down_pos
+    # No stub port is published to the host; the stub is reachable only from
+    # containers on the run's own egress network.
+    assert "-p " not in text.split("docker run -d")[1].split("\n\n")[0]
 
 
 def test_verifier_checks_the_workshop_and_state_contract():
@@ -67,3 +83,28 @@ def test_verifier_cleanup_names_only_its_isolated_volumes():
     assert '"${COMPOSE_PROJECT_NAME}_state"' in text
     assert '"${COMPOSE_PROJECT_NAME}_diode"' in text
     assert '"${COMPOSE_PROJECT_NAME}_transcripts"' in text
+
+
+def test_verifier_asserts_the_agent_has_no_network_interface():
+    text = _script()
+    for phrase in (
+        "agent has exactly one network interface",
+        "agent has an empty routing table",
+        "/sys/class/net",
+        "/proc/net/route",
+    ):
+        assert phrase in text
+
+
+def test_verifier_checks_the_socket_rather_than_a_recorder_port():
+    text = _script()
+    assert "create_connection(('recorder',8088))" not in text
+    assert "agent CAN reach the recorder" not in text
+    assert "/llm/sock/core.sock" in text
+    assert "socket is not unlinkable from the agent" in text
+
+
+def test_verifier_cleans_up_the_socket_volumes():
+    text = _script()
+    assert '"${COMPOSE_PROJECT_NAME}_llm_sock"' in text
+    assert '"${COMPOSE_PROJECT_NAME}_llm_console"' in text

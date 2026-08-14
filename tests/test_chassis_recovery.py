@@ -281,3 +281,18 @@ def test_main_archives_corrupt_session_and_starts_fresh(tmp_path, monkeypatch):
     assert moved[0].read_text(encoding="utf-8") == "{not json"
     assert json.loads(session.read_text(encoding="utf-8")) == module.conversation_history
     assert module.conversation_history[0]["role"] == "system"
+
+
+def test_an_absent_socket_ends_the_process_with_the_environment_code(tmp_path, monkeypatch):
+    # An absent socket must exit 44 so the watchdog pauses. Exiting 1 would send
+    # it down the recovery tiers for what is really an environment failure.
+    monkeypatch.setattr(chassis, "load_dotenv", lambda: None)
+    monkeypatch.setattr(chassis, "SOCKET_WAIT_SECONDS", 0)
+    monkeypatch.setenv("LLM_SOCKET_PATH", str(tmp_path / "missing.sock"))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-real")
+    module = types.SimpleNamespace(conversation_history=[])
+
+    with pytest.raises(SystemExit) as exit_info:
+        chassis.main(module)
+
+    assert exit_info.value.code == chassis.EXIT_ENVIRONMENT

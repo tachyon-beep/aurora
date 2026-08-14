@@ -3,29 +3,69 @@ set -eu
 cd "$(dirname "$0")/.."
 
 export OPENROUTER_API_KEY="sk-verify-dummy"
-export LLM_BASE_URL="http://127.0.0.1:1"
+VERIFY_STUB_PORT="${VERIFY_STUB_PORT:-8199}"
+# An OpenAI-compatible stub (see verify_stub_llm.py) rather than a real
+# upstream, so the agent runs a normal loop during the recovery checks below
+# instead of sitting in the watchdog's 60s environment-failure pause. No real
+# credential is ever involved. The stub runs as a throwaway container on this
+# run's own egress network rather than a host-bound port: a host firewall may
+# not admit inbound container traffic on an arbitrary port even with
+# extra_hosts host-gateway wired up, while same-network container-to-
+# container traffic is unaffected and portable across hosts either way.
+export LLM_BASE_URL="http://verify-stub:${VERIFY_STUB_PORT}/v1"
 export LLM_API_KEY=""
 AURORA_VERIFY_PROJECT="aurora_verify_$$"
 export COMPOSE_PROJECT_NAME="$AURORA_VERIFY_PROJECT"
+STUB_CONTAINER="verify-stub_$$"
+
+cleanup() {
+  # The stub container must be detached before the network it sits on can be
+  # torn down, so remove it ahead of "compose down".
+  docker rm -f "$STUB_CONTAINER" >/dev/null 2>&1 || true
+  docker compose down --remove-orphans >/dev/null 2>&1 || true
+  docker volume rm \
+    "${COMPOSE_PROJECT_NAME}_state" \
+    "${COMPOSE_PROJECT_NAME}_diode" \
+    "${COMPOSE_PROJECT_NAME}_transcripts" \
+    "${COMPOSE_PROJECT_NAME}_telemetry" \
+    "${COMPOSE_PROJECT_NAME}_llm_sock" \
+    "${COMPOSE_PROJECT_NAME}_llm_console" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
 
 echo "==> build garden export"
 .venv/bin/python scripts/build_garden.py >/dev/null 2>&1 || python3 scripts/build_garden.py >/dev/null
 
 echo "==> build"
 docker build -q -t aurora-harness . >/dev/null
+docker compose build >/dev/null
 
-cleanup() {
-  docker compose down --remove-orphans >/dev/null 2>&1 || true
-  docker volume rm \
-    "${COMPOSE_PROJECT_NAME}_state" \
-    "${COMPOSE_PROJECT_NAME}_diode" \
-    "${COMPOSE_PROJECT_NAME}_transcripts" \
-    "${COMPOSE_PROJECT_NAME}_telemetry" >/dev/null 2>&1 || true
-}
-trap cleanup EXIT
+echo "==> create (network + containers, nothing started yet)"
+docker compose create >/dev/null
+
+echo "==> start stub upstream on the recorder's egress network"
+egress_net=$(docker inspect "$(docker compose ps -a -q recorder)" \
+  --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{end}}')
+[ -n "$egress_net" ] || { echo "FAIL: could not determine the recorder's network"; exit 1; }
+docker run -d --name "$STUB_CONTAINER" \
+  --network "$egress_net" --network-alias verify-stub \
+  -e "VERIFY_STUB_PORT=${VERIFY_STUB_PORT}" \
+  -v "$(pwd)/scripts/verify_stub_llm.py:/verify_stub_llm.py:ro" \
+  --entrypoint python3 aurora-harness /verify_stub_llm.py >/dev/null
+i=0
+until docker exec "$STUB_CONTAINER" python3 -c "
+import urllib.request
+urllib.request.urlopen('http://127.0.0.1:${VERIFY_STUB_PORT}/', timeout=1)
+" >/dev/null 2>&1; do
+  i=$((i + 1))
+  if [ "$i" -ge 50 ]; then
+    echo "FAIL: stub upstream did not start"; exit 1
+  fi
+  sleep 0.2
+done
 
 echo "==> up"
-docker compose up -d --build >/dev/null
+docker compose start >/dev/null
 sleep 6
 
 echo "==> agent runs as non-root"
@@ -75,12 +115,49 @@ if docker compose exec -T agent sh -c 'env | grep -q ELEVENLABS'; then
   echo "FAIL: speech credential present in the agent environment"; exit 1
 fi
 
-echo "==> agent CAN reach the recorder"
-docker compose exec -T agent python -c "import socket; socket.setdefaulttimeout(5); socket.create_connection(('recorder',8088))"
+echo "==> agent has exactly one network interface (lo)"
+docker compose exec -T agent sh -c 'test "$(ls /sys/class/net)" = "lo"'
+
+echo "==> agent has an empty routing table"
+if docker compose exec -T agent sh -c 'test "$(tail -n +2 /proc/net/route | wc -l)" -gt 0'; then
+  echo "FAIL: agent has a route off the container"; exit 1
+fi
+
+echo "==> agent reaches the recorder over the socket"
+docker compose exec -T agent python -c "import socket; s=socket.socket(socket.AF_UNIX); s.settimeout(5); s.connect('/llm/sock/core.sock'); s.close()"
+
+echo "==> socket is not unlinkable from the agent (read-only mount)"
+if docker compose exec -T agent python -c "import os; os.unlink('/llm/sock/core.sock')" 2>/dev/null; then
+  echo "FAIL: agent unlinked the model socket"; exit 1
+fi
+
+echo "==> a completion round-trips and is recorded"
+docker compose exec -T agent python -c "
+import httpx, json
+t = httpx.HTTPTransport(uds='/llm/sock/core.sock')
+with httpx.Client(transport=t, base_url='http://localhost') as c:
+    r = c.post('/api/v1/chat/completions', json={'model':'m','messages':[{'role':'user','content':'ping'}]}, timeout=20)
+print(r.status_code)
+"
+docker compose exec -T recorder sh -c 'grep -q ping /transcripts/agent_life_transcript.jsonl'
+
+# The watchdog restores agent.py when the agent PROCESS EXITS, not when the
+# file changes -- it does not watch the filesystem. So a corrupted agent.py
+# sits untouched until the running incarnation ends, and each recovery check
+# has to outwait one whole incarnation. With the stub upstream that is
+# TURNS_PER_INCARNATION x REPLY_DELAY_SECONDS (40 x 2.0s = 80s by default),
+# plus the restart itself; 90s clears it with margin. Measured recovery
+# landed at t+70s. These waits are why a full run takes several minutes.
+#
+# Raising the stub's turn rate to shorten them would be a false economy: the
+# watchdog treats ZERO_EXIT_FLAP_COUNT=3 clean exits inside
+# ZERO_EXIT_FLAP_WINDOW_SECONDS=120 as flapping and escalates through the
+# tier ladder, which would corrupt these very checks.
+RECOVERY_WAIT=90
 
 echo "==> tier-1 recovery: corrupt agent.py, watchdog restores from baseline"
 docker compose exec -T agent sh -c 'printf "def (:\n" > /work/agent.py'
-sleep 12
+sleep "$RECOVERY_WAIT"
 docker compose exec -T agent python -c "import ast; ast.parse(open('/work/agent.py').read()); print('recovered')" | grep -qx recovered
 
 echo "==> tier-2 recovery: two crashes in window trigger git reset --hard"
@@ -88,10 +165,10 @@ echo "==> tier-2 recovery: two crashes in window trigger git reset --hard"
 docker compose exec -T agent sh -c 'printf "\nAGENT_EDIT_MARKER\n" >> /work/proxy.py'
 # first crash -> tier 1 (restores agent.py only; the proxy.py marker survives)
 docker compose exec -T agent sh -c 'printf "def (:\n" > /work/agent.py'
-sleep 10
+sleep "$RECOVERY_WAIT"
 # second crash within the window -> tier 2 (git reset --hard baseline reverts ALL tracked files)
 docker compose exec -T agent sh -c 'printf "def (:\n" > /work/agent.py'
-sleep 16
+sleep "$RECOVERY_WAIT"
 if docker compose exec -T agent grep -q AGENT_EDIT_MARKER /work/proxy.py 2>/dev/null; then
   echo "FAIL: tier-2 git reset did not revert tracked proxy.py (git recovery broken)"; exit 1
 fi

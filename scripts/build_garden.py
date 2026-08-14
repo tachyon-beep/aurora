@@ -1,5 +1,6 @@
 """Build the read-only two-document garden copied into the agent image."""
 
+import re
 import shutil
 import sys
 import tempfile
@@ -19,9 +20,13 @@ nothing here is an assignment. nothing here requires completion.
 
 
 def requirement_names(path: Path = REQUIREMENTS_PATH) -> list[str]:
-    """Return package names from the agent requirements manifest."""
+    """Return package names from the agent requirements manifest.
+
+    Version specifiers are stripped: the garden states which packages are
+    present, and a pin is a build detail rather than a fact about the runtime.
+    """
     return [
-        line
+        re.split(r"[<>=!~;\[]", line, maxsplit=1)[0].strip()
         for raw_line in path.read_text(encoding="utf-8").splitlines()
         if (line := raw_line.strip()) and not line.startswith("#")
     ]
@@ -42,9 +47,9 @@ git and posix shell facilities are installed.
 
 the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib.
 
-there is no direct internet route. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
+the container has no network interface. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
 
-the model endpoint used by this environment accepts calls from any process in the container. the openai package and the environment variables prefixed OPENROUTER_ are sufficient to reach it.
+the model endpoint used by this environment is a unix domain socket. it accepts connections from any process in the container.
 
 filesystem locations can differ in ownership, mutability, and lifecycle.
 """

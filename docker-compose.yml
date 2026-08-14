@@ -12,7 +12,9 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - transcripts:/transcripts
-    networks: [internal, egress]
+      - llm_sock:/llm/sock
+      - llm_console:/llm/console:ro
+    networks: [egress]
     read_only: true
     tmpfs:
       - /tmp
@@ -26,16 +28,26 @@ services:
     depends_on: [recorder]
     environment:
       OPENROUTER_API_KEY: "sk-dummy"
-      OPENROUTER_BASE_URL: "http://recorder:8088/api/v1"
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-v4-pro}
       LLM_MODEL: ${LLM_MODEL:-}
       CONTEXT_WINDOW_TOKENS: ${CONTEXT_WINDOW_TOKENS:-120000}
       REASONING_EFFORT: ${REASONING_EFFORT:-}
     volumes:
+      - llm_sock:/llm/sock:ro
+      - llm_console:/llm/console
       - diode:/diode
       - state:/state
       - telemetry:/telemetry
-    networks: [internal]
+    # No network interface at all: one loopback device and an empty routing
+    # table. hostname/extra_hosts/dns keep the loopback development surface
+    # usable - without them the container's own name does not resolve and
+    # /etc/resolv.conf inherits the host's nameserver.
+    network_mode: none
+    hostname: agent
+    extra_hosts:
+      - "agent:127.0.0.1"
+    dns:
+      - 127.0.0.1
     read_only: true
     tmpfs:
       - /tmp
@@ -56,9 +68,9 @@ services:
     image: aurora-diode
     environment:
       DIODE_DIR: /diode
-      # Speech credential. Lives only here: the diode is on the egress network
-      # and the agent is on internal, so the agent can cause spend but can
-      # never read the key. Empty disables the speak command.
+      # Speech credential. Lives only here: the agent has no network interface,
+      # so it can cause spend through the shared /diode volume's closed command
+      # vocabulary but can never read the key. Empty disables the speak command.
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
       ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-}
@@ -145,8 +157,6 @@ services:
     restart: unless-stopped
 
 networks:
-  internal:
-    internal: true
   egress: {}
   stream: {}
 
@@ -155,3 +165,5 @@ volumes:
   diode: {}
   state: {}
   telemetry: {}
+  llm_sock: {}
+  llm_console: {}

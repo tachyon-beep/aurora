@@ -22,7 +22,7 @@
 - Tests live in `tests/` and are never shipped into any image.
 - Do not add `README.md`, `CLAUDE.md`, `docs/`, or `tests/` to the Dockerfile `COPY` allow-list.
 - Garden text must stay bland and factual: no authorial voice, no suggested uses, no executable examples.
-- No new third-party dependencies. `httpx` is already installed as a dependency of `openai`; do not add it to `requirements-agent.txt`.
+- No new third-party packages enter the image, but `httpx` must be declared explicitly in `requirements-agent.txt` because `chassis.py` imports it directly, and `openai` must be pinned `<3`. Without the pin a fresh image resolves `openai` 3.0.0, which depends on `httpx2` rather than `httpx`, and the agent fails at import. A module that imports a package directly declares it, whatever is available transitively.
 
 ## File Structure
 
@@ -33,7 +33,7 @@
 | `docker-compose.yml` | Modify | `network_mode: none`, socket volumes, delete the `internal` network |
 | `Dockerfile` | Modify | Pre-create `/llm/sock` and `/llm/console` mountpoints owned by `appuser` |
 | `scripts/build_garden.py` | Modify | The two garden sentences |
-| `garden_export/runtime.md` | Regenerate | Generated output, committed |
+| `garden_export/runtime.md` | Regenerate | Build artifact regenerated on each run; deliberately not tracked in git |
 | `scripts/verify_container.sh` | Modify | Replace the recorder-reachability check; add containment assertions |
 | `CLAUDE.md` | Modify | Invariant 3, three bullets |
 | `README.md` | Modify | Diagram node, diagram edge, component table, safety property |
@@ -762,7 +762,7 @@ Expected: PASS, including `test_documents_exclude_banned_anchors` — confirm ne
 
 ```bash
 .venv/bin/ruff format . && .venv/bin/ruff check .
-git add scripts/build_garden.py garden_export/runtime.md tests/test_build_garden.py
+git add scripts/build_garden.py tests/test_build_garden.py
 git commit -m "docs: state the model endpoint as a socket in the garden runtime"
 ```
 

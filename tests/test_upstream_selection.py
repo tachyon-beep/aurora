@@ -1,5 +1,4 @@
-import socket
-
+import httpx
 import pytest
 
 import chassis
@@ -17,15 +16,10 @@ def clean_env(monkeypatch):
         "OPENROUTER_BASE_URL",
     ):
         monkeypatch.delenv(var, raising=False)
+    # An empty value selects the direct upstream, which is what the existing
+    # provider-selection tests below are about.
+    monkeypatch.setenv("LLM_SOCKET_PATH", "")
     return monkeypatch
-
-
-@pytest.fixture
-def no_proxy(monkeypatch):
-    def refuse(*args, **kwargs):
-        raise OSError("connection refused")
-
-    monkeypatch.setattr(socket, "create_connection", refuse)
 
 
 def test_proxy_upstream_defaults_to_openrouter(clean_env):
@@ -60,12 +54,12 @@ def test_proxy_key_empty_for_no_auth_local_server(clean_env):
     assert proxy.upstream_api_key() == ""
 
 
-def test_chassis_requires_a_key_without_llm_base_url(clean_env, no_proxy):
+def test_chassis_requires_a_key_without_llm_base_url(clean_env):
     with pytest.raises(SystemExit):
         chassis.build_client()
 
 
-def test_chassis_openrouter_mode(clean_env, no_proxy):
+def test_chassis_openrouter_mode(clean_env):
     clean_env.setenv("OPENROUTER_API_KEY", "sk-real")
     clean_env.setenv("OPENROUTER_MODEL", "some/model")
     client, model = chassis.build_client()
@@ -73,7 +67,7 @@ def test_chassis_openrouter_mode(clean_env, no_proxy):
     assert str(client.base_url).rstrip("/") == "https://openrouter.ai/api/v1"
 
 
-def test_chassis_llm_mode_without_key(clean_env, no_proxy):
+def test_chassis_llm_mode_without_key(clean_env):
     clean_env.setenv("LLM_BASE_URL", "http://localhost:5000/v1")
     clean_env.setenv("LLM_MODEL", "local-model")
     client, model = chassis.build_client()
@@ -81,7 +75,7 @@ def test_chassis_llm_mode_without_key(clean_env, no_proxy):
     assert str(client.base_url).rstrip("/") == "http://localhost:5000/v1"
 
 
-def test_chassis_llm_model_takes_precedence(clean_env, no_proxy):
+def test_chassis_llm_model_takes_precedence(clean_env):
     clean_env.setenv("LLM_BASE_URL", "http://localhost:5000/v1")
     clean_env.setenv("LLM_MODEL", "local-model")
     clean_env.setenv("OPENROUTER_MODEL", "some/model")
@@ -89,8 +83,66 @@ def test_chassis_llm_model_takes_precedence(clean_env, no_proxy):
     assert model == "local-model"
 
 
-def test_chassis_prefers_detected_recorder_over_direct(clean_env, monkeypatch):
-    clean_env.setenv("LLM_BASE_URL", "http://localhost:5000/v1")
-    clean_env.setenv("OPENROUTER_BASE_URL", "http://recorder:8088/api/v1")
-    client, _ = chassis.build_client()
-    assert str(client.base_url).rstrip("/") == "http://recorder:8088/api/v1"
+def test_unset_socket_path_selects_socket_mode(clean_env, tmp_path, monkeypatch):
+    # The container case: an unset variable must not fall back to a network the
+    # container does not have.
+    monkeypatch.delenv("LLM_SOCKET_PATH", raising=False)
+    clean_env.setenv("OPENROUTER_API_KEY", "sk-real")
+    monkeypatch.setattr(chassis, "SOCKET_WAIT_SECONDS", 0)
+
+    with pytest.raises(chassis.EnvironmentFailure):
+        chassis.build_client()
+
+
+def test_present_socket_builds_a_uds_client(clean_env, tmp_path):
+    path = tmp_path / "core.sock"
+    path.write_bytes(b"")
+    clean_env.setenv("OPENROUTER_API_KEY", "sk-real")
+    clean_env.setenv("OPENROUTER_MODEL", "some/model")
+    clean_env.setenv("LLM_SOCKET_PATH", str(path))
+
+    client, model = chassis.build_client()
+
+    assert model == "some/model"
+    assert str(client.base_url).rstrip("/") == "http://localhost/api/v1"
+    # The wiring under test is the UDS transport itself, not just the base_url,
+    # which stays the same string regardless of whether the transport used it.
+    transport = client._client._transport
+    assert isinstance(transport, httpx.HTTPTransport)
+    assert transport._pool._uds == str(path)
+
+
+def test_absent_socket_raises_environment_failure(clean_env, tmp_path, monkeypatch):
+    clean_env.setenv("OPENROUTER_API_KEY", "sk-real")
+    clean_env.setenv("LLM_SOCKET_PATH", str(tmp_path / "missing.sock"))
+    monkeypatch.setattr(chassis, "SOCKET_WAIT_SECONDS", 0)
+
+    with pytest.raises(chassis.EnvironmentFailure):
+        chassis.build_client()
+
+
+def test_wait_for_socket_returns_true_once_the_path_exists(tmp_path):
+    path = tmp_path / "core.sock"
+    calls = []
+
+    def fake_sleep(seconds):
+        calls.append(seconds)
+        path.write_bytes(b"")
+
+    assert chassis.wait_for_socket(str(path), timeout=5, sleep=fake_sleep) is True
+    assert len(calls) == 1
+
+
+def test_wait_for_socket_gives_up_at_the_timeout(tmp_path):
+    assert (
+        chassis.wait_for_socket(str(tmp_path / "never"), timeout=0, sleep=lambda s: None) is False
+    )
+
+
+def test_wait_for_socket_returns_true_immediately_when_already_present(tmp_path):
+    # The container cold-start case: the socket can already exist by the time the
+    # chassis checks, even with no time budget to wait for it.
+    path = tmp_path / "core.sock"
+    path.write_bytes(b"")
+
+    assert chassis.wait_for_socket(str(path), timeout=0, sleep=lambda s: None) is True

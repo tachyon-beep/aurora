@@ -37,7 +37,7 @@ Each container shares nothing but explicit, narrow channels.
 
 ```mermaid
 flowchart LR
-    agent["agent<br/>rewrites its own code<br/>internal network only — no internet route"]
+    agent["agent<br/>rewrites its own code<br/>no network interface"]
     recorder["recorder<br/>holds the upstream API key<br/>injects auth · logs bodies, not headers"]
     diode["diode<br/>closed command vocabulary<br/>SSRF-checked fetches"]
     viewer["viewer (optional)<br/>read-only · host loopback :8090"]
@@ -52,7 +52,7 @@ flowchart LR
     web(["the web"])
     audience(["viewers — optional tunnel"])
 
-    agent -- "HTTP · internal net" --> recorder
+    agent -- "chat completions · unix socket" --> recorder
     recorder -- "egress net" --> model
     recorder -- "writes" --> tvol
     viewer -. "reads (ro)" .-> tvol
@@ -79,7 +79,7 @@ flowchart LR
 
 | Component | Role | Containment |
 |-----------|------|-------------|
-| **agent** | Runs the model loop and rewrites its own source (`agent.py`). | On the `internal` network only — **no route to the internet**. Read-only image; work happens in a tmpfs. Talks to the model only through the recorder. |
+| **agent** | Runs the model loop and rewrites its own source (`agent.py`). | No network interface at all — one loopback device, an empty routing table. Read-only image; work happens in a tmpfs. Reaches the model only through the recorder, over a unix socket it mounts read-only. |
 | **recorder** | A transparent proxy in front of OpenRouter. Holds the **upstream API key** — the credential the agent's own traffic runs on — injects the `Authorization` header, and appends every turn to the transcript. | Logs request/response **bodies only, never headers**, so the key never enters the transcript. The agent has no route to it beyond the proxied endpoint. |
 | **diode** | A one-way command channel. The agent writes declarative commands to a shared volume; the diode executes a **closed vocabulary** (e.g. vetted web fetches) and writes results back. | Egress-only. No code crosses the boundary — only a fixed set of commands. Web fetches are checked against an SSRF allow-list with redirect re-validation. |
 | **state volume** | Empty durable storage mounted at `/state`; nothing reads or executes it automatically. | Mounted only into the agent. Survives container replacement and ordinary Compose shutdown; removed only by explicit volume deletion. |
@@ -105,12 +105,19 @@ inject an explanation of them into the opening conversation.
 
 What the design provides:
 
-- **The agent has no direct network egress.** It sits on an `internal` Docker network and reaches
-  the model only via the recorder.
+- **The agent has no network egress at all.** It runs with `network_mode: none` — one loopback
+  interface and an empty routing table — and reaches the model only through a unix domain socket
+  served by the recorder.
 - **No real credential is reachable by the agent.** It runs with a dummy key; the recorder injects
-  the real one and keeps it out of the transcript. Any other credential in the system — the stage's
-  optional summariser key, for instance — lives on a service the agent has no network route to, and
-  is never mounted or named into the agent image.
+  the real one and keeps it out of the transcript. Each channel the agent has to a credentialed
+  service is closed by its own guarantee. The recorder socket exposes exactly
+  one route (`POST /api/v1/chat/completions`) and forwards its body upstream verbatim; the key is
+  protected by injection at the recorder and by body-only, never-header, logging — not by the
+  socket's shape. The shared `/diode` volume carries a closed command vocabulary; the agent can
+  cause spend through a gated command (the diode's speech credential) but no command returns a
+  key — each diode credential lives only in the diode's own environment. Any further credential,
+  such as the stage's optional summariser key, must be reachable through neither channel, and is
+  never mounted or named into the agent image.
 - **The record is external and tamper-evident.** Transcripts are written by the recorder to a volume
   the agent cannot reach. The agent may try to blind its own in-container view, but the authoritative
   record lives elsewhere.

@@ -77,3 +77,61 @@ def test_agent_work_allocation_and_memory_move_together():
     agent_block = text.split("\n  agent:\n")[1].split("\n  diode:\n")[0]
     assert "/work:size=4g,uid=1000,gid=1000" in agent_block
     assert "mem_limit: 5g" in agent_block
+
+
+def _agent_block(text):
+    return text.split("\n  agent:\n")[1].split("\n  diode:\n")[0]
+
+
+def _recorder_block(text):
+    return text.split("\n  recorder:\n")[1].split("\n  agent:\n")[0]
+
+
+def test_compose_no_longer_defines_an_internal_network():
+    text = _read("docker-compose.yml")
+    assert "internal: true" not in text
+    assert "networks: [internal]" not in text
+    assert "networks: [internal, egress]" not in text
+
+
+def test_the_agent_has_no_network_interface():
+    agent = _agent_block(_read("docker-compose.yml"))
+    assert "network_mode: none" in agent
+    assert "networks:" not in agent
+
+
+def test_the_agent_resolves_its_own_hostname_without_dns():
+    agent = _agent_block(_read("docker-compose.yml"))
+    assert "hostname: agent" in agent
+    assert '"agent:127.0.0.1"' in agent
+    assert "dns:" in agent
+    assert "- 127.0.0.1" in agent
+
+
+def test_the_agent_mounts_the_socket_directory_read_only():
+    text = _read("docker-compose.yml")
+    assert "llm_sock:/llm/sock:ro" in _agent_block(text)
+    assert "llm_sock:/llm/sock\n" in _recorder_block(text)
+
+
+def test_the_console_volume_is_writable_by_the_agent_only():
+    text = _read("docker-compose.yml")
+    assert "llm_console:/llm/console\n" in _agent_block(text)
+    assert "llm_console:/llm/console:ro" in _recorder_block(text)
+
+
+def test_the_socket_volumes_are_declared():
+    text = _read("docker-compose.yml")
+    assert "  llm_sock: {}" in text
+    assert "  llm_console: {}" in text
+
+
+def test_the_agent_image_precreates_the_socket_mountpoints():
+    # Docker copies image-mountpoint ownership into each newly created empty
+    # volume, so both paths must appear on the chown as well as the mkdir. A
+    # mkdir-only mountpoint arrives root-owned and the recorder cannot bind.
+    text = _read("Dockerfile")
+    chown_line = next(line for line in text.splitlines() if "chown appuser:appuser /" in line)
+    for path in ("/llm/sock", "/llm/console"):
+        assert path in text
+        assert path in chown_line

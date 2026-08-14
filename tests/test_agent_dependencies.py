@@ -4,7 +4,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 EXPECTED_PACKAGES = [
-    "openai",
+    "openai<3",
+    "httpx<1",
     "numpy",
     "sympy",
     "networkx",
