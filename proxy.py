@@ -149,17 +149,39 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         stream = getattr(self.server, "stream_name", "core")
         registry = getattr(self.server, "registry", None)
 
+        refused = None
         if registry is not None and stream != "core":
             req_body, refused = registry.admit(stream, req_body)
-            if refused is not None:
-                status_code, message = refused
-                self._finish_local(stream, req_body, status_code, message)
-                return
 
         try:
             req_data = json.loads(req_body.decode("utf-8"))
         except Exception:
+            req_data = None
+        if not isinstance(req_data, dict):
             req_data = {"raw_body": req_body.decode("utf-8", errors="replace")}
+
+        event_id = request_id()
+        messages = req_data.get("messages")
+        started = time.monotonic()
+        log_event(
+            "open",
+            stream,
+            id=event_id,
+            model=req_data.get("model"),
+            messages=len(messages) if isinstance(messages, list) else 0,
+        )
+
+        if refused is not None:
+            status_code, message = refused
+            log_event(
+                "close",
+                stream,
+                id=event_id,
+                status=status_code,
+                duration_seconds=round(time.monotonic() - started, 3),
+            )
+            self._finish_local(stream, req_data, status_code, message)
+            return
 
         headers_to_forward = build_forward_headers(self.headers, upstream_api_key())
 
@@ -209,6 +231,20 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             res_data = {"raw_body": response_body.decode("utf-8", errors="replace")}
 
+        close_fields = {
+            "id": event_id,
+            "status": response_code,
+            "duration_seconds": round(time.monotonic() - started, 3),
+        }
+        usage = res_data.get("usage") if isinstance(res_data, dict) else None
+        if isinstance(usage, dict):
+            close_fields["usage"] = {
+                key: usage[key]
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                if isinstance(usage.get(key), (int, float))
+            }
+        log_event("close", stream, **close_fields)
+
         self.log_transcript(req_data, res_data, stream=stream)
 
         self.send_response(response_code)
@@ -218,14 +254,8 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response_body)
 
-    def _finish_local(self, stream, req_body, status_code, message):
+    def _finish_local(self, stream, req_data, status_code, message):
         """Answer a request locally with a factual error and record the exchange."""
-        try:
-            req_data = json.loads(req_body.decode("utf-8"))
-        except Exception:
-            req_data = None
-        if not isinstance(req_data, dict):
-            req_data = {"raw_body": req_body.decode("utf-8", errors="replace")}
         res_data = {"error": {"message": message}}
         body = json.dumps(res_data).encode("utf-8")
         self.log_transcript(req_data, res_data, stream=stream)
@@ -444,8 +474,11 @@ def poll_once(registry, servers, sock_dir, console_path, state_path):
                 os.unlink(os.path.join(sock_dir, f"{name}.sock"))
             except OSError:
                 pass
+            log_event("unbind", name)
         for name in added:
             bind_stream(registry, servers, sock_dir, name)
+            if name in servers:
+                log_event("bind", name)
     recorder_streams.write_state(state_path, registry.state(console_error=error))
 
 
@@ -473,6 +506,7 @@ def main():
     sweep_stale_sockets(sock_dir, keep={os.path.basename(socket_path)})
     recorder_streams.write_readme(sock_dir)
     threading.Thread(target=core.serve_forever, daemon=True).start()
+    log_event("bind", "core")
 
     servers = {}
     state_path = os.path.join(sock_dir, "streams.json")
