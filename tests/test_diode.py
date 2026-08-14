@@ -483,7 +483,7 @@ def test_write_help_lists_publishing_gate(tmp_path, monkeypatch):
     assert "enable_publishing" in text
 
 
-def test_blind_is_absent_from_listings_and_help(tmp_path, monkeypatch):
+def test_xyzzy_is_absent_from_listings_and_help(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
     all_gates = {
         "enable_fetchlinks": True,
@@ -496,23 +496,23 @@ def test_blind_is_absent_from_listings_and_help(tmp_path, monkeypatch):
         "enable_entropy": True,
         "enable_publishing": True,
     }
-    assert "blind" not in diode.available_commands(all_gates)
+    assert "xyzzy" not in diode.available_commands(all_gates)
     diode.write_help(all_gates)
-    assert "blind" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "xyzzy" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
 
 
-def test_blind_returns_the_text_without_gate_or_budget(tmp_path, monkeypatch):
+def test_xyzzy_returns_the_text_without_gate_or_budget(tmp_path, monkeypatch):
     source = tmp_path / "text.txt"
     source.write_text("first line\n\nsecond line\n", encoding="utf-8")
     monkeypatch.setattr(diode, "BLIND_TEXT_FILE", str(source))
-    text, hist = diode.handle_command("blind", {}, [])
+    text, hist = diode.handle_command("xyzzy", {}, [])
     assert text == "first line\n\nsecond line\n"
     assert hist == []
 
 
-def test_blind_missing_source_is_factual(tmp_path, monkeypatch):
+def test_xyzzy_missing_source_is_factual(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "BLIND_TEXT_FILE", str(tmp_path / "absent.txt"))
-    text, hist = diode.handle_command("blind", {}, [])
+    text, hist = diode.handle_command("xyzzy", {}, [])
     assert text == "not available"
     assert hist == []
 
@@ -522,8 +522,8 @@ def test_state_reports_undocumented_command_count(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
     diode.write_state({}, [])
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
-    assert state["undocumented_commands"] == 1
-    assert "blind" not in state["available_commands"]
+    assert state["undocumented_commands"] == 3
+    assert "xyzzy" not in state["available_commands"]
 
 
 def test_speech_helpers_read_the_environment(monkeypatch):
@@ -784,7 +784,8 @@ def test_speak_is_not_dispatchable_without_the_gate(monkeypatch):
 
 def test_speak_stays_a_listed_command(monkeypatch):
     _speech_env(monkeypatch)
-    assert diode.undocumented_command_count() == 1
+    assert "speak" in diode.available_commands({"enable_speech": True})
+    assert not diode.COMMANDS["speak"].get("hidden")
 
 
 def test_speak_help_line_names_no_audience(tmp_path, monkeypatch):
@@ -877,7 +878,8 @@ def test_an_inflated_console_budget_cannot_raise_the_speech_ceiling(tmp_path, mo
         text, history = diode.handle_command("speak hello", variables, history)
         assert text.startswith("recorded as ")
     text, history = diode.handle_command("speak hello", variables, history)
-    assert text == "rate limited: at most 2 network operation(s) per hour"
+    assert text.startswith("rate limited: at most 2 network operation(s) per hour")
+    assert "next available in " in text
     assert len(history) == 2
 
 
@@ -900,7 +902,8 @@ def test_a_smaller_console_budget_still_lowers_the_speech_allowance(tmp_path, mo
     text, history = diode.handle_command("speak hello", variables, [])
     assert text.startswith("recorded as ")
     text, history = diode.handle_command("speak hello", variables, history)
-    assert text == "rate limited: at most 1 network operation(s) per hour"
+    assert text.startswith("rate limited: at most 1 network operation(s) per hour")
+    assert "next available in " in text
 
 
 def test_speak_truncates_at_the_text_cap(tmp_path, monkeypatch):
@@ -934,3 +937,211 @@ def test_speak_returns_the_transport_reason_on_failure(tmp_path, monkeypatch):
     assert text == "speech error: boom"
     assert len(history) == 1
     assert not (tmp_path / "spoken").exists()
+
+
+def test_budget_status_prunes_stale_stamps_out_of_the_count():
+    now = 1_000_000.0
+    status = diode.budget_status([now - 7200, now - 60], now, 3600)
+    assert status["used"] == 1
+    assert status["window_seconds"] == 3600
+
+
+def test_budget_status_counts_down_from_the_oldest_stamp():
+    now = 1_000_000.0
+    status = diode.budget_status([now - 600, now - 60], now, 3600)
+    assert status["oldest_expires_in_seconds"] == 3000
+
+
+def test_budget_status_is_empty_without_history():
+    status = diode.budget_status([], 1_000_000.0, 3600)
+    assert status["used"] == 0
+    assert status["oldest_expires_in_seconds"] is None
+
+
+def test_budget_status_never_reports_a_negative_wait():
+    now = 1_000_000.0
+    status = diode.budget_status([now - 3599.9], now, 3600)
+    assert status["oldest_expires_in_seconds"] >= 0
+
+
+def test_rate_limited_message_carries_the_wait():
+    now = 1_000_000.0
+    text = diode.rate_limited_message(1, [now - 600], now, 3600)
+    assert text.startswith("rate limited: at most 1 network operation(s) per hour")
+    assert "next available in 3000 seconds" in text
+
+
+def test_rate_limited_message_without_history_states_only_the_limit():
+    text = diode.rate_limited_message(0, [], 1_000_000.0, 3600)
+    assert text == "rate limited: at most 0 network operation(s) per hour"
+
+
+def test_a_zero_budget_is_refused_without_raising(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    text, _ = diode.handle_command("fetchhttp http://example.com", {"fetch_budget": 0}, [])
+    assert text == "rate limited: at most 0 network operation(s) per hour"
+
+
+def test_fetch_limit_falls_back_on_an_unusable_console_value():
+    assert diode.fetch_limit({"fetch_budget": 7}) == 7
+    assert diode.fetch_limit({}) == diode.DEFAULT_FETCH_LIMIT
+    assert diode.fetch_limit({"fetch_budget": "many"}) == diode.DEFAULT_FETCH_LIMIT
+
+
+def test_output_command_word_drops_the_stamp_and_the_argument():
+    assert diode.output_command_word("20260814_170233_123456_secret.txt") == "secret"
+    assert diode.output_command_word("20260814_170233_123456_weather_33_8_151_2.txt") == "weather"
+    assert diode.output_command_word("20260814_170233_123456_.txt") == ""
+
+
+def test_hidden_commands_run_ignores_a_refused_guess(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "20260814_170233_123456_secret.txt").write_text(
+        "unknown command: secret", encoding="utf-8"
+    )
+    assert diode.hidden_commands_run(str(output)) == set()
+
+
+def test_hidden_commands_run_counts_a_real_result(tmp_path):
+    output = tmp_path / "output"
+    output.mkdir()
+    (output / "20260814_170233_123456_secret.txt").write_text(
+        "this command is not listed in help.", encoding="utf-8"
+    )
+    (output / "20260814_170233_123457_abc.txt").write_text("headlines", encoding="utf-8")
+    assert diode.hidden_commands_run(str(output)) == {"secret"}
+
+
+def test_hidden_commands_run_is_empty_without_a_directory(tmp_path):
+    assert diode.hidden_commands_run(str(tmp_path / "absent")) == set()
+
+
+def test_undocumented_command_count_falls_as_commands_are_found():
+    assert diode.undocumented_command_count() == 3
+    assert diode.undocumented_command_count({"secret"}) == 2
+    assert diode.undocumented_command_count({"secret", "xyzzy"}) == 1
+    assert diode.undocumented_command_count({"secret", "xyzzy", "echo"}) == 0
+
+
+def test_secret_returns_its_text_without_gate_or_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    text, hist = diode.handle_command("secret", {}, [])
+    assert text == "this command is not listed in help."
+    assert hist == []
+
+
+def test_secret_is_absent_from_listings_and_help(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({"enable_scheduling": True})
+    text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "secret" not in text
+    assert "echo" not in text
+    assert "secret" not in diode.available_commands({})
+    assert "echo" not in diode.available_commands({})
+
+
+def test_load_pending_tolerates_absent_and_malformed(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    assert diode.load_pending() == []
+    (tmp_path / "pending.json").write_text("{not json", encoding="utf-8")
+    assert diode.load_pending() == []
+    (tmp_path / "pending.json").write_text('{"due": 1}', encoding="utf-8")
+    assert diode.load_pending() == []
+
+
+def test_due_pending_splits_on_the_due_time_and_drops_the_malformed():
+    items = [{"due": 10}, {"due": 100}, {"due": "soon"}]
+    due, waiting = diode.due_pending(items, 50)
+    assert due == [{"due": 10}]
+    assert waiting == [{"due": 100}]
+
+
+def test_echo_queues_an_item_without_charging_the_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    text, hist = diode.handle_command("echo 60 hello there", {}, [])
+    assert text == "deferred 60 second(s)"
+    assert hist == []
+    items = json.loads((tmp_path / "pending.json").read_text(encoding="utf-8"))
+    assert len(items) == 1
+    assert items[0]["kind"] == "echo"
+    assert items[0]["text"] == "hello there"
+
+
+def test_echo_refuses_a_delay_it_cannot_use(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    for command in ("echo", "echo hello", "echo soon hello", "echo -5 hello", "echo 999999999 x"):
+        text, _ = diode.handle_command(command, {}, [])
+        assert text.startswith("usage: echo <seconds> <message>")
+    assert not (tmp_path / "pending.json").exists()
+
+
+def test_echo_truncates_at_the_text_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    diode.handle_command("echo 60 " + "x" * 9000, {}, [])
+    items = json.loads((tmp_path / "pending.json").read_text(encoding="utf-8"))
+    assert len(items[0]["text"]) == diode.ECHO_TEXT_CAP
+
+
+def test_the_queue_is_capped(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    monkeypatch.setattr(diode, "PENDING_MAX", 2)
+    for _ in range(2):
+        text, _ = diode.handle_command("echo 60 hello", {}, [])
+        assert text == "deferred 60 second(s)"
+    text, _ = diode.handle_command("echo 60 hello", {}, [])
+    assert text == "at most 2 deferred item(s)"
+
+
+def test_later_is_gated(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    text, _ = diode.handle_command("later 60 abc", {}, [])
+    assert text == "command not available: later"
+    assert "later" in diode.available_commands({"enable_scheduling": True})
+
+
+def test_later_queues_a_command_from_the_vocabulary(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    text, _ = diode.handle_command("later 60 abc", {"enable_scheduling": True}, [])
+    assert text == "deferred 60 second(s)"
+    items = json.loads((tmp_path / "pending.json").read_text(encoding="utf-8"))
+    assert items[0]["kind"] == "command"
+    assert items[0]["command"] == "abc"
+
+
+def test_later_refuses_an_unknown_command_at_schedule_time(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    text, _ = diode.handle_command("later 60 nope", {"enable_scheduling": True}, [])
+    assert text == "unknown command: nope"
+    assert not (tmp_path / "pending.json").exists()
+
+
+def test_later_refuses_to_defer_a_deferring_command(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    for inner in ("later 60 abc", "echo 60 hello"):
+        text, _ = diode.handle_command(f"later 60 {inner}", {"enable_scheduling": True}, [])
+        assert text.startswith("cannot defer: ")
+    assert not (tmp_path / "pending.json").exists()
+
+
+def test_state_carries_the_budget_block_and_the_pending_count(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    diode.write_state({}, [], diode.budget_status([], 1_000_000.0, 3600), {"secret"}, 2)
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state["budget"] == {
+        "used": 0,
+        "window_seconds": 3600,
+        "oldest_expires_in_seconds": None,
+    }
+    assert state["undocumented_commands"] == 2
+    assert state["pending"] == 2
+
+
+def test_state_omits_the_budget_block_and_pending_when_absent(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    diode.write_state({}, [])
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert "budget" not in state
+    assert "pending" not in state

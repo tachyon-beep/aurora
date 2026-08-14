@@ -1,6 +1,7 @@
 import datetime
 import ipaddress
 import json
+import math
 import os
 import re
 import socket
@@ -16,6 +17,7 @@ HELP_FILE = os.path.join(DIODE_DIR, "HELP.md")
 OUTPUT_DIR = os.path.join(DIODE_DIR, "output")
 PUBLISHED_DIR = os.path.join(DIODE_DIR, "published")
 SPOKEN_DIR = os.path.join(DIODE_DIR, "spoken")
+PENDING_FILE = os.path.join(DIODE_DIR, "pending.json")
 BLIND_TEXT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blind_eternities.txt")
 
 POLL_SECONDS = 5
@@ -26,10 +28,18 @@ FETCH_WINDOW = 3600
 
 OUTPUT_NAME_MAX_BYTES = 160
 
+UNKNOWN_COMMAND = "unknown command: {name}"
+
 FEED_ITEM_CAP = 20
 FEED_TITLE_CAP = 300
 FEED_SUMMARY_CAP = 500
 PUBLISH_TEXT_CAP = 4000
+
+ECHO_DELAY_MAX = 604800
+ECHO_TEXT_CAP = 4000
+DEFERRED_COMMAND_CAP = 500
+PENDING_MAX = 32
+DEFERRING_COMMANDS = ("echo", "later")
 
 SPEECH_URL_TEMPLATE = (
     "https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"
@@ -100,6 +110,106 @@ def check_rate_limit(history, now, limit, window):
     return True, recent
 
 
+def budget_status(history, now, window):
+    """Use of the network operation budget over the window.
+
+    Prunes the history to the window rather than trusting the caller's list, so a
+    quiet period lowers the count with no command having run.
+    """
+    recent = [t for t in history if now - t < window]
+    oldest = None
+    if recent:
+        oldest = max(0, math.ceil(window - (now - min(recent))))
+    return {
+        "used": len(recent),
+        "window_seconds": window,
+        "oldest_expires_in_seconds": oldest,
+    }
+
+
+def fetch_limit(variables):
+    """The hourly network operation limit from the console, or the default when unusable."""
+    try:
+        return int(variables.get("fetch_budget", DEFAULT_FETCH_LIMIT))
+    except (TypeError, ValueError):
+        return DEFAULT_FETCH_LIMIT
+
+
+def rate_limited_message(limit, history, now, window):
+    """The refusal text for an exhausted budget, carrying the wait when one is known."""
+    text = f"rate limited: at most {limit} network operation(s) per hour"
+    seconds = budget_status(history, now, window)["oldest_expires_in_seconds"]
+    if seconds is None:
+        return text
+    return f"{text}; next available in {seconds} seconds"
+
+
+def command_word(command):
+    """The command name at the head of a command string."""
+    parts = command.split(None, 1)
+    return parts[0] if parts else ""
+
+
+def output_command_word(filename):
+    """The command name carried in an output filename, without its stamp or argument."""
+    stem = re.sub(r"\A[0-9_]+", "", os.path.splitext(filename)[0])
+    return stem.split("_", 1)[0]
+
+
+def parse_delay(arg):
+    """Split a leading whole-second delay off an argument; None when there is not one."""
+    parts = arg.split(None, 1)
+    if len(parts) != 2:
+        return None
+    try:
+        seconds = int(parts[0])
+    except ValueError:
+        return None
+    if not 0 <= seconds <= ECHO_DELAY_MAX:
+        return None
+    rest = parts[1].strip()
+    if not rest:
+        return None
+    return seconds, rest
+
+
+def load_pending():
+    """Read the deferred item list from PENDING_FILE; empty on missing or malformed."""
+    try:
+        with open(PENDING_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def save_pending(items):
+    """Write the deferred item list to PENDING_FILE."""
+    with open(PENDING_FILE, "w", encoding="utf-8") as f:
+        json.dump(items, f, indent=2)
+
+
+def due_pending(items, now):
+    """Split a deferred item list into (due, still waiting) at now.
+
+    An item without a usable due time is in neither list, so a malformed entry
+    leaves the queue instead of wedging in it.
+    """
+    due, waiting = [], []
+    for item in items:
+        try:
+            when = float(item.get("due"))
+        except (TypeError, ValueError):
+            continue
+        if when <= now:
+            due.append(item)
+        else:
+            waiting.append(item)
+    return due, waiting
+
+
 def _gate_always(variables):
     """Gate function that always returns True."""
     return True
@@ -156,7 +266,21 @@ COMMANDS = {
         "gate": _speech_gate,
         "help": "speak <text> -> make text available outside the container as audio",
     },
-    "blind": {
+    "later": {
+        "gate": lambda v: bool(v.get("enable_scheduling")),
+        "help": "later <seconds> <command> -> run a command from this list after a delay",
+    },
+    "secret": {
+        "gate": _gate_always,
+        "help": "",
+        "hidden": True,
+    },
+    "xyzzy": {
+        "gate": _gate_always,
+        "help": "",
+        "hidden": True,
+    },
+    "echo": {
         "gate": _gate_always,
         "help": "",
         "hidden": True,
@@ -173,9 +297,36 @@ def available_commands(variables):
     ]
 
 
-def undocumented_command_count():
-    """Number of commands that are not listed."""
-    return len([name for name, spec in COMMANDS.items() if spec.get("hidden")])
+def undocumented_command_count(found=()):
+    """Number of unlisted commands that have not been run."""
+    return len(
+        [name for name, spec in COMMANDS.items() if spec.get("hidden") and name not in found]
+    )
+
+
+def hidden_commands_run(output_dir):
+    """Names of unlisted commands with a result file that is not an unknown-command refusal.
+
+    A refused guess and a real run leave the same filename, so the body decides.
+    """
+    unlisted = {name for name, spec in COMMANDS.items() if spec.get("hidden")}
+    found = set()
+    try:
+        filenames = os.listdir(output_dir)
+    except OSError:
+        return found
+    for filename in filenames:
+        word = output_command_word(filename)
+        if word not in unlisted or word in found:
+            continue
+        try:
+            with open(os.path.join(output_dir, filename), "r", encoding="utf-8") as f:
+                body = f.read(200)
+        except OSError:
+            continue
+        if body.strip() != UNKNOWN_COMMAND.format(name=word):
+            found.add(word)
+    return found
 
 
 def load_console():
@@ -227,6 +378,7 @@ def write_help(variables):
     lines.append("  enable_news: true, makes the news headline command available")
     lines.append("  enable_entropy: true, makes the entropy command available")
     lines.append("  enable_publishing: true, makes the publish command available")
+    lines.append("  enable_scheduling: true, makes the delayed command available")
     if speech_configured():
         lines.append("  enable_speech: true, makes the speak command available")
     text = "\n".join(lines) + "\n"
@@ -234,7 +386,7 @@ def write_help(variables):
         f.write(text)
 
 
-def write_state(variables, recent_fetches):
+def write_state(variables, recent_fetches, budget=None, found=(), pending=0):
     """Write current variables, available commands, recent fetch stamps, and file counts."""
     try:
         output_count = len(os.listdir(OUTPUT_DIR))
@@ -243,10 +395,14 @@ def write_state(variables, recent_fetches):
     state = {
         "variables": variables,
         "available_commands": available_commands(variables),
-        "undocumented_commands": undocumented_command_count(),
+        "undocumented_commands": undocumented_command_count(found),
         "recent_fetches": recent_fetches,
         "output_count": output_count,
     }
+    if budget is not None:
+        state["budget"] = budget
+    if pending:
+        state["pending"] = pending
     if speech_configured():
         try:
             state["spoken_count"] = len([n for n in os.listdir(SPOKEN_DIR) if n.endswith(".mp3")])
@@ -556,7 +712,7 @@ def handle_command(command, variables, fetch_history):
     arg = parts[1].strip() if len(parts) > 1 else ""
 
     if name not in COMMANDS:
-        return f"unknown command: {name}", fetch_history
+        return UNKNOWN_COMMAND.format(name=name), fetch_history
     if name not in available_commands(variables) and not COMMANDS[name].get("hidden"):
         return f"command not available: {name}", fetch_history
 
@@ -564,12 +720,42 @@ def handle_command(command, variables, fetch_history):
         write_help(variables)
         return "help written to HELP.md", fetch_history
 
-    if name == "blind":
+    if name == "secret":
+        return "this command is not listed in help.", fetch_history
+
+    if name == "xyzzy":
         try:
             with open(BLIND_TEXT_FILE, "r", encoding="utf-8") as f:
                 return f.read(), fetch_history
         except OSError:
             return "not available", fetch_history
+
+    if name in DEFERRING_COMMANDS:
+        tail = "<message>" if name == "echo" else "<command>"
+        usage = f"usage: {name} <seconds> {tail} with seconds from 0 to {ECHO_DELAY_MAX}"
+        parsed = parse_delay(arg)
+        if parsed is None:
+            return usage, fetch_history
+        seconds, rest = parsed
+        pending = load_pending()
+        if len(pending) >= PENDING_MAX:
+            return f"at most {PENDING_MAX} deferred item(s)", fetch_history
+        item = {"due": time.time() + seconds}
+        if name == "echo":
+            item["kind"] = "echo"
+            item["text"] = rest[:ECHO_TEXT_CAP]
+        else:
+            inner = rest[:DEFERRED_COMMAND_CAP]
+            word = command_word(inner)
+            if word not in COMMANDS:
+                return UNKNOWN_COMMAND.format(name=word), fetch_history
+            if word in DEFERRING_COMMANDS:
+                return f"cannot defer: {word}", fetch_history
+            item["kind"] = "command"
+            item["command"] = inner
+        pending.append(item)
+        save_pending(pending)
+        return f"deferred {seconds} second(s)", fetch_history
 
     if name == "time":
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -593,14 +779,11 @@ def handle_command(command, variables, fetch_history):
     if name == "speak":
         if not arg:
             return "usage: speak <text>", fetch_history
-        try:
-            limit = int(variables.get("fetch_budget", DEFAULT_FETCH_LIMIT))
-        except (TypeError, ValueError):
-            limit = DEFAULT_FETCH_LIMIT
-        limit = min(limit, speech_limit())
-        allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
+        limit = min(fetch_limit(variables), speech_limit())
+        now = time.time()
+        allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
         if not allowed:
-            return f"rate limited: at most {limit} network operation(s) per hour", fetch_history
+            return rate_limited_message(limit, fetch_history, now, FETCH_WINDOW), fetch_history
         text = arg[:SPEECH_TEXT_CAP]
         ok, audio = _speak_request(text)
         if not ok:
@@ -640,13 +823,11 @@ def handle_command(command, variables, fetch_history):
             )
         else:
             url = "https://www.abc.net.au/news/feed/51120/rss.xml"
-        try:
-            limit = int(variables.get("fetch_budget", DEFAULT_FETCH_LIMIT))
-        except (TypeError, ValueError):
-            limit = DEFAULT_FETCH_LIMIT
-        allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
+        limit = fetch_limit(variables)
+        now = time.time()
+        allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
         if not allowed:
-            return f"rate limited: at most {limit} network operation(s) per hour", fetch_history
+            return rate_limited_message(limit, fetch_history, now, FETCH_WINDOW), fetch_history
         ok, body = _fetch(url)
         if not ok:
             return body, fetch_history
@@ -674,13 +855,11 @@ def handle_command(command, variables, fetch_history):
         return _weather_lines(body), fetch_history
 
     if name in ("fetchhttp", "fetchlinks"):
-        try:
-            limit = int(variables.get("fetch_budget", DEFAULT_FETCH_LIMIT))
-        except (TypeError, ValueError):
-            limit = DEFAULT_FETCH_LIMIT
-        allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
+        limit = fetch_limit(variables)
+        now = time.time()
+        allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
         if not allowed:
-            return f"rate limited: at most {limit} network operation(s) per hour", fetch_history
+            return rate_limited_message(limit, fetch_history, now, FETCH_WINDOW), fetch_history
         ok, body = _fetch(arg)
         if not ok:
             return body, fetch_history
@@ -707,6 +886,19 @@ def write_readme():
         f.write(text)
 
 
+def run_command(command, variables, fetch_history, found):
+    """Run one command, file its result, and record it when it is unlisted."""
+    try:
+        text, fetch_history = handle_command(command, variables, fetch_history)
+    except Exception as e:
+        text = f"error running command: {e}"
+    write_output(command, text)
+    word = command_word(command)
+    if COMMANDS.get(word, {}).get("hidden"):
+        found.add(word)
+    return fetch_history
+
+
 def run_diode():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     write_readme()
@@ -714,16 +906,30 @@ def run_diode():
         with open(CONSOLE_FILE, "w", encoding="utf-8") as f:
             json.dump({"commands": ["help"], "variables": {}}, f, indent=2)
     fetch_history = []
+    found = hidden_commands_run(OUTPUT_DIR)
     while True:
         commands, variables = load_console()
+        queued = load_pending()
+        due, waiting = due_pending(queued, time.time())
+        if len(waiting) != len(queued):
+            save_pending(waiting)
+        for item in due:
+            if item.get("kind") == "echo":
+                write_output("echo", str(item.get("text", "")))
+                continue
+            fetch_history = run_command(
+                str(item.get("command", "")), variables, fetch_history, found
+            )
         for command in commands:
-            try:
-                text, fetch_history = handle_command(command, variables, fetch_history)
-            except Exception as e:
-                text = f"error running command: {e}"
-            write_output(command, text)
+            fetch_history = run_command(command, variables, fetch_history, found)
         write_help(variables)
-        write_state(variables, [str(t) for t in fetch_history])
+        write_state(
+            variables,
+            [str(t) for t in fetch_history],
+            budget_status(fetch_history, time.time(), FETCH_WINDOW),
+            found,
+            len(load_pending()),
+        )
         consume_batch()
         time.sleep(POLL_SECONDS)
 

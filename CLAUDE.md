@@ -76,7 +76,13 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      them for its stream lanes.
    - The **diode is egress-only** and executes a *closed command vocabulary* — no code or arbitrary
      paths cross it. Keep the SSRF defenses (scheme allow-list, private/loopback/reserved rejection,
-     redirect re-validation).
+     redirect re-validation). Deferred commands (`echo`, `later`) are re-dispatched through
+     `handle_command` on delivery, so gates, the speech ceiling, and the budget are all re-evaluated
+     then and nothing is captured at schedule time. Keep that property when adding to the queue, and
+     keep `later` refusing to defer a deferring command. `state.json`'s `undocumented_commands` is a
+     live count of unlisted commands not yet run, derived from result *bodies* in `output/` because a
+     refused guess leaves the same filename as a real run. Keep it derived, and keep a found command
+     out of `HELP.md`.
    - The **viewer** is read-only, loopback-only, and on no shared network. It must stay that way.
    - The **stage** is outward-facing and never holds the recorder's credential. It may hold one
      optional low-value key of its own (`STAGE_SUMMARY_API_KEY`) for generated prose. That key
