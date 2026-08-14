@@ -648,6 +648,11 @@ def output_verb(slug):
     return DIODE_VERBS.get(head, f"ran {head}")[:40]
 
 
+def output_command(slug):
+    """The command word carried by a diode output slug, without its argument."""
+    return slug.split(" ")[0] if slug else ""
+
+
 def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
     """Newest diode output files, phrased, plus the console and state file bodies."""
     output_dir = os.path.join(diode_dir, "output")
@@ -675,6 +680,8 @@ def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
             {
                 "name": name,
                 "slug": slug,
+                "command": output_command(slug),
+                "argument": slug[len(output_command(slug)) :].strip(),
                 "verb": output_verb(slug),
                 "epoch": epoch,
                 "size": stat.st_size,

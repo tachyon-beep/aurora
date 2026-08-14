@@ -700,3 +700,22 @@ def test_lineage_transcript_fallback_ignores_subcalls(tmp_path):
     out = data.lineage(str(tmp_path), turns)
     assert len(out) == 1
     assert out[0]["summary"] == "the real ending."
+
+
+def test_output_command_splits_the_slug():
+    assert data.output_command("weather 33 8688 151") == "weather"
+    assert data.output_command("abc") == "abc"
+    assert data.output_command("") == ""
+
+
+def test_diode_activity_separates_command_from_argument(tmp_path):
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    (out_dir / "20260813T192618Z_weather_33.8688_151.2093.txt").write_text(
+        "result", encoding="utf-8"
+    )
+    got = data.diode_activity(str(tmp_path))
+    entry = got["outputs"][0]
+    assert entry["command"] == "weather"
+    assert entry["argument"].startswith("33")
+    assert entry["verb"] == data.output_verb(entry["slug"])

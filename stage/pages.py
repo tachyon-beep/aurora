@@ -402,7 +402,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .rows { flex: 1; min-height: 0; overflow: hidden; }
 .rrow { display: grid; align-items: center; height: 21px; font: 400 14px/21px var(--mono); }
 #selfmod-rows .rrow { grid-template-columns: 46px 1fr; }
-#asked-rows .rrow { grid-template-columns: 118px 1fr 132px; }
+#asked-rows .rrow { grid-template-columns: 96px 1fr 116px; column-gap: 14px; }
 .rrow .rid { color: var(--paper-faint); font: 400 12px/21px var(--mono); }
 .rrow .rdetail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rrow .verb { text-transform: uppercase; }
@@ -411,12 +411,17 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .rrow .verb.v-fault { color: var(--fault); }
 .rrow .rsum { color: var(--paper-dim); margin-left: 10px; }
 .rrow .rsum.quoted { font: italic 400 14px/21px var(--serif); color: var(--think); }
-.rrow .cmd { color: var(--world); text-transform: uppercase; display: flex; align-items: baseline;
-  gap: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rrow .cmd { color: var(--world); text-transform: uppercase; display: flex;
+  align-items: baseline; gap: 7px; min-width: 0; }
+.rrow .cmd > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  min-width: 0; }
 .ring { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--world);
   display: inline-block; flex: none; align-self: center; }
 .ring.filled { background: var(--world); }
 .rrow .rverb { color: var(--paper-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rrow .rarg { color: var(--paper-faint); margin-left: 8px; }
+.rows.is-sparse { display: flex; flex-direction: column; justify-content: center; }
+#said.is-sparse #said-foot { margin-top: 8px; }
 .rrow .rmeta { text-align: right; font: 400 11px/21px var(--mono); color: var(--paper-faint); }
 .empty-mono { font: 400 14px/21px var(--mono); color: var(--paper-dim); }
 #said.spoke { border-left: 2px solid var(--say); }
@@ -1225,6 +1230,7 @@ function renderRibbon() {
       } else s.textContent = sum;
     }
   }
+  setClass(host, "is-sparse", !ev.length);
 
   var outs = ((snap.diode && snap.diode.outputs) || []).slice(0, 4), ahost = $("asked-rows");
   clearRows(ahost);
@@ -1239,17 +1245,22 @@ function renderRibbon() {
     var o = outs[i], r = el("div", "rrow", ahost);
     var c = el("span", "cmd", r);
     el("i", "ring" + (i === 0 ? " filled" : ""), c);
-    el("span", null, c).textContent = String(o.slug || "").toUpperCase();
-    el("span", "rverb", r).textContent = o.verb || "";
+    el("span", null, c).textContent = String(o.command || o.slug || "").toUpperCase();
+    var v = el("span", "rverb", r);
+    el("span", null, v).textContent = o.verb || "";
+    var arg = norm(o.argument || "");
+    if (arg) el("span", "rarg", v).textContent = arg;
     var meta = el("span", "rmeta", r);
     meta.__epoch = o.epoch;
     meta.__size = bytes(o.size);
     meta.className = "rmeta agerow";
   }
+  setClass(ahost, "is-sparse", outs.length < 2);
 
   var pub = (snap.diode && snap.diode.published) || [];
   var total = (snap.diode && snap.diode.published_total) || 0;
   setClass($("said"), "spoke", total > 0);
+  setClass($("said"), "is-sparse", pub.length < 2);
   if (pub.length) {
     setText($("said-stamp"), "↗ PUBLISHED · " + hhmmss(new Date((pub[0].epoch || 0) * 1000).toISOString()));
     var p = $("said-text");
