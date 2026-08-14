@@ -689,3 +689,20 @@ def test_public_turn_slims_a_subcall_but_not_a_loop_turn():
 
 def test_empty_snapshot_reports_self_calls():
     assert server._empty_snapshot(0.0)["stats"]["self_calls"] == 0
+
+
+def test_stream_snapshot_demotes_a_tool_sub_call(tmp_path, monkeypatch):
+    loop = _turn_entry(0)
+    loop["request"]["messages"] = [{"role": "system"}, {"role": "user"}]
+    loop["request"]["tools"] = [{"type": "function"}]
+    sub = _turn_entry(1)
+    sub["request"] = {
+        "model": "other/sub",
+        "messages": [{"role": "user", "content": "Reply  with\nPONG"}],
+    }
+    snap = _snapshot(tmp_path, monkeypatch, [loop, sub, _turn_entry(2)])
+    assert [t["kind"] for t in snap["turns"]] == ["loop", "subcall", "loop"]
+    assert snap["turns"][1]["prompt"] == "Reply with PONG"
+    assert snap["stats"]["turns_this_life"] == 2
+    assert snap["stats"]["self_calls"] == 1
+    assert snap["stats"]["model"] == "m"
