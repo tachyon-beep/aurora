@@ -20,6 +20,7 @@ STREAM_PORT = int(os.environ.get("STREAM_PORT", "8091"))
 CONSOLE_PORT = int(os.environ.get("CONSOLE_PORT", "8092"))
 
 DISPLAY_TURNS = 6
+DISPLAY_SUBCALLS = 3
 DISPLAY_OUTPUTS = 4
 DISPLAY_PUBLISHED = 2
 TEXT_CAP = 8000
@@ -200,11 +201,39 @@ def _clip(text, cap):
     return text[:cap]
 
 
-def select_display(turns, count=DISPLAY_TURNS):
+def _cap_subcall_runs(turns, cap):
+    """Keep at most cap sub-calls in every run that follows a loop turn.
+
+    A run's newest members, the ones nearest the loop turn that follows (or
+    nearest now, for a run still in progress), are kept; its oldest are
+    dropped from the front of the run. This bounds both payload size and
+    on-screen sub-row count regardless of how many times a tool calls the
+    model between one loop turn and the next.
+    """
+    out = []
+    run_start = None
+    for turn in turns:
+        if turn.get("kind") == "subcall":
+            if run_start is None:
+                run_start = len(out)
+            out.append(turn)
+            continue
+        if run_start is not None:
+            out[run_start:] = out[run_start:][-cap:]
+            run_start = None
+        out.append(turn)
+    if run_start is not None:
+        out[run_start:] = out[run_start:][-cap:]
+    return out
+
+
+def select_display(turns, count=DISPLAY_TURNS, subcall_cap=DISPLAY_SUBCALLS):
     """The newest count loop turns, with the sub-calls that follow each of them.
 
     Sub-calls do not consume display slots: a tool that calls the model many
-    times cannot push the agent's own turns out of the feed.
+    times cannot push the agent's own turns out of the feed. Each parent's
+    sub-calls are separately capped so neither the payload nor the on-screen
+    sub-row count grows unbounded.
     """
     keep = []
     loops = 0
@@ -217,7 +246,7 @@ def select_display(turns, count=DISPLAY_TURNS):
     keep.reverse()
     while keep and keep[0].get("kind") == "subcall":
         keep.pop(0)
-    return keep
+    return _cap_subcall_runs(keep, subcall_cap)
 
 
 def _clipped_field(value, cap):
@@ -249,8 +278,27 @@ def _public_error(error):
     return {"message": _clip(str(error), ERROR_CAP), "code": None}
 
 
+def _public_subcall(turn):
+    """A sub-call's public dict: only what updateSubRows renders, nothing else.
+
+    A sub-call has no reasoning, say, or tool-call blocks in the page, so its
+    model's own reasoning and content text are dropped here rather than
+    carried to the client unread.
+    """
+    return {
+        "index": turn.get("index"),
+        "kind": "subcall",
+        "prompt": _clip(str(turn.get("prompt") or ""), PROMPT_CAP),
+        "timestamp": _clip(str(turn.get("timestamp") or ""), TIMESTAMP_CAP) or None,
+        "epoch": turn.get("epoch"),
+        "life": turn.get("life"),
+    }
+
+
 def _public_turn(turn):
     """A turn summary with every field enumerated and capped for public display."""
+    if turn.get("kind") == "subcall":
+        return _public_subcall(turn)
     reasoning, reasoning_chars, reasoning_truncated = _clipped_field(
         turn.get("reasoning"), TEXT_CAP
     )
@@ -273,7 +321,7 @@ def _public_turn(turn):
         )
     return {
         "index": turn.get("index"),
-        "kind": "subcall" if turn.get("kind") == "subcall" else "loop",
+        "kind": "loop",
         "prompt": _clip(str(turn.get("prompt") or ""), PROMPT_CAP),
         "timestamp": _clip(str(turn.get("timestamp") or ""), TIMESTAMP_CAP) or None,
         "epoch": turn.get("epoch"),

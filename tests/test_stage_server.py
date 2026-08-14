@@ -615,6 +615,28 @@ def test_select_display_drops_orphan_leading_subcalls():
     assert [t["index"] for t in server.select_display(turns, count=5)] == [1]
 
 
+def test_select_display_caps_subcalls_per_parent_to_the_newest_three():
+    turns = [{"index": 0, "kind": "loop"}]
+    turns += [{"index": i, "kind": "subcall"} for i in range(1, 6)]
+    got = server.select_display(turns, count=5)
+    assert [t["index"] for t in got] == [0, 3, 4, 5]
+
+
+def test_select_display_caps_subcalls_in_every_run_independently():
+    turns = [
+        {"index": 0, "kind": "loop"},
+        {"index": 1, "kind": "subcall"},
+        {"index": 2, "kind": "subcall"},
+        {"index": 3, "kind": "subcall"},
+        {"index": 4, "kind": "subcall"},
+        {"index": 5, "kind": "loop"},
+        {"index": 6, "kind": "subcall"},
+        {"index": 7, "kind": "subcall"},
+    ]
+    got = server.select_display(turns, count=5)
+    assert [t["index"] for t in got] == [0, 2, 3, 4, 5, 6, 7]
+
+
 def test_public_turn_carries_kind_and_capped_prompt():
     public = server._public_turn(
         {"index": 1, "kind": "subcall", "prompt": "y" * 500, "tool_calls": []}
@@ -624,6 +646,45 @@ def test_public_turn_carries_kind_and_capped_prompt():
     loop = server._public_turn({"index": 2, "kind": "loop", "prompt": "", "tool_calls": []})
     assert loop["kind"] == "loop"
     assert loop["prompt"] == ""
+
+
+def test_public_turn_slims_a_subcall_but_not_a_loop_turn():
+    subcall = server._public_turn(
+        {
+            "index": 1,
+            "kind": "subcall",
+            "prompt": "reply",
+            "timestamp": "T",
+            "epoch": 1.0,
+            "life": 2,
+            "reasoning": "should never surface",
+            "content": "should never surface either",
+            "tool_calls": [{"name": "write_file", "arguments": "{}"}],
+            "error": None,
+        }
+    )
+    assert set(subcall) == {"index", "kind", "prompt", "timestamp", "epoch", "life"}
+    assert "reasoning" not in subcall
+    assert "content" not in subcall
+
+    loop = server._public_turn(
+        {
+            "index": 2,
+            "kind": "loop",
+            "prompt": "",
+            "timestamp": "T",
+            "epoch": 1.0,
+            "life": 2,
+            "reasoning": "thinking",
+            "content": "saying",
+            "tool_calls": [],
+            "error": None,
+        }
+    )
+    assert "reasoning" in loop
+    assert "content" in loop
+    assert loop["reasoning"] == "thinking"
+    assert loop["content"] == "saying"
 
 
 def test_empty_snapshot_reports_self_calls():
