@@ -4,12 +4,15 @@ import shutil
 import socket
 import socketserver
 import threading
+import time
 import urllib.request
 import urllib.error
 import json
 import os
 import sys
 import datetime
+
+import recorder_streams
 
 SOCKET_PATH = os.environ.get("LLM_SOCKET_PATH", "/llm/sock/core.sock")
 TRANSCRIPT_DIR = os.environ.get("TRANSCRIPT_DIR", os.path.dirname(os.path.abspath(__file__)))
@@ -367,15 +370,63 @@ class UnixHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
         return conn, ("unix", 0)
 
 
+def sweep_stale_sockets(sock_dir, keep):
+    """Unlink socket files in the directory that no server is serving."""
+    try:
+        names = os.listdir(sock_dir)
+    except OSError:
+        return
+    for name in names:
+        if not name.endswith(".sock") or name in keep:
+            continue
+        try:
+            os.unlink(os.path.join(sock_dir, name))
+        except OSError:
+            pass
+
+
+def bind_stream(registry, servers, sock_dir, name):
+    """Bind one declared stream's socket and start serving it."""
+    path = os.path.join(sock_dir, f"{name}.sock")
+    try:
+        server = UnixHTTPServer(path, ProxyHTTPRequestHandler)
+    except OSError as e:
+        registry.reject(name, f"bind failed: {type(e).__name__}")
+        return
+    server.stream_name = name
+    server.registry = registry
+    servers[name] = server
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
+def poll_once(registry, servers, sock_dir, console_path, state_path):
+    """Read the console, apply the diff to the sockets, and write the state file."""
+    declarations, error = recorder_streams.load_console(console_path)
+    if declarations is not None:
+        accepted, rejected = recorder_streams.evaluate_console(declarations)
+        added, removed = registry.apply(accepted, rejected)
+        for name in removed:
+            server = servers.pop(name, None)
+            if server is not None:
+                server.shutdown()
+                server.server_close()
+            try:
+                os.unlink(os.path.join(sock_dir, f"{name}.sock"))
+            except OSError:
+                pass
+        for name in added:
+            bind_stream(registry, servers, sock_dir, name)
+    recorder_streams.write_state(state_path, registry.state(console_error=error))
+
+
 def main():
     if not os.environ.get("LLM_BASE_URL", "").strip() and not os.environ.get("OPENROUTER_API_KEY"):
         print("error: set OPENROUTER_API_KEY, or LLM_BASE_URL for an OpenAI-compatible upstream")
         sys.exit(1)
 
     socket_path = os.environ.get("LLM_SOCKET_PATH", SOCKET_PATH)
-    parent = os.path.dirname(socket_path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
+    sock_dir = os.path.dirname(socket_path) or "."
+    os.makedirs(sock_dir, exist_ok=True)
 
     print("=" * 60)
     print("      TRANSCRIPT PROXY SERVER")
@@ -385,13 +436,26 @@ def main():
     print(f"Logging to:    {TRANSCRIPT_FILE}")
     print("-" * 60)
 
-    server = UnixHTTPServer(socket_path, ProxyHTTPRequestHandler)
+    registry = recorder_streams.StreamRegistry()
+    core = UnixHTTPServer(socket_path, ProxyHTTPRequestHandler)
+    core.stream_name = "core"
+    core.registry = registry
+    sweep_stale_sockets(sock_dir, keep={os.path.basename(socket_path)})
+    recorder_streams.write_readme(sock_dir)
+    threading.Thread(target=core.serve_forever, daemon=True).start()
+
+    servers = {}
+    state_path = os.path.join(sock_dir, "streams.json")
     try:
-        server.serve_forever()
+        while True:
+            poll_once(registry, servers, sock_dir, recorder_streams.CONSOLE_FILE, state_path)
+            time.sleep(recorder_streams.POLL_SECONDS)
     except KeyboardInterrupt:
         print("\nShutting down proxy server...")
     finally:
-        server.server_close()
+        core.server_close()
+        for server in servers.values():
+            server.server_close()
         try:
             os.unlink(socket_path)
         except OSError:

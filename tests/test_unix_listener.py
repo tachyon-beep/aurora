@@ -178,3 +178,85 @@ def test_core_forwards_the_body_verbatim(server, transcripts, monkeypatch):
     payload = {"model": "m", "messages": [], "temperature": 0.5}
     _post(server, payload)
     assert json.loads(seen["data"].decode("utf-8")) == payload
+
+
+def test_poll_once_binds_and_unbinds_declared_sockets(tmp_path, transcripts, registry):
+    console = tmp_path / "console.json"
+    state = tmp_path / "streams.json"
+    servers = {}
+    console.write_text(json.dumps({"streams": {"aux": {}}}), encoding="utf-8")
+    proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+    try:
+        assert (tmp_path / "aux.sock").exists()
+        assert json.loads(state.read_text(encoding="utf-8"))["streams"]["aux"]["status"] == "active"
+        console.write_text(json.dumps({"streams": {}}), encoding="utf-8")
+        proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+        assert not (tmp_path / "aux.sock").exists()
+        assert "aux" not in json.loads(state.read_text(encoding="utf-8"))["streams"]
+    finally:
+        for server_instance in servers.values():
+            server_instance.shutdown()
+            server_instance.server_close()
+
+
+def test_poll_once_keeps_streams_on_a_torn_console(tmp_path, transcripts, registry):
+    console = tmp_path / "console.json"
+    state = tmp_path / "streams.json"
+    servers = {}
+    console.write_text(json.dumps({"streams": {"aux": {}}}), encoding="utf-8")
+    proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+    try:
+        console.write_text('{"streams": {"aux"', encoding="utf-8")
+        proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+        assert (tmp_path / "aux.sock").exists()
+        document = json.loads(state.read_text(encoding="utf-8"))
+        assert document["streams"]["aux"]["status"] == "active"
+        assert document["console_error"] == "console is not valid json"
+    finally:
+        for server_instance in servers.values():
+            server_instance.shutdown()
+            server_instance.server_close()
+
+
+def test_poll_once_reports_rejections(tmp_path, transcripts, registry):
+    console = tmp_path / "console.json"
+    state = tmp_path / "streams.json"
+    servers = {}
+    console.write_text(json.dumps({"streams": {"Bad Name": {}}}), encoding="utf-8")
+    proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+    document = json.loads(state.read_text(encoding="utf-8"))
+    assert document["streams"]["Bad Name"] == {
+        "status": "rejected",
+        "reason": "invalid stream name",
+    }
+    assert servers == {}
+
+
+def test_a_settings_edit_applies_without_a_rebind(tmp_path, transcripts, registry, fake_upstream):
+    console = tmp_path / "console.json"
+    state = tmp_path / "streams.json"
+    servers = {}
+    console.write_text(json.dumps({"streams": {"aux": {"model": "one"}}}), encoding="utf-8")
+    proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+    try:
+        first = servers["aux"]
+        console.write_text(json.dumps({"streams": {"aux": {"model": "two"}}}), encoding="utf-8")
+        proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+        assert servers["aux"] is first
+        _post(str(tmp_path / "aux.sock"), {"model": "sent", "messages": []})
+        entries = _entries(tmp_path)
+        assert entries[-1]["request"]["model"] == "two"
+    finally:
+        for server_instance in servers.values():
+            server_instance.shutdown()
+            server_instance.server_close()
+
+
+def test_sweep_removes_only_unserved_sockets(tmp_path):
+    (tmp_path / "stale.sock").write_text("", encoding="utf-8")
+    (tmp_path / "core.sock").write_text("", encoding="utf-8")
+    (tmp_path / "streams.json").write_text("{}", encoding="utf-8")
+    proxy.sweep_stale_sockets(str(tmp_path), keep={"core.sock"})
+    assert not (tmp_path / "stale.sock").exists()
+    assert (tmp_path / "core.sock").exists()
+    assert (tmp_path / "streams.json").exists()
