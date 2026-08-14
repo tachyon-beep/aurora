@@ -4,7 +4,7 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from stage import browse, commentary, data, pages
 
@@ -33,6 +33,7 @@ MODEL_CAP = 60
 NAME_CAP = 64
 TIMESTAMP_CAP = 40
 PROMPT_CAP = 160
+AUDIO_MAX_BYTES = 4_000_000
 
 SECURITY_HEADERS = {
     "Cache-Control": "no-store",
@@ -40,7 +41,7 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Content-Security-Policy": (
         "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
-        "connect-src 'self'; img-src 'self' data:; base-uri 'none'; "
+        "connect-src 'self'; img-src 'self' data:; media-src 'self'; base-uri 'none'; "
         "form-action 'none'; frame-ancestors 'none'"
     ),
 }
@@ -469,8 +470,40 @@ class StreamHandler(_BaseHandler):
             self._send(200, pages.STREAM_PAGE_HTML, content_type="text/html; charset=utf-8")
         elif route == "/api/stream":
             self._send(200, json.dumps(stream_snapshot()))
+        elif route.startswith("/audio/"):
+            self._handle_audio(unquote(route[len("/audio/") :]))
         else:
             self._send(404, json.dumps({"error": "not found"}))
+
+    def _handle_audio(self, name):
+        """Serve one utterance's audio.
+
+        The name is matched against the directory listing rather than joined
+        from the request, so traversal is impossible by construction. The
+        listing check runs before any path is built, so no request string ever
+        reaches the filesystem.
+        """
+        spoken_dir = os.path.join(DIODE_DIR, "spoken")
+        try:
+            listing = os.listdir(spoken_dir)
+        except OSError:
+            listing = []
+        if not name.endswith(".mp3") or name not in listing:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        target = data.contained_file(DIODE_DIR, os.path.join(spoken_dir, name))
+        if target is None:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        try:
+            if os.path.getsize(target) > AUDIO_MAX_BYTES:
+                raise OSError("too large")
+            with open(target, "rb") as f:
+                body = f.read(AUDIO_MAX_BYTES)
+        except OSError:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        self._send(200, body, content_type="audio/mpeg")
 
 
 def make_server(port, handler):

@@ -185,6 +185,25 @@ def _plain_get(port, path):
     return resp.status, body
 
 
+def call_stream_route(path):
+    """Drive one GET through a real StreamHandler; returns (status, headers, body).
+
+    The route runs over a loopback server, the way every other stream test in
+    this file does, so headers and body are exactly what a browser would see.
+    """
+    httpd = server.make_server(0, server.StreamHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=5)
+        conn.request("GET", path)
+        resp = conn.getresponse()
+        status, headers, body = resp.status, resp.headers, resp.read()
+        conn.close()
+    finally:
+        httpd.shutdown()
+    return status, headers, body
+
+
 def test_stream_page_served_without_token(stream):
     status, body = _plain_get(stream, "/")
     assert status == 200
@@ -276,6 +295,38 @@ def test_stream_port_has_no_mutating_routes(stream):
 def test_stream_unknown_route_404(stream):
     status, _ = _plain_get(stream, "/api/nope")
     assert status == 404
+
+
+def test_audio_route_serves_a_real_utterance(tmp_path, monkeypatch):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_120000_000000.mp3").write_bytes(b"ID3audio")
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
+    status, headers, body = call_stream_route("/audio/20260814_120000_000000.mp3")
+    assert status == 200
+    assert headers["Content-Type"] == "audio/mpeg"
+    assert body == b"ID3audio"
+
+
+def test_audio_route_rejects_traversal_and_unknown_names(tmp_path, monkeypatch):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_120000_000000.mp3").write_bytes(b"ID3audio")
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
+    for route in (
+        "/audio/../../etc/passwd",
+        "/audio/%2e%2e%2fetc%2fpasswd",
+        "/audio/../spoken/20260814_120000_000000.mp3",
+        "/audio/nothing.mp3",
+        "/audio/",
+        "/audio/notes.txt",
+    ):
+        status, _, _ = call_stream_route(route)
+        assert status == 404
+
+
+def test_stream_csp_allows_media_from_self():
+    assert "media-src 'self'" in server.SECURITY_HEADERS["Content-Security-Policy"]
 
 
 def test_download_streams_large_files_without_loading_them(console, tmp_path):

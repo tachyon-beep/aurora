@@ -10,6 +10,8 @@ carry a cap.
 import datetime
 import json
 
+from test_stage_server import call_stream_route
+
 from stage import commentary, data, llm, server, summary
 
 SECRET = "OUTSIDE_THE_MOUNT_c0ffee"
@@ -93,6 +95,33 @@ def test_spoken_does_not_follow_a_symlinked_sidecar(tmp_path):
     assert SECRET not in json.dumps(entries)
     assert [e["text"] for e in entries] == [""]
     assert total == 1
+
+
+def test_audio_route_rejects_a_symlinked_utterance(tmp_path, monkeypatch):
+    _work, diode, secret = _roots(tmp_path)
+    spoken = diode / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_050000_000000.mp3").symlink_to(secret)
+    monkeypatch.setattr(server, "DIODE_DIR", str(diode))
+
+    status, _headers, body = call_stream_route("/audio/20260814_050000_000000.mp3")
+
+    assert status == 404
+    assert SECRET.encode("utf-8") not in body
+
+
+def test_audio_route_refuses_an_oversized_file(tmp_path, monkeypatch):
+    _work, diode, _secret = _roots(tmp_path)
+    spoken = diode / "spoken"
+    spoken.mkdir()
+    oversized = spoken / "20260814_050000_000000.mp3"
+    oversized.write_bytes(b"a" * (server.AUDIO_MAX_BYTES + 1))
+    monkeypatch.setattr(server, "DIODE_DIR", str(diode))
+
+    status, _headers, body = call_stream_route("/audio/20260814_050000_000000.mp3")
+
+    assert status == 404
+    assert json.loads(body) == {"error": "not found"}
 
 
 def test_diode_output_listing_drops_a_symlink(tmp_path):
