@@ -33,7 +33,7 @@
 | `docker-compose.yml` | Modify | `network_mode: none`, socket volumes, delete the `internal` network |
 | `Dockerfile` | Modify | Pre-create `/llm/sock` and `/llm/console` mountpoints owned by `appuser` |
 | `scripts/build_garden.py` | Modify | The two garden sentences |
-| `garden_export/runtime.md` | Regenerate | Generated output, committed |
+| `garden_export/runtime.md` | Regenerate | Build artifact regenerated on each run; deliberately not tracked in git |
 | `scripts/verify_container.sh` | Modify | Replace the recorder-reachability check; add containment assertions |
 | `CLAUDE.md` | Modify | Invariant 3, three bullets |
 | `README.md` | Modify | Diagram node, diagram edge, component table, safety property |
@@ -762,7 +762,7 @@ Expected: PASS, including `test_documents_exclude_banned_anchors` — confirm ne
 
 ```bash
 .venv/bin/ruff format . && .venv/bin/ruff check .
-git add scripts/build_garden.py garden_export/runtime.md tests/test_build_garden.py
+git add scripts/build_garden.py tests/test_build_garden.py
 git commit -m "docs: state the model endpoint as a socket in the garden runtime"
 ```
 
