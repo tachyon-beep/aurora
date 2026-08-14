@@ -47,13 +47,20 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
 3. **Do not weaken containment.** Each of these is a deliberate boundary:
    - The **agent** stays on the `internal` network only — it must have no direct route to the
      internet. It reaches the model only through the recorder.
-   - The **real API key lives only in the recorder.** The agent runs with a dummy key.
+   - **No real credential is ever reachable by the agent.** The upstream API key lives only in the
+     recorder, which injects it; the agent runs with a dummy key. This is the invariant — not the
+     number of keys in the system. Any other credential must live on a service the agent has no
+     network route to, and must never be mounted, copied, or named into the agent image.
    - The **proxy logs request/response bodies, never headers**, so the key never enters the transcript.
    - The **diode is egress-only** and executes a *closed command vocabulary* — no code or arbitrary
      paths cross it. Keep the SSRF defenses (scheme allow-list, private/loopback/reserved rejection,
      redirect re-validation).
    - The **viewer** is read-only, loopback-only, and on no shared network. It must stay that way.
-   - The **stage** is outward-facing but holds no upstream API key and never mounts `/state`.
+   - The **stage** is outward-facing and never holds the recorder's credential. It may hold one
+     optional low-value key of its own (`STAGE_SUMMARY_API_KEY`) for generated prose. That key is
+     unreachable by the agent — the stage sits on the `stream` network and the agent on `internal`,
+     with nothing shared — and its absence disables generation rather than degrading any other
+     function. The stage never mounts `/state`.
      Its console (port 8092) binds host-loopback only, requires `STAGE_CONSOLE_TOKEN` on every
      request, and is never exposed through the tunnel. The stream port (8091) serves no mutating
      endpoints. The console browser resolves paths only inside its allow-listed roots and never

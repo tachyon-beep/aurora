@@ -284,14 +284,17 @@ stream side had no such guard until it was added, and that regression must not r
 
 ### CLAUDE.md invariant 3
 
-The current text — *"The **stage** is outward-facing but holds no upstream API key"* — is already
-wrong: `STAGE_SUMMARY_API_KEY` exists. Proposed rewording, **for the owner to approve rather than
-apply silently**:
+**Resolved 2026-08-14 and already applied.** The old text — *"The **stage** is outward-facing but
+holds no upstream API key"* — was wrong the moment `STAGE_SUMMARY_API_KEY` shipped. The owner ruled
+that counting keys was never the point:
 
-> The **stage** is outward-facing and never holds the recorder's credential. It may hold one
-> optional low-value key of its own (`STAGE_SUMMARY_API_KEY`) for generated prose; that key is never
-> the upstream model credential, never reaches the agent, and its absence disables generation
-> rather than degrading any other function. The stage never mounts `/state`.
+> the invariant is actually 'the agent never has access to the key'
+
+Invariant 3 now leads with that, and the stage bullet records that the stage's own key is
+unreachable by the agent because the two sit on `stream` and `internal` with nothing shared. The
+practical consequence for this spec: adding a second *consumer* of the stage's key needs no further
+approval, but putting a credential anywhere the agent could route to, read, or find named in its
+image is still forbidden outright.
 
 ### Testing
 
