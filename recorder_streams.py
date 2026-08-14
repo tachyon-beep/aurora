@@ -7,6 +7,7 @@ import time
 
 CONSOLE_FILE = os.environ.get("LLM_CONSOLE_FILE", "/llm/console/console.json")
 POLL_SECONDS = 5
+CONSOLE_MAX_BYTES = 65_536
 MAX_STREAMS = 8
 DEFAULT_STREAM_BUDGET = 10
 STREAM_LIMIT_MAX = 120
@@ -31,12 +32,16 @@ def load_console(path=None):
     if path is None:
         path = CONSOLE_FILE
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        with open(path, "rb") as f:
+            raw = f.read(CONSOLE_MAX_BYTES + 1)
     except FileNotFoundError:
         return {}, None
     except OSError:
         return None, "console is not readable"
+    if len(raw) > CONSOLE_MAX_BYTES:
+        return None, "console is too large"
+    try:
+        data = json.loads(raw)
     except ValueError:
         return None, "console is not valid json"
     if not isinstance(data, dict):

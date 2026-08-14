@@ -1,3 +1,4 @@
+import io
 import json
 
 import pytest
@@ -37,6 +38,32 @@ def test_console_without_streams_key_is_empty(tmp_path):
     declarations, error = rs.load_console(path)
     assert declarations == {}
     assert error is None
+
+
+def test_console_parser_reads_only_bounded_input(monkeypatch):
+    class ReadProbe(io.BytesIO):
+        def __init__(self):
+            super().__init__(b'{"streams": {}}' + b" " * rs.CONSOLE_MAX_BYTES)
+            self.sizes = []
+
+        def read(self, size=-1):
+            self.sizes.append(size)
+            return super().read(size)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    probe = ReadProbe()
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: probe)
+
+    declarations, error = rs.load_console("agent-controlled.json")
+
+    assert probe.sizes == [rs.CONSOLE_MAX_BYTES + 1]
+    assert declarations is None
+    assert error == "console is too large"
 
 
 def test_a_minimal_declaration_is_accepted_with_no_settings():
