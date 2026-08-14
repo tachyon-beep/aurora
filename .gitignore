@@ -24,3 +24,7 @@ agent_life_transcript.jsonl
 agent_life_transcript.txt
 tombstones/
 .playwright-mcp/
+
+# Filigree issue tracker
+.weft/
+.filigree/
