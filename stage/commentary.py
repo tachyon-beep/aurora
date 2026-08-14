@@ -7,6 +7,7 @@ ever reads the cache.
 """
 
 import hashlib
+import re
 import statistics
 import threading
 import time
@@ -283,6 +284,8 @@ MAX_TOKENS = 90
 TEMPERATURE = 0.7
 MAX_COLOUR_CHARS = 180
 FIELD_CHARS = 80
+FENCE_TOKENS = ("BEGIN BEAT", "END BEAT")
+_FENCE_PATTERN = re.compile("|".join(re.escape(token) for token in FENCE_TOKENS), re.IGNORECASE)
 
 COLOUR_SYSTEM_PROMPT = (
     "You are the colour commentator on a live stream about an AI agent that "
@@ -324,15 +327,28 @@ def publish_beat(beat):
 
 
 def _field(value):
-    """One prompt value: flattened to a single line, stripped of control characters, clamped.
+    """One prompt value: flattened to a single line, no fence markers, clamped.
 
     The agent controls some of these values (a tool name, a diode command) end
     to end, with no closed vocabulary and no upstream truncation. Flattening to
-    one line before it is ever interpolated is what keeps a hostile value from
-    breaking out of the BEGIN BEAT / END BEAT fence or injecting instructions.
+    one line keeps a hostile value from forging a standalone BEGIN BEAT / END
+    BEAT line, but the literal words can still survive mid-line and imitate the
+    fence to a loosely reading model — so every casing of them is also removed.
+
+    Token removal loops to a fixed point rather than stopping after one pass:
+    deleting an occurrence can rejoin the characters on either side of it into
+    a fresh one (the tail of a word like "BEND" plus a trailing "BEAT" can
+    reassemble into "END BEAT" once something between them is cut), so a
+    single non-repeating substitution is not a complete defense.
     """
     text = "".join(c if c.isprintable() else " " for c in str(value))
-    return " ".join(text.split())[:FIELD_CHARS]
+    text = " ".join(text.split())
+    while True:
+        stripped = " ".join(_FENCE_PATTERN.sub("", text).split())
+        if stripped == text:
+            break
+        text = stripped
+    return text[:FIELD_CHARS]
 
 
 def _prompt(beat):
