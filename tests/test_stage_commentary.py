@@ -105,6 +105,17 @@ def test_a_stale_utterance_does_not_fire():
     assert beat["kind"] == "working"
 
 
+def test_a_future_dated_utterance_does_not_pin_the_beat():
+    # The agent can write files into /diode/spoken itself, and a stamp in the
+    # future makes an unbounded `now - epoch` test true forever, which would
+    # suppress every beat below this one for the rest of the run.
+    spoken = [{"name": "29991231_235959_999999.mp3", "epoch": NOW + 86400, "text": "planted"}]
+    beat = commentary.detect_beat(
+        [_turn(1, NOW - 5)], _stats(), EMPTY_DIODE, [], NOW, spoken=spoken
+    )
+    assert beat["kind"] == "working"
+
+
 def test_spoke_is_a_known_beat_kind():
     assert "spoke" in commentary.BEAT_KINDS
     assert commentary.BEAT_TEMPLATES["spoke"]

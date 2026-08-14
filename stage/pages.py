@@ -1336,7 +1336,48 @@ function renderRibbon() {
   setClass($("said"), "is-sparse", $("said-text").scrollHeight <= 34);
 }
 
-var spokenPlayed = {};
+var SPOKEN_MEMORY = 50;
+var spokenPlayed = (function () {
+  /* Restored from storage so a reload cannot replay what was already played;
+     the age gate below is the second guard, not the only one. */
+  var seen = {};
+  try {
+    var list = JSON.parse(window.localStorage.getItem("spokenPlayed") || "[]");
+    for (var i = 0; i < list.length; i++) seen[list[i]] = true;
+  } catch (e) {}
+  return seen;
+})();
+var spokenQueue = [], spokenBusy = false;
+function markSpokenPlayed(name) {
+  spokenPlayed[name] = true;
+  /* Names are UTC stamps, so lexical order is chronological and the tail is newest. */
+  var names = Object.keys(spokenPlayed).sort().slice(-SPOKEN_MEMORY), kept = {};
+  for (var i = 0; i < names.length; i++) kept[names[i]] = true;
+  spokenPlayed = kept;
+  try { window.localStorage.setItem("spokenPlayed", JSON.stringify(names)); } catch (e) {}
+}
+function playNextSpoken() {
+  var a = $("speak-audio");
+  if (!a || spokenBusy || !spokenQueue.length) return;
+  spokenBusy = true;
+  a.src = "/audio/" + encodeURIComponent(spokenQueue.shift());
+  try {
+    var p = a.play();
+    if (p && p.catch) p.catch(spokenAdvance);
+  } catch (e) { spokenAdvance(); }
+}
+function spokenAdvance() {
+  /* Reached on end, on a failed load, and on a refused autoplay: each of those
+     leaves the element idle, so the queue drains instead of wedging. */
+  spokenBusy = false;
+  playNextSpoken();
+}
+(function () {
+  var a = $("speak-audio");
+  if (!a) return;
+  a.addEventListener("ended", spokenAdvance);
+  a.addEventListener("error", spokenAdvance);
+})();
 function renderSpoken() {
   var sp = (snap && snap.diode && snap.diode.spoken) || [];
   var cap = $("speak-caption");
@@ -1346,25 +1387,23 @@ function renderSpoken() {
     setClass($("said"), "is-captioned", false);
     return;
   }
-  var newest = sp[0];
-  var caption = norm(newest.text || "");
+  var caption = norm(sp[0].text || "");
   setText(cap, caption);
   setClass($("said"), "is-captioned", !!caption);
-  var name = newest.name || "";
-  if (!name || spokenPlayed[name]) return;
-  /* Marked before the freshness check on purpose: an utterance that was already
-     stale when it arrived must never play later, and a reload starts with an empty
-     set but a stale snapshot, so the age gate is what stops a replay there. */
-  spokenPlayed[name] = true;
-  var ageMs = clock() - (newest.epoch || 0) * 1000;
-  if (ageMs > 180000) return;
-  var a = $("speak-audio");
-  if (!a) return;
-  a.src = "/audio/" + encodeURIComponent(name);
-  try {
-    var p = a.play();
-    if (p && p.catch) p.catch(function () {});
-  } catch (e) {}
+  /* Oldest first, so a snapshot carrying more than one utterance queues them in
+     the order they were made rather than playing only the newest. Every name is
+     marked before the freshness check on purpose: one that was already stale when
+     it arrived must never play later. A negative age is a stamp in the future,
+     which only a planted file can have, and it never plays. */
+  for (var i = sp.length - 1; i >= 0; i--) {
+    var name = sp[i].name || "";
+    if (!name || spokenPlayed[name]) continue;
+    markSpokenPlayed(name);
+    var ageMs = clock() - (sp[i].epoch || 0) * 1000;
+    if (ageMs < 0 || ageMs > 180000) continue;
+    spokenQueue.push(name);
+  }
+  playNextSpoken();
 }
 
 /* ---------- beats ---------- */

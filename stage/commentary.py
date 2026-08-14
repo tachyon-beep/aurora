@@ -192,7 +192,7 @@ def detect_beat(turns, stats, diode, published, now, spoken=None):
     if spoken:
         newest_spoken = max(spoken, key=lambda s: s.get("epoch") or 0)
         spoken_epoch = newest_spoken.get("epoch")
-        if isinstance(spoken_epoch, (int, float)) and now - spoken_epoch <= RECENT_SECONDS:
+        if isinstance(spoken_epoch, (int, float)) and 0 <= now - spoken_epoch <= RECENT_SECONDS:
             return _beat(
                 "spoke",
                 count=len(spoken),

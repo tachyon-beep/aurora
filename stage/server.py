@@ -484,6 +484,10 @@ class StreamHandler(_BaseHandler):
         from the request, so traversal is impossible by construction. The
         listing check runs before any path is built, so no request string ever
         reaches the filesystem.
+
+        The body is streamed rather than buffered. This route is on the public
+        stream port, so concurrent requests for one file must not each hold a
+        whole copy in the container's memory.
         """
         spoken_dir = os.path.join(DIODE_DIR, "spoken")
         try:
@@ -498,14 +502,27 @@ class StreamHandler(_BaseHandler):
             self._send(404, json.dumps({"error": "not found"}))
             return
         try:
-            if os.path.getsize(target) > AUDIO_MAX_BYTES:
+            size = os.path.getsize(target)
+            if size > AUDIO_MAX_BYTES:
                 raise OSError("too large")
-            with open(target, "rb") as f:
-                body = f.read(AUDIO_MAX_BYTES)
+            f = open(target, "rb")
         except OSError:
             self._send(404, json.dumps({"error": "not found"}))
             return
-        self._send(200, body, content_type="audio/mpeg")
+        with f:
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(size))
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            self.end_headers()
+            remaining = size
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
 
 
 def make_server(port, handler):

@@ -62,6 +62,12 @@ services:
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
       ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-}
+      # Both controls on credentialed spend live here rather than in the
+      # console file, which the agent can write: ENABLE_SPEECH decides whether
+      # the command can exist at all, and SPEECH_HOURLY_MAX caps its hourly
+      # allowance however large a fetch_budget the agent sets.
+      ENABLE_SPEECH: ${ENABLE_SPEECH:-}
+      SPEECH_HOURLY_MAX: ${SPEECH_HOURLY_MAX:-}
     volumes:
       - diode:/diode
     networks: [egress]

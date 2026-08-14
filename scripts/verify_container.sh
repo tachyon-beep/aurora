@@ -134,6 +134,17 @@ docker compose exec -T agent sh -c 'printf "{\"commands\":[\"help\"],\"variables
 sleep 10
 docker compose exec -T agent sh -c 'grep -q "time ->" /diode/HELP.md'
 
+echo "==> speech gate does not open from the agent-writable console"
+if docker compose exec -T diode sh -c 'test -z "$ENABLE_SPEECH"'; then
+  docker compose exec -T agent sh -c 'printf "{\"commands\":[\"help\"],\"variables\":{\"enable_speech\":true}}" > /diode/console.json'
+  sleep 10
+  if docker compose exec -T agent sh -c 'grep -q "speak ->" /diode/HELP.md'; then
+    echo "FAIL: the console alone made the credentialed command available"; exit 1
+  fi
+else
+  echo "    skipped: ENABLE_SPEECH is set in this stack"
+fi
+
 echo "==> stage (aurora-stage) does not mount the state volume"
 stage_cid=$(docker compose ps -q stage)
 [ -n "$stage_cid" ] || { echo "FAIL: stage container not running"; exit 1; }

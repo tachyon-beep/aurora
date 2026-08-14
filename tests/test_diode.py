@@ -559,9 +559,7 @@ def test_speak_request_refuses_a_redirect():
 
 
 def test_speak_request_returns_audio_bytes(monkeypatch):
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
-    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
-    monkeypatch.delenv("ELEVENLABS_MODEL", raising=False)
+    _speech_env(monkeypatch)
     seen = {}
 
     class _Resp:
@@ -587,11 +585,20 @@ def test_speak_request_returns_audio_bytes(monkeypatch):
         seen["classified"] = url
         return True, ""
 
+    def _build_opener(*handlers):
+        seen["handlers"] = handlers
+        return _Opener()
+
     monkeypatch.setattr(diode, "classify_url", _classify)
-    monkeypatch.setattr(diode.urllib.request, "build_opener", lambda *a: _Opener())
+    monkeypatch.setattr(diode.urllib.request, "build_opener", _build_opener)
     ok, audio = diode._speak_request("hello")
     assert ok is True
     assert audio == b"ID3audio"
+    # The credentialed request must be built on the refusing handler: urllib
+    # resends headers across a redirect, so a following opener would hand the
+    # key to whatever host the redirect names.
+    assert diode._NoRedirectHandler in seen["handlers"]
+    assert diode._ValidatingRedirectHandler not in seen["handlers"]
     assert seen["cap"] == diode.MAX_AUDIO_BYTES
     assert seen["url"].startswith("https://api.elevenlabs.io/v1/text-to-speech/")
     assert seen["classified"] == seen["url"]
@@ -602,8 +609,7 @@ def test_speak_request_returns_audio_bytes(monkeypatch):
 
 
 def test_speak_request_refuses_a_classified_url(monkeypatch):
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
-    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    _speech_env(monkeypatch)
 
     def _no_opener(*a):
         raise AssertionError("no request may be made after a refusal")
@@ -616,8 +622,7 @@ def test_speak_request_refuses_a_classified_url(monkeypatch):
 
 
 def test_speak_request_contains_transport_errors(monkeypatch):
-    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
-    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    _speech_env(monkeypatch)
 
     class _Opener:
         def open(self, req, timeout=None):
@@ -627,7 +632,48 @@ def test_speak_request_contains_transport_errors(monkeypatch):
     monkeypatch.setattr(diode.urllib.request, "build_opener", lambda *a: _Opener())
     ok, reason = diode._speak_request("hello")
     assert ok is False
-    assert "speech error" in reason
+    assert reason == "speech error: OSError"
+
+
+def test_speak_request_never_returns_the_key_in_a_reason(monkeypatch):
+    # A key with an embedded newline makes http.client raise ValueError with the
+    # whole header value in its message; that reason reaches the agent's world
+    # through /diode/output/, so no exception text may be interpolated.
+    key = "sk_live_AAAA\nBBBB_secret"
+    _speech_env(monkeypatch, key=key)
+    ok, reason = diode._speak_request("hello")
+    assert ok is False
+    assert "sk_live" not in reason
+    assert "BBBB_secret" not in reason
+    assert reason == "speech error: ValueError"
+
+
+def test_speak_request_reports_a_status_without_the_vendor_text(monkeypatch):
+    class _Opener:
+        def open(self, req, timeout=None):
+            raise diode.urllib.error.HTTPError(
+                "https://api.elevenlabs.io/v1/x", 401, "Unauthorized", {}, None
+            )
+
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "classify_url", lambda url: (True, ""))
+    monkeypatch.setattr(diode.urllib.request, "build_opener", lambda *a: _Opener())
+    ok, reason = diode._speak_request("hello")
+    assert ok is False
+    assert reason == "speech error: status 401"
+
+
+def test_speak_request_is_refused_when_the_operator_has_not_enabled_speech(monkeypatch):
+    # No code path may reach the credential without the environment switch.
+    _speech_env(monkeypatch, enabled="")
+
+    def _no_opener(*a):
+        raise AssertionError("no credentialed request may be made")
+
+    monkeypatch.setattr(diode.urllib.request, "build_opener", _no_opener)
+    ok, reason = diode._speak_request("hello")
+    assert ok is False
+    assert reason == "speech not configured"
 
 
 def test_write_spoken_names_files_from_the_timestamp_only(tmp_path, monkeypatch):
@@ -673,6 +719,7 @@ def test_prune_spoken_tolerates_a_missing_directory(tmp_path, monkeypatch):
 
 
 def test_state_reports_the_spoken_count(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
     spoken = tmp_path / "spoken"
     spoken.mkdir()
     (spoken / "20260814_000000_000000.mp3").write_bytes(b"a")
@@ -685,10 +732,25 @@ def test_state_reports_the_spoken_count(tmp_path, monkeypatch):
     assert state["spoken_count"] == 1
 
 
-def _speech_env(monkeypatch, key="k"):
+def test_state_omits_the_spoken_count_when_speech_is_unconfigured(tmp_path, monkeypatch):
+    # HELP.md withholds the speak lines without a key, so state.json must not
+    # name the capability either: the two surfaces describe one world.
+    _speech_env(monkeypatch, key="")
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    diode.write_state({}, [])
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert "spoken_count" not in state
+    assert "output_count" in state
+
+
+def _speech_env(monkeypatch, key="k", enabled="1"):
     monkeypatch.setenv("ELEVENLABS_API_KEY", key)
+    monkeypatch.setenv("ENABLE_SPEECH", enabled)
     monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
     monkeypatch.delenv("ELEVENLABS_MODEL", raising=False)
+    monkeypatch.delenv("SPEECH_HOURLY_MAX", raising=False)
 
 
 def test_speak_is_unavailable_without_the_gate_or_the_key(monkeypatch):
@@ -696,6 +758,16 @@ def test_speak_is_unavailable_without_the_gate_or_the_key(monkeypatch):
     assert "speak" not in diode.available_commands({})
     _speech_env(monkeypatch, key="")
     assert "speak" not in diode.available_commands({"enable_speech": True})
+
+
+def test_the_console_alone_cannot_open_the_speech_gate(monkeypatch):
+    # The console file is agent-writable, so enable_speech in it must not be
+    # enough to reach a billed credential: the operator's environment decides.
+    _speech_env(monkeypatch, enabled="")
+    assert "speak" not in diode.available_commands({"enable_speech": True})
+    text, history = diode.handle_command("speak hello", {"enable_speech": True}, [])
+    assert text == "command not available: speak"
+    assert history == []
 
 
 def test_speak_is_available_with_both(monkeypatch):
@@ -733,11 +805,21 @@ def test_speech_gate_line_is_absent_without_a_key(tmp_path, monkeypatch):
     assert "enable_speech" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
 
 
-def test_help_describes_the_budget_as_outbound_operations(tmp_path, monkeypatch):
+def test_speech_gate_line_is_absent_when_the_operator_has_not_enabled_it(tmp_path, monkeypatch):
+    # HELP.md must never describe a lever that does not work.
+    _speech_env(monkeypatch, enabled="")
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({})
+    assert "enable_speech" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
+
+
+def test_help_describes_the_budget_as_network_operations(tmp_path, monkeypatch):
+    # publish is described as leaving the container but is not charged, so the
+    # wording has to name what is actually budgeted.
     monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
     diode.write_help({})
     text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
-    assert "fetch_budget: integer, number of outbound operations allowed per hour" in text
+    assert "fetch_budget: integer, number of network operations allowed per hour" in text
 
 
 def test_speak_writes_an_utterance_and_charges_the_shared_budget(tmp_path, monkeypatch):
@@ -766,7 +848,7 @@ def test_speak_and_fetch_share_one_budget(tmp_path, monkeypatch):
     assert first.startswith("recorded as ")
     second, history = diode.handle_command("fetchhttp http://example.com", variables, history)
     assert second.startswith("rate limited")
-    assert "outbound operation" in second
+    assert "network operation" in second
 
 
 def test_a_fetch_spends_the_budget_speak_would_have_used(tmp_path, monkeypatch):
@@ -778,8 +860,47 @@ def test_a_fetch_spends_the_budget_speak_would_have_used(tmp_path, monkeypatch):
     variables = {"enable_speech": True, "fetch_budget": 1}
     text, _ = diode.handle_command("speak hello", variables, [_t.time()])
     assert text.startswith("rate limited")
-    assert "outbound operation" in text
+    assert "network operation" in text
     assert not (tmp_path / "spoken").exists()
+
+
+def test_an_inflated_console_budget_cannot_raise_the_speech_ceiling(tmp_path, monkeypatch):
+    # fetch_budget comes out of the agent-writable console file, so it may lower
+    # the speech allowance but never raise it above the operator's ceiling.
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "SPEECH_LIMIT_MAX", 2)
+    monkeypatch.setattr(diode, "_speak_request", lambda text: (True, b"ID3audio"))
+    variables = {"enable_speech": True, "fetch_budget": 100000}
+    history = []
+    for _ in range(2):
+        text, history = diode.handle_command("speak hello", variables, history)
+        assert text.startswith("recorded as ")
+    text, history = diode.handle_command("speak hello", variables, history)
+    assert text == "rate limited: at most 2 network operation(s) per hour"
+    assert len(history) == 2
+
+
+def test_the_speech_ceiling_comes_from_the_environment(monkeypatch):
+    monkeypatch.delenv("SPEECH_HOURLY_MAX", raising=False)
+    assert diode.speech_limit() == diode.SPEECH_LIMIT_MAX
+    monkeypatch.setenv("SPEECH_HOURLY_MAX", "3")
+    assert diode.speech_limit() == 3
+    monkeypatch.setenv("SPEECH_HOURLY_MAX", "not a number")
+    assert diode.speech_limit() == diode.SPEECH_LIMIT_MAX
+    monkeypatch.setenv("SPEECH_HOURLY_MAX", "-5")
+    assert diode.speech_limit() == 0
+
+
+def test_a_smaller_console_budget_still_lowers_the_speech_allowance(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "_speak_request", lambda text: (True, b"ID3audio"))
+    variables = {"enable_speech": True, "fetch_budget": 1}
+    text, history = diode.handle_command("speak hello", variables, [])
+    assert text.startswith("recorded as ")
+    text, history = diode.handle_command("speak hello", variables, history)
+    assert text == "rate limited: at most 1 network operation(s) per hour"
 
 
 def test_speak_truncates_at_the_text_cap(tmp_path, monkeypatch):

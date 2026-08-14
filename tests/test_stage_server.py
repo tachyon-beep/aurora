@@ -325,6 +325,54 @@ def test_audio_route_rejects_traversal_and_unknown_names(tmp_path, monkeypatch):
         assert status == 404
 
 
+def test_audio_route_carries_the_security_headers(tmp_path, monkeypatch):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_120000_000000.mp3").write_bytes(b"ID3audio")
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
+    status, headers, _ = call_stream_route("/audio/20260814_120000_000000.mp3")
+    assert status == 200
+    assert headers["Content-Length"] == "8"
+    for key, value in server.SECURITY_HEADERS.items():
+        assert headers[key] == value
+
+
+def test_audio_route_streams_without_buffering_the_whole_file(tmp_path, monkeypatch):
+    # This route is on the publicly tunnelled stream port, so a request must not
+    # hold a whole utterance in the stage's 256 MB of memory.
+    import tracemalloc
+
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    size = 56 * 65536
+    with open(spoken / "20260814_120000_000000.mp3", "wb") as f:
+        for _ in range(56):
+            f.write(b"x" * 65536)
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
+    httpd = server.make_server(0, server.StreamHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    tracemalloc.start()
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", httpd.server_address[1], timeout=10)
+        conn.request("GET", "/audio/20260814_120000_000000.mp3")
+        resp = conn.getresponse()
+        received = 0
+        while True:
+            chunk = resp.read(65536)
+            if not chunk:
+                break
+            received += len(chunk)
+        peak = tracemalloc.get_traced_memory()[1]
+        conn.close()
+    finally:
+        tracemalloc.stop()
+        httpd.shutdown()
+    assert resp.status == 200
+    assert received == size
+    assert resp.getheader("Content-Length") == str(size)
+    assert peak < size
+
+
 def test_stream_csp_allows_media_from_self():
     assert "media-src 'self'" in server.SECURITY_HEADERS["Content-Security-Policy"]
 

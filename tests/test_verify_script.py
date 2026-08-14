@@ -34,6 +34,12 @@ def test_verifier_checks_the_speech_credential_is_agent_unreachable():
     assert "speech credential" in text
 
 
+def test_verifier_checks_the_console_cannot_open_the_speech_gate():
+    text = _script()
+    assert "speech gate does not open from the agent-writable console" in text
+    assert "ENABLE_SPEECH" in text
+
+
 def test_verifier_cleanup_names_only_its_isolated_volumes():
     text = _script()
     assert '"${COMPOSE_PROJECT_NAME}_state"' in text

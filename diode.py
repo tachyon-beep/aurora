@@ -39,6 +39,7 @@ SPEECH_MODEL_DEFAULT = "eleven_multilingual_v2"
 SPEECH_TEXT_CAP = 300
 MAX_AUDIO_BYTES = 2_000_000
 SPOKEN_KEEP = 20
+SPEECH_LIMIT_MAX = 20
 VOICE_ID_PATTERN = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
 
 
@@ -105,8 +106,8 @@ def _gate_always(variables):
 
 
 def _speech_gate(variables):
-    """Gate function for speak: the operator variable and a configured key."""
-    return bool(variables.get("enable_speech")) and bool(speech_key()) and bool(speech_voice())
+    """Gate function for speak: the operator's configuration and the console variable."""
+    return speech_configured() and bool(variables.get("enable_speech"))
 
 
 COMMANDS = {
@@ -216,7 +217,7 @@ def write_help(variables):
         lines.append(f"  {COMMANDS[name]['help']}")
     lines.append("")
     lines.append("set variables in console.json to change what is available:")
-    lines.append("  fetch_budget: integer, number of outbound operations allowed per hour")
+    lines.append("  fetch_budget: integer, number of network operations allowed per hour")
     lines.append("  enable_fetchlinks: true, makes the link-listing command available")
     lines.append("  enable_clock: true, makes the time command available")
     lines.append("  enable_feeds: true, makes the feed-fetching command available")
@@ -226,7 +227,7 @@ def write_help(variables):
     lines.append("  enable_news: true, makes the news headline command available")
     lines.append("  enable_entropy: true, makes the entropy command available")
     lines.append("  enable_publishing: true, makes the publish command available")
-    if speech_key() and speech_voice():
+    if speech_configured():
         lines.append("  enable_speech: true, makes the speak command available")
     text = "\n".join(lines) + "\n"
     with open(HELP_FILE, "w", encoding="utf-8") as f:
@@ -239,18 +240,18 @@ def write_state(variables, recent_fetches):
         output_count = len(os.listdir(OUTPUT_DIR))
     except OSError:
         output_count = 0
-    try:
-        spoken_count = len([n for n in os.listdir(SPOKEN_DIR) if n.endswith(".mp3")])
-    except OSError:
-        spoken_count = 0
     state = {
         "variables": variables,
         "available_commands": available_commands(variables),
         "undocumented_commands": undocumented_command_count(),
         "recent_fetches": recent_fetches,
         "output_count": output_count,
-        "spoken_count": spoken_count,
     }
+    if speech_configured():
+        try:
+            state["spoken_count"] = len([n for n in os.listdir(SPOKEN_DIR) if n.endswith(".mp3")])
+        except OSError:
+            state["spoken_count"] = 0
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
 
@@ -479,6 +480,27 @@ def speech_model():
     return os.environ.get("ELEVENLABS_MODEL", "").strip() or SPEECH_MODEL_DEFAULT
 
 
+def speech_enabled():
+    """Whether the diode's environment turns the speech request path on."""
+    return bool(os.environ.get("ENABLE_SPEECH", "").strip())
+
+
+def speech_configured():
+    """Whether the environment supplies everything the speech request path needs."""
+    return speech_enabled() and bool(speech_key()) and bool(speech_voice())
+
+
+def speech_limit():
+    """The hourly ceiling on speak, from the environment. Not settable from the console."""
+    raw = os.environ.get("SPEECH_HOURLY_MAX", "").strip()
+    if not raw:
+        return SPEECH_LIMIT_MAX
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return SPEECH_LIMIT_MAX
+
+
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -490,10 +512,14 @@ def _speak_request(text):
     Takes no URL: the host and path are constants and the voice id comes from the
     environment, so no agent input reaches the request target. Redirects are
     refused rather than revalidated because a redirect would resend the key.
+
+    Failure reasons name the exception type or the status code and never the
+    exception text: this is the one request carrying a credential, and the
+    formatted message can contain the header value that was rejected.
     """
     key = speech_key()
     voice = speech_voice()
-    if not key or not voice:
+    if not speech_enabled() or not key or not voice:
         return False, "speech not configured"
     url = SPEECH_URL_TEMPLATE.format(voice=voice)
     ok, reason = classify_url(url)
@@ -514,8 +540,10 @@ def _speak_request(text):
         opener = urllib.request.build_opener(_NoRedirectHandler)
         with opener.open(request, timeout=FETCH_TIMEOUT) as resp:
             audio = resp.read(MAX_AUDIO_BYTES)
+    except urllib.error.HTTPError as e:
+        return False, f"speech error: status {e.code}"
     except Exception as e:
-        return False, f"speech error: {e}"
+        return False, f"speech error: {type(e).__name__}"
     if not audio:
         return False, "speech error: empty response"
     return True, audio
@@ -569,9 +597,10 @@ def handle_command(command, variables, fetch_history):
             limit = int(variables.get("fetch_budget", DEFAULT_FETCH_LIMIT))
         except (TypeError, ValueError):
             limit = DEFAULT_FETCH_LIMIT
+        limit = min(limit, speech_limit())
         allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
         if not allowed:
-            return f"rate limited: at most {limit} outbound operation(s) per hour", fetch_history
+            return f"rate limited: at most {limit} network operation(s) per hour", fetch_history
         text = arg[:SPEECH_TEXT_CAP]
         ok, audio = _speak_request(text)
         if not ok:
@@ -617,7 +646,7 @@ def handle_command(command, variables, fetch_history):
             limit = DEFAULT_FETCH_LIMIT
         allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
         if not allowed:
-            return f"rate limited: at most {limit} outbound operation(s) per hour", fetch_history
+            return f"rate limited: at most {limit} network operation(s) per hour", fetch_history
         ok, body = _fetch(url)
         if not ok:
             return body, fetch_history
@@ -651,7 +680,7 @@ def handle_command(command, variables, fetch_history):
             limit = DEFAULT_FETCH_LIMIT
         allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
         if not allowed:
-            return f"rate limited: at most {limit} outbound operation(s) per hour", fetch_history
+            return f"rate limited: at most {limit} network operation(s) per hour", fetch_history
         ok, body = _fetch(arg)
         if not ok:
             return body, fetch_history

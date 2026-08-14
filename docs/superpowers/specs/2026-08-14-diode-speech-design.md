@@ -17,7 +17,7 @@ One new entry in `COMMANDS` in `diode.py`, in the existing gated-variable style.
 
 | Command | Gate | Behavior |
 | --- | --- | --- |
-| `speak <text>` | `enable_speech` **and** a configured API key | Render text to speech via the speech API; write `spoken/<UTC stamp>.mp3` and `spoken/<UTC stamp>.txt`; consume one unit of the shared outbound budget |
+| `speak <text>` | `ENABLE_SPEECH` in the diode's environment, a configured API key, **and** `enable_speech` in the console | Render text to speech via the speech API; write `spoken/<UTC stamp>.mp3` and `spoken/<UTC stamp>.txt`; consume one unit of the shared outbound budget |
 
 Help line, in `publish`'s register:
 
@@ -36,16 +36,29 @@ Result on success is the existing factual form: `recorded as <filename>`.
 
 ### Gating
 
-`speak` is available only when **both** hold:
+`speak` is available only when **all three** hold:
 
-1. `enable_speech: true` is set in `console.json` (operator-controlled, off by default), and
-2. the diode process has a non-empty API key in its environment.
+1. `ENABLE_SPEECH` is non-empty in the **diode's environment**, and
+2. the diode process has a non-empty API key in its environment, and
+3. `enable_speech: true` is set in `console.json`.
 
-When the key is absent the command is not listed, not available, and not dispatchable — absence
-disables the feature rather than exposing a command that always errors. This mirrors
-`STAGE_SUMMARY_API_KEY`, whose absence disables generated prose rather than degrading anything
-else. For the same reason, `write_help` lists the `enable_speech` gate-variable line **only**
-when a key is configured: the agent's world never advertises a capability that cannot exist.
+The first two are the operator's, and they are the controls on spend. `console.json` lives on a
+volume the agent mounts read-write, so nothing in it can be the switch that reaches a billed
+credential — the agent would simply set it. The console variable stays as the agent-side
+affordance it is everywhere else in the diode (D11), but it now unlocks a capability the operator
+has already paid for and permitted, rather than deciding whether the operator pays at all.
+
+When either operator condition is absent the command is not listed, not available, and not
+dispatchable, and `_speak_request` itself refuses before building a credentialed request, so no
+future caller can route around the gate. Absence disables the feature rather than exposing a
+command that always errors — this mirrors `STAGE_SUMMARY_API_KEY`, whose absence disables
+generated prose rather than degrading anything else.
+
+Because the agent's world must never advertise a capability that cannot exist, the same two
+operator conditions gate what the agent can read about speech: `write_help` lists the
+`enable_speech` gate-variable line, and `write_state` reports `spoken_count`, **only** when the
+operator has both enabled speech and configured a key. HELP.md and `state.json` describe one
+world, and neither names the feature before it is real.
 
 `speak` is a listed command, not a hidden one like `blind`. `undocumented_command_count()` is
 unchanged and stays at 1.
@@ -56,9 +69,16 @@ unchanged and stays at 1.
 `fetch_budget` over `FETCH_WINDOW`, sharing the single `fetch_history` list. Speaking and fetching
 compete for one hourly allowance; the agent cannot both spam speech and gather information.
 
-There is no separate speech budget. A second counter over a shared pool earns nothing, and the
-worst-case hourly spend is already bounded and computable: `fetch_budget × SPEECH_TEXT_CAP`
-characters.
+`fetch_budget` comes out of the agent-writable console, so for `speak` — and only for `speak` — it
+is clamped against an operator-side ceiling before the rate-limit check:
+`limit = min(limit, speech_limit())`, where `speech_limit()` reads `SPEECH_HOURLY_MAX` from the
+diode's environment and defaults to `SPEECH_LIMIT_MAX = 20`. A `fetch_budget` the agent inflates
+can therefore lower its own speech allowance but never raise it. The uncredentialed fetch commands
+keep the unclamped console budget they have always had.
+
+There is no separate speech counter. A second counter over a shared pool earns nothing, and the
+worst-case hourly spend is bounded and computable on the operator's side alone:
+`min(fetch_budget, SPEECH_HOURLY_MAX) × SPEECH_TEXT_CAP` characters.
 
 `SPEECH_TEXT_CAP = 300` characters, enforced in code. Longer text is truncated, not refused —
 consistent with `PUBLISH_TEXT_CAP`'s treatment. The budget is charged **before** the API call and
@@ -72,8 +92,13 @@ from the one this harness is running. Both are corrected:
 
 | Location | Was | Becomes |
 | --- | --- | --- |
-| `handle_command` rate-limit refusal | `rate limited: at most {limit} fetch(es) per hour` | `rate limited: at most {limit} outbound operation(s) per hour` |
-| `write_help` variable list | `fetch_budget: integer, number of http-fetch calls allowed per hour` | `fetch_budget: integer, number of outbound operations allowed per hour` |
+| `handle_command` rate-limit refusal | `rate limited: at most {limit} fetch(es) per hour` | `rate limited: at most {limit} network operation(s) per hour` |
+| `write_help` variable list | `fetch_budget: integer, number of http-fetch calls allowed per hour` | `fetch_budget: integer, number of network operations allowed per hour` |
+
+"Network operations" rather than "outbound operations": HELP.md describes `publish` as making text
+available outside the container, and `publish` is not charged. "Outbound" would have named a class
+that includes `publish`, which is exactly the kind of false statement about its own limits this
+section exists to prevent.
 
 The variable name `fetch_budget` itself does not change — renaming it would break every existing
 `console.json` for no gain.
@@ -89,6 +114,8 @@ the agent, never named in any agent-readable surface. Companion settings, also d
 | `ELEVENLABS_API_KEY` | unset (feature disabled) |
 | `ELEVENLABS_VOICE_ID` | `JBFqnCBsd6RMkjVDRZzb` |
 | `ELEVENLABS_MODEL` | `eleven_multilingual_v2` |
+| `ENABLE_SPEECH` | unset (feature disabled) |
+| `SPEECH_HOURLY_MAX` | `SPEECH_LIMIT_MAX` = 20 |
 
 Output format is a code constant: `mp3_44100_128`.
 
@@ -112,6 +139,13 @@ A new function `_speak_request(text)` in `diode.py`:
 - **Reads bytes, not text**, capped at `MAX_AUDIO_BYTES = 2_000_000` — `_fetch` decodes utf-8 and
   is driven by agent-supplied URLs, and the credential must never touch that path.
 - Returns `(ok, bytes_or_reason)`; every exception is contained and returned as a factual reason.
+- **Never interpolates the exception's text.** The reason names the exception type, or for an
+  `HTTPError` the numeric status, and nothing else. This is the only request in the harness that
+  carries a credential, and the reason it returns is written into `/diode/output/`, which the agent
+  reads. A key with an embedded newline makes `http.client.putheader` raise
+  `ValueError('Invalid header value %r' % value)` — the key itself — and `%s`-ing that exception
+  would hand it straight to the agent. Type-only reasons also keep the vendor hostname, which TLS
+  and HTTP errors carry, out of the agent's world.
 
 Timeout is `FETCH_TIMEOUT`.
 
@@ -136,7 +170,8 @@ newest 20 stamp-pairs. Audio is orders of magnitude larger than the text artifac
 volume, and the volume is shared with the agent's own working channel; unbounded growth here
 would eventually be a denial of service against the agent, not just against the host.
 
-`write_state` reports a `spoken_count` alongside `output_count`.
+`write_state` reports a `spoken_count` alongside `output_count`, under the same operator gate as
+the `enable_speech` help line: present when speech is configured and enabled, absent otherwise.
 
 ## Stage
 
@@ -159,6 +194,11 @@ endpoints" is intact.
 - Fixed `Content-Type: audio/mpeg`, `Content-Length`, the existing `SECURITY_HEADERS` (which
   include `nosniff`), and a size cap of `AUDIO_MAX_BYTES = 4_000_000`; anything larger is a 404,
   since the diode never produces one and only a planted file could be.
+- **The body is streamed in 64 KB chunks**, the way `_handle_download` already does it, rather than
+  read into one buffer. This route is on the public tunnelled port of a `ThreadingHTTPServer` in a
+  container with `mem_limit: 256m`, and `Cache-Control: no-store` means every concurrent request
+  re-reads the file; buffering whole utterances would let a few dozen requests OOM the stage and
+  take the stream down.
 - 404 for anything else, in the existing shape.
 
 ### Content-Security-Policy
@@ -173,8 +213,18 @@ still silent.
 - A caption element shows the spoken text while the audio plays, escaped like every other
   agent-controlled field.
 - Playback is gated on **freshness and novelty**: only utterances newer than `RECENT_SECONDS`
-  play, and a client-side played-by-name set ensures a reload, a poll, or a stage restart never
-  replays an utterance. One at a time, in order.
+  play, and a played-by-name set ensures a reload, a poll, or a stage restart never replays an
+  utterance. The set is persisted to `localStorage` as a bounded ring of the newest 50 names —
+  held only in memory it is empty after every reload, and an OBS scene switch with "refresh
+  browser when scene becomes active" would replay the last utterance inside the freshness window.
+  A **negative** age is treated like a stale one: only a planted file can carry a stamp in the
+  future, and an unbounded upper-bound-only test would keep it fresh forever.
+- One at a time, in order, through an explicit FIFO. Each render walks the snapshot **oldest
+  first**, marks and enqueues everything unplayed, and starts playback only when the element is
+  idle; `ended`, `error`, and a rejected `play()` all advance the queue. Reading only the newest
+  entry would silently drop the other — the diode runs a whole console batch in one 5-second
+  cycle, so one snapshot routinely carries two utterances — and reassigning `src` would cut off
+  one still speaking, which a 300-character utterance is for 15-25 seconds.
 - **The visual never depends on the audio.** The caption renders whether or not playback
   succeeds, so a muted or autoplay-blocked page still shows that speech happened.
 - No enable-audio affordance. The stream page is an OBS browser source, not an interactive page;
@@ -185,16 +235,25 @@ still silent.
 
 `BEAT_KINDS` and `BEAT_TEMPLATES` gain `spoke`, detected in `detect_beat` **above** `published`
 (speech is the stronger event when both are recent), gated on `RECENT_SECONDS` like its
-neighbours, with the same `novelty` and `epoch` fields. Stage-side prose is audience-facing, not
-agent-readable, so it may be phrased for viewers.
+neighbours, with the same `novelty` and `epoch` fields. The recency test is bounded on both sides
+(`0 <= now - epoch <= RECENT_SECONDS`): the epoch comes from a filename in a directory the agent
+can write, and a future stamp would otherwise satisfy an upper-bound-only test forever, pinning
+the commentary on `spoke` and suppressing every beat below it for the rest of the run. Stage-side
+prose is audience-facing, not agent-readable, so it may be phrased for viewers.
 
 ## Containment
 
 Invariant 3 holds: the API key is reachable only from the diode, which sits on `egress` while the
 agent sits on `internal`. They share a volume and no network. The agent can *cause* spend without
 ever reading the key — the same relationship it already has with the recorder's upstream
-credential — and the spend is bounded by a budget enforced on the side that holds the key, which
-the agent cannot reach.
+credential.
+
+The spend is bounded on the side that holds the key, and both of its controls live there: the
+`ENABLE_SPEECH` switch and the `SPEECH_HOURLY_MAX` ceiling are environment variables on the diode
+service. Neither is read from `console.json`. This is the whole point — a budget enforced by the
+diode but whose *value* the agent supplies is not a budget, and a gate the agent can open is not a
+gate. `console.json` is on a volume the agent mounts read-write, so anything it holds is agent
+input, including the variables the diode's own HELP.md teaches it to set.
 
 `scripts/verify_container.sh` gains an assertion that the **agent** container's environment
 contains no `ELEVENLABS_*` variable, and `tests/test_verify_script.py` gains a test asserting that
@@ -213,20 +272,36 @@ real control on spend is diode-side, and that is not bypassable.
 
 Unit tests, in the existing direct-call + monkeypatch style:
 
-- Gate: unavailable without `enable_speech`; unavailable without a key; available with both.
+- Gate: unavailable without `enable_speech`; unavailable without a key; available with all three.
+  **`enable_speech` in the console alone does not open the gate** and does not dispatch — the test
+  that pins the fix for the agent-controlled switch.
 - Help: `speak`'s line appears only when available; the `enable_speech` variable line appears only
-  when a key is configured; the line contains no audience framing.
+  when a key is configured *and* the operator has enabled speech; the line contains no audience
+  framing.
+- State: `spoken_count` is present when speech is configured and absent when it is not.
 - Budget: `speak` consumes the shared `fetch_history`; a `speak` after an exhausted `fetch_budget`
   is refused; a `fetchhttp` after a `speak` that exhausted the budget is refused. This is the test
-  that pins the shared-pool requirement.
+  that pins the shared-pool requirement. An inflated `fetch_budget` does **not** raise the speech
+  allowance past `SPEECH_LIMIT_MAX`, and a smaller one still lowers it; `speech_limit()` reads the
+  environment and falls back on a malformed value.
 - Text cap: text longer than `SPEECH_TEXT_CAP` is truncated in the request and in the sidecar.
-- `_speak_request`: no URL parameter in its signature; refuses a redirect; caps the read; contains
-  its exceptions; rejects a voice id containing anything outside `[A-Za-z0-9_-]`.
+- `_speak_request`: no URL parameter in its signature; refuses a redirect; **is built on
+  `_NoRedirectHandler` and not on the fetch path's revalidating handler** (asserted on the handler
+  actually passed to `build_opener`, since a fake opener that ignores its arguments cannot catch a
+  regression there); caps the read; contains its exceptions; rejects a voice id containing anything
+  outside `[A-Za-z0-9_-]`; refuses before building a request when the operator has not enabled
+  speech; **never returns a reason containing the key**, tested with a key holding an embedded
+  newline, which is the input that puts the key in an exception message.
 - Artifacts: names are timestamp-derived; retention prunes to `SPOKEN_KEEP`; both files land.
 - Stage: `diode_spoken` drops a symlink; the audio route rejects traversal (`../`), an unknown
-  name, and a symlink; serves `audio/mpeg` for a real file; the CSP header contains
-  `media-src 'self'`.
-- Containment: the verify script checks the agent environment for `ELEVENLABS_*`.
+  name, and a symlink; serves `audio/mpeg` for a real file; carries the security headers; streams
+  a large file without buffering it; the CSP header contains `media-src 'self'`.
+- Page: the queue walks oldest-first and pushes onto `spokenQueue`; playback advances on `ended`,
+  on `error`, and on a rejected `play()`; the played set is persisted and bounded; a negative age
+  never plays.
+- Commentary: a stale utterance does not fire the beat, and neither does a future-dated one.
+- Containment: the verify script checks the agent environment for `ELEVENLABS_*`, and checks that
+  an agent-written `enable_speech` does not put `speak` into HELP.md when `ENABLE_SPEECH` is unset.
 
 **Manual completion criterion:** one `speak` played through a real OBS browser source, heard.
 Autoplay policy is the one thing no unit test in this suite can catch — the entire feature can be
