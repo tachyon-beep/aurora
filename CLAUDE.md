@@ -71,6 +71,9 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      Any further credential must be reachable through none of these, and must never be mounted,
      copied, or named into the agent image.
    - The **proxy logs request/response bodies, never headers**, so the key never enters the transcript.
+     The recorder also appends per-request `open`/`close`/usage events and socket lifecycle events
+     (no message content, no headers) to `events.jsonl` on the transcripts volume; the stage reads
+     them for its stream lanes.
    - The **diode is egress-only** and executes a *closed command vocabulary* — no code or arbitrary
      paths cross it. Keep the SSRF defenses (scheme allow-list, private/loopback/reserved rejection,
      redirect re-validation).

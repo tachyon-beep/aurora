@@ -859,3 +859,158 @@ def test_diode_activity_argument_survives_a_slug_longer_than_the_cap(tmp_path):
     assert entry["slug"] == "weather 33.86881 151.209"
     assert entry["command"] == "weather"
     assert entry["argument"] == "33.86881 151.209312"
+
+
+def _write_events(tmp_path, events):
+    path = tmp_path / "events.jsonl"
+    lines = [json.dumps(e) for e in events]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return str(path)
+
+
+def _event_stamp(epoch):
+    import datetime
+
+    moment = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc)
+    return moment.strftime("%Y-%m-%dT%H:%M:%S") + "Z"
+
+
+def test_stream_lanes_reports_core_alone_from_a_missing_file(tmp_path):
+    lanes = data.stream_lanes(str(tmp_path / "absent.jsonl"), now=1000.0)
+    assert lanes == [
+        {
+            "name": "core",
+            "bound": False,
+            "in_flight": 0,
+            "in_flight_since": None,
+            "last_epoch": None,
+            "requests_hour": 0,
+            "errors_hour": 0,
+            "tokens_hour": 0,
+        }
+    ]
+
+
+def test_an_open_without_a_close_is_in_flight(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [
+            {"timestamp": _event_stamp(now - 5), "event": "bind", "stream": "core"},
+            {"timestamp": _event_stamp(now - 3), "event": "open", "stream": "core", "id": "a"},
+        ],
+    )
+    (core,) = data.stream_lanes(path, now=now)
+    assert core["bound"] is True
+    assert core["in_flight"] == 1
+    assert core["in_flight_since"] == now - 3
+
+
+def test_a_closed_request_counts_and_is_not_in_flight(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [
+            {"timestamp": _event_stamp(now - 10), "event": "open", "stream": "core", "id": "a"},
+            {
+                "timestamp": _event_stamp(now - 8),
+                "event": "close",
+                "stream": "core",
+                "id": "a",
+                "status": 200,
+                "usage": {"total_tokens": 8},
+            },
+        ],
+    )
+    (core,) = data.stream_lanes(path, now=now)
+    assert core["in_flight"] == 0
+    assert core["requests_hour"] == 1
+    assert core["errors_hour"] == 0
+    assert core["tokens_hour"] == 8
+
+
+def test_an_ancient_open_ages_out_of_in_flight(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [{"timestamp": _event_stamp(now - 700), "event": "open", "stream": "core", "id": "a"}],
+    )
+    (core,) = data.stream_lanes(path, now=now)
+    assert core["in_flight"] == 0
+
+
+def test_hourly_counts_prune_to_the_window(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [
+            {
+                "timestamp": _event_stamp(now - 4000),
+                "event": "close",
+                "stream": "core",
+                "id": "old",
+                "status": 200,
+                "usage": {"total_tokens": 100},
+            },
+            {
+                "timestamp": _event_stamp(now - 100),
+                "event": "close",
+                "stream": "core",
+                "id": "new",
+                "status": 500,
+            },
+        ],
+    )
+    (core,) = data.stream_lanes(path, now=now)
+    assert core["requests_hour"] == 1
+    assert core["errors_hour"] == 1
+    assert core["tokens_hour"] == 0
+
+
+def test_lanes_order_core_first_then_names(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [
+            {"timestamp": _event_stamp(now - 5), "event": "bind", "stream": "zeta"},
+            {"timestamp": _event_stamp(now - 5), "event": "bind", "stream": "aux"},
+        ],
+    )
+    lanes = data.stream_lanes(path, now=now)
+    assert [lane["name"] for lane in lanes] == ["core", "aux", "zeta"]
+
+
+def test_an_unbound_idle_lane_is_dropped(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [
+            {"timestamp": _event_stamp(now - 5000), "event": "bind", "stream": "aux"},
+            {
+                "timestamp": _event_stamp(now - 4500),
+                "event": "close",
+                "stream": "aux",
+                "id": "a",
+                "status": 200,
+            },
+            {"timestamp": _event_stamp(now - 4000), "event": "unbind", "stream": "aux"},
+        ],
+    )
+    lanes = data.stream_lanes(path, now=now)
+    assert [lane["name"] for lane in lanes] == ["core"]
+
+
+def test_stream_lanes_skips_malformed_lines(tmp_path):
+    now = 1_000_000.0
+    path = tmp_path / "events.jsonl"
+    path.write_text(
+        json.dumps({"timestamp": _event_stamp(now - 5), "event": "bind", "stream": "core"})
+        + "\nnot json\n"
+        + '{"timestamp": "'
+        + _event_stamp(now - 1)
+        + '", "event": "open", "stream": "core", "id"',
+        encoding="utf-8",
+    )
+    (core,) = data.stream_lanes(str(path), now=now)
+    assert core["bound"] is True
+    assert core["in_flight"] == 0

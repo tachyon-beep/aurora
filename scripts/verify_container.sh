@@ -199,6 +199,34 @@ fi
 echo "==> the console returns to empty for the recovery checks"
 docker compose exec -T agent sh -c 'printf "{\"streams\":{}}" > /llm/console/console.json'
 
+echo "==> recorder emits open and close events for the recorded completions"
+# The agent's own loop is running against the stub, so an open without its
+# close is legitimately in flight at any instant, and the final line can be
+# mid-write. Every close must pair with an open; unmatched opens are allowed.
+docker compose exec -T recorder python -c "
+import json
+opens, closes = set(), set()
+with open('/transcripts/events.jsonl') as f:
+    for line in f:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if event['event'] == 'open':
+            opens.add(event['id'])
+        elif event['event'] == 'close':
+            closes.add(event['id'])
+assert closes and closes <= opens, (len(opens), len(closes))
+"
+
+echo "==> stage snapshot carries stream lanes"
+curl -s http://127.0.0.1:8091/api/stream | python3 -c "
+import json, sys
+snap = json.load(sys.stdin)
+names = [lane['name'] for lane in snap['lanes']]
+assert names and names[0] == 'core', names
+"
+
 # The watchdog restores agent.py when the agent PROCESS EXITS, not when the
 # file changes -- it does not watch the filesystem. So a corrupted agent.py
 # sits untouched until the running incarnation ends, and each recovery check

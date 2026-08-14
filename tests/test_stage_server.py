@@ -447,6 +447,7 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "code",
         "turns",
         "events",
+        "lanes",
         "diode",
         "lineage",
         "story",
@@ -696,6 +697,7 @@ def test_stream_snapshot_never_raises_on_missing_directories(tmp_path, monkeypat
         "code",
         "turns",
         "events",
+        "lanes",
         "diode",
         "lineage",
         "story",
@@ -721,6 +723,7 @@ def test_stream_snapshot_returns_the_full_key_set_when_a_reader_fails(tmp_path, 
         "code",
         "turns",
         "events",
+        "lanes",
         "diode",
         "lineage",
         "story",
@@ -908,3 +911,33 @@ def test_stream_snapshot_demotes_a_tool_sub_call(tmp_path, monkeypatch):
     assert snap["stats"]["turns_this_life"] == 2
     assert snap["stats"]["self_calls"] == 1
     assert snap["stats"]["model"] == "m"
+
+
+def test_the_snapshot_and_empty_snapshot_carry_lanes(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
+    snap = server.stream_snapshot()
+    assert isinstance(snap["lanes"], list)
+    assert snap["lanes"][0]["name"] == "core"
+    assert server._empty_snapshot(1000.0)["lanes"] == []
+
+
+def test_public_lanes_cap_names_and_count():
+    lanes = [
+        {
+            "name": "x" * 100,
+            "bound": True,
+            "in_flight": 1,
+            "in_flight_since": 5.0,
+            "last_epoch": 6.0,
+            "requests_hour": 2,
+            "errors_hour": 1,
+            "tokens_hour": 30,
+        }
+    ] * 20
+    public = server._public_lanes(lanes)
+    assert len(public) == server.LANES_CAP
+    assert len(public[0]["name"]) == server.LANE_NAME_CAP
+    assert public[0]["in_flight"] == 1
+    assert public[0]["tokens_hour"] == 30

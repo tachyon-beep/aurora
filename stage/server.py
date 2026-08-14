@@ -31,6 +31,8 @@ CODE_CAP = 40
 STORY_CAP = 1200
 MODEL_CAP = 60
 NAME_CAP = 64
+LANES_CAP = 9
+LANE_NAME_CAP = 32
 TIMESTAMP_CAP = 40
 PROMPT_CAP = 160
 AUDIO_MAX_BYTES = 4_000_000
@@ -194,6 +196,32 @@ class ConsoleHandler(_BaseHandler):
 def transcript_path():
     """The recorder's JSONL transcript file path."""
     return os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.jsonl")
+
+
+def events_path():
+    """The recorder's telemetry event log path."""
+    return os.path.join(TRANSCRIPT_DIR, "events.jsonl")
+
+
+def _public_lane(lane):
+    """A lane with every field enumerated and capped for public display."""
+    since = lane.get("in_flight_since")
+    last = lane.get("last_epoch")
+    return {
+        "name": _clip(str(lane.get("name") or ""), LANE_NAME_CAP),
+        "bound": bool(lane.get("bound")),
+        "in_flight": int(lane.get("in_flight") or 0),
+        "in_flight_since": float(since) if isinstance(since, (int, float)) else None,
+        "last_epoch": float(last) if isinstance(last, (int, float)) else None,
+        "requests_hour": int(lane.get("requests_hour") or 0),
+        "errors_hour": int(lane.get("errors_hour") or 0),
+        "tokens_hour": int(lane.get("tokens_hour") or 0),
+    }
+
+
+def _public_lanes(lanes):
+    """The public lane list, capped in count."""
+    return [_public_lane(lane) for lane in lanes[:LANES_CAP]]
 
 
 def _clip(text, cap):
@@ -386,6 +414,7 @@ def _empty_snapshot(now):
         "code": {"available": False, "added": 0, "removed": 0},
         "turns": [],
         "events": [],
+        "lanes": [],
         "diode": {
             "outputs": [],
             "published": [],
@@ -440,6 +469,7 @@ def _assemble_snapshot(now):
         "code": data.code_stats(work),
         "turns": [_public_turn(t) for t in display],
         "events": data.self_modification_events(turns, limit=6, life=life),
+        "lanes": _public_lanes(data.stream_lanes(events_path(), now=now)),
         "diode": {
             "outputs": diode["outputs"][:DISPLAY_OUTPUTS],
             "published": published,

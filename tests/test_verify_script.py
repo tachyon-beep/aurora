@@ -130,3 +130,14 @@ def test_the_image_ships_the_stream_module():
 def test_env_example_documents_the_stream_ceiling():
     text = Path(".env.example").read_text(encoding="utf-8")
     assert "STREAM_HOURLY_MAX" in text
+
+
+def test_verifier_checks_the_event_log_and_lanes():
+    text = _script()
+    for phrase in (
+        "events.jsonl",
+        "recorder emits open and close events",
+        "stage snapshot carries stream lanes",
+        "/api/stream",
+    ):
+        assert phrase in text

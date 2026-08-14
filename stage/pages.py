@@ -218,6 +218,10 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .chip.c-act b { color: var(--act); }
 #provenance { margin-left: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); }
 #provenance.offline { color: var(--fault); }
+#lanes { display: flex; align-items: center; gap: 18px; }
+#lanes .chip b { color: var(--paper-dim); }
+#lanes .chip .dot.live { background: var(--act); }
+#lanes .chip .dot.idle { background: none; border: 1px solid var(--paper-faint); }
 
 #death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 2px;
   background: var(--taken); z-index: 20; transform-origin: left; transform: scaleX(1); }
@@ -507,6 +511,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <span class="chip c-think"><i class="dot think"></i><b>THOUGHT</b><em>private reasoning</em></span>
       <span class="chip c-say"><i class="dot say"></i><b>SPEECH</b><em>said out loud</em></span>
       <span class="chip c-act"><i class="dot act"></i><b>ACTION</b><em>tool calls</em></span>
+      <span id="lanes"></span>
       <span id="provenance">the transcript is the proxy's, not the agent's &middot; refreshed every 2s</span>
     </div>
     <div id="death-sweep" hidden></div>
@@ -1463,7 +1468,10 @@ function deathBeat(prev) {
 
 /* ---------- tick ---------- */
 function setInflight(age, state) {
-  var show = state === "thinking";
+  var lane = coreLane();
+  var live = lane && lane.in_flight > 0 && lane.in_flight_since != null;
+  if (live) age = Math.max(0, clock() / 1000 - lane.in_flight_since);
+  var show = live || state === "thinking";
   if (inflight.hidden === show) { inflight.hidden = !show; repin(); }
   if (!show) return;
   var turns = snap.turns || [];
@@ -1517,10 +1525,44 @@ function tick() {
   if ((st.turns_this_life || 0) === 0) renderColdStart();
 }
 
+/* ---------- lanes ---------- */
+function coreLane() {
+  var lanes = (snap && snap.lanes) || [];
+  for (var i = 0; i < lanes.length; i++) if (lanes[i].name === "core") return lanes[i];
+  return null;
+}
+function laneCount(n) {
+  n = Number(n) || 0;
+  if (n >= 10000) return Math.round(n / 1000) + "k";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return String(n);
+}
+function renderLanes() {
+  var host = $("lanes"), lanes = (snap && snap.lanes) || [];
+  if (!host) return;
+  while (host.children.length > lanes.length) host.removeChild(host.lastChild);
+  for (var i = 0; i < lanes.length; i++) {
+    var lane = lanes[i], node = host.children[i];
+    if (!node) {
+      node = document.createElement("span");
+      node.className = "chip lane";
+      node.appendChild(document.createElement("i"));
+      node.appendChild(document.createElement("b"));
+      node.appendChild(document.createElement("em"));
+      host.appendChild(node);
+    }
+    node.children[0].className = "dot " + (lane.in_flight > 0 ? "live breathe" : "idle");
+    setText(node.children[1], norm(lane.name).toUpperCase());
+    setText(node.children[2],
+      laneCount(lane.requests_hour) + "/h · " + laneCount(lane.tokens_hour) + " tok");
+  }
+}
+
 /* ---------- render ---------- */
 function render(prev) {
   deathBeat(prev);
   renderSubject();
+  renderLanes();
   renderStory();
   renderDead();
   renderRibbon();
