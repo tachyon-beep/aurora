@@ -105,15 +105,17 @@ def detect_beat(turns, stats, diode, published, now):
 
     failing = [t for t in turns[-FAILURE_WINDOW:] if t.get("error")]
     if len(failing) >= FAILURE_COUNT:
-        counts = _tool_counts(failing)
-        tool = max(counts, key=counts.get) if counts else None
-        return _beat(
-            "repeat_failure",
-            tool=tool,
-            count=len(failing),
-            novelty="repeat",
-            epoch=_newest_epoch(failing),
-        )
+        failure_epoch = _newest_epoch(failing)
+        if failure_epoch is not None and now - failure_epoch <= RECENT_SECONDS:
+            counts = _tool_counts(failing)
+            tool = max(counts, key=counts.get) if counts else None
+            return _beat(
+                "repeat_failure",
+                tool=tool,
+                count=len(failing),
+                novelty="repeat",
+                epoch=failure_epoch,
+            )
 
     if published:
         newest_pub = max(published, key=lambda p: p.get("epoch") or 0)

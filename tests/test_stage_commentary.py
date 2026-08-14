@@ -55,6 +55,16 @@ def test_repeat_failure_needs_two_errors_in_the_window():
     assert beat["count"] == 2
 
 
+def test_a_stale_error_burst_gives_way_to_silence():
+    """An error burst is an event, not a state — it must age out like the others."""
+    turns = [
+        _turn(1, NOW - 4000, tools=("read_file",), error="boom"),
+        _turn(2, NOW - 3990, tools=("read_file",), error="boom"),
+    ]
+    beat = commentary.detect_beat(turns, _stats(), EMPTY_DIODE, [], NOW)
+    assert beat["kind"] == "silence"
+
+
 def test_published_beats_a_plain_diode_output():
     diode = {"outputs": [{"command": "weather", "epoch": NOW - 20, "life": 4}]}
     published = [{"epoch": NOW - 10, "text": "hello"}]
