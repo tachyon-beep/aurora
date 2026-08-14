@@ -114,3 +114,65 @@ def test_evaluate_console_caps_reported_junk_names():
     assert not accepted
     (name,) = rejected
     assert len(name) <= 80
+
+
+def test_stream_limit_max_reads_the_environment(monkeypatch):
+    monkeypatch.delenv("STREAM_HOURLY_MAX", raising=False)
+    assert rs.stream_limit_max() == 120
+    monkeypatch.setenv("STREAM_HOURLY_MAX", "5")
+    assert rs.stream_limit_max() == 5
+    monkeypatch.setenv("STREAM_HOURLY_MAX", "-3")
+    assert rs.stream_limit_max() == 0
+    monkeypatch.setenv("STREAM_HOURLY_MAX", "many")
+    assert rs.stream_limit_max() == 120
+
+
+def test_effective_allowance_clamps_to_the_ceiling(monkeypatch):
+    monkeypatch.setenv("STREAM_HOURLY_MAX", "7")
+    assert rs.effective_allowance({"budget": 500}) == 7
+    assert rs.effective_allowance({"budget": 3}) == 3
+    assert rs.effective_allowance({}) == 7
+
+
+def test_effective_allowance_defaults_when_undeclared(monkeypatch):
+    monkeypatch.delenv("STREAM_HOURLY_MAX", raising=False)
+    assert rs.effective_allowance({}) == rs.DEFAULT_STREAM_BUDGET
+
+
+def test_budget_status_prunes_and_counts_down():
+    now = 10_000.0
+    status = rs.budget_status([now - 4000, now - 1000, now - 10], now)
+    assert status["used"] == 2
+    assert status["window_seconds"] == 3600
+    assert status["oldest_expires_in_seconds"] == 2600
+
+
+def test_budget_status_on_an_empty_history():
+    assert rs.budget_status([], 10_000.0) == {
+        "used": 0,
+        "window_seconds": 3600,
+        "oldest_expires_in_seconds": None,
+    }
+
+
+def test_check_budget_allows_under_and_refuses_at_allowance():
+    now = 10_000.0
+    allowed, history = rs.check_budget([], now, 1)
+    assert allowed and history == [now]
+    allowed, history = rs.check_budget(history, now + 1, 1)
+    assert not allowed and history == [now]
+    allowed, history = rs.check_budget(history, now + 3601, 1)
+    assert allowed and history == [now + 3601]
+
+
+def test_zero_allowance_refuses_without_a_countdown():
+    message = rs.rate_limited_message(0, [], 10_000.0)
+    assert message == "rate limited: at most 0 request(s) per hour on this socket"
+
+
+def test_the_refusal_carries_a_countdown_when_one_exists():
+    now = 10_000.0
+    message = rs.rate_limited_message(1, [now - 1000], now)
+    assert message == (
+        "rate limited: at most 1 request(s) per hour on this socket; next available in 2600 seconds"
+    )

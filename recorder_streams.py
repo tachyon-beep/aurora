@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import re
 
@@ -115,3 +116,54 @@ def evaluate_console(declarations):
         else:
             accepted[name] = settings
     return accepted, rejected
+
+
+def stream_limit_max():
+    """The operator ceiling on any stream's hourly allowance, from the environment."""
+    raw = os.environ.get("STREAM_HOURLY_MAX", "").strip()
+    if not raw:
+        return STREAM_LIMIT_MAX
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return STREAM_LIMIT_MAX
+
+
+def effective_allowance(settings):
+    """The allowance actually enforced: the declared budget clamped by the ceiling."""
+    return min(settings.get("budget", DEFAULT_STREAM_BUDGET), stream_limit_max())
+
+
+def budget_status(history, now, window=BUDGET_WINDOW):
+    """Use of a stream's allowance over the window.
+
+    The history is pruned here rather than trusted, so a stream that went
+    quiet reports its true in-window use.
+    """
+    recent = [t for t in history if now - t < window]
+    if not recent:
+        return {"used": 0, "window_seconds": window, "oldest_expires_in_seconds": None}
+    expires = max(0, math.ceil(window - (now - min(recent))))
+    return {"used": len(recent), "window_seconds": window, "oldest_expires_in_seconds": expires}
+
+
+def check_budget(history, now, allowance, window=BUDGET_WINDOW):
+    """Rolling-window check. Returns (allowed, new_history).
+
+    Drops entries older than the window; allows when fewer than allowance
+    remain, appending now when allowed.
+    """
+    recent = [t for t in history if now - t < window]
+    if len(recent) >= allowance:
+        return False, recent
+    recent.append(now)
+    return True, recent
+
+
+def rate_limited_message(allowance, history, now, window=BUDGET_WINDOW):
+    """The refusal sentence, with a countdown when a pruned stamp supplies one."""
+    message = f"rate limited: at most {allowance} request(s) per hour on this socket"
+    status = budget_status(history, now, window)
+    if status["oldest_expires_in_seconds"] is not None:
+        message += f"; next available in {status['oldest_expires_in_seconds']} seconds"
+    return message
