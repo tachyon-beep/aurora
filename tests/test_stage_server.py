@@ -465,9 +465,9 @@ def test_beat_detection_reads_the_full_tail_not_the_display_slice(tmp_path, monk
     seen = {}
     real = server.commentary.detect_beat
 
-    def spy(turns, stats, diode, published, now):
+    def spy(turns, stats, diode, published, now, spoken=None):
         seen["count"] = len(turns)
-        return real(turns, stats, diode, published, now)
+        return real(turns, stats, diode, published, now, spoken=spoken)
 
     monkeypatch.setattr(server.commentary, "detect_beat", spy)
     entries = [_turn_entry(i) for i in range(server.DISPLAY_TURNS * 3)]

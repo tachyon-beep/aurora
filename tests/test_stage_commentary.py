@@ -88,6 +88,28 @@ def test_a_stale_published_entry_gives_way_to_the_next_beat():
     assert beat["kind"] == "working"
 
 
+def test_a_recent_utterance_beats_a_recent_publish():
+    published = [{"name": "p.txt", "epoch": NOW - 5, "text": "written"}]
+    spoken = [{"name": "20260814_120000_000000.mp3", "epoch": NOW - 5, "text": "said"}]
+    beat = commentary.detect_beat(
+        [_turn(1, NOW - 5)], _stats(), EMPTY_DIODE, published, NOW, spoken=spoken
+    )
+    assert beat["kind"] == "spoke"
+
+
+def test_a_stale_utterance_does_not_fire():
+    spoken = [{"name": "a.mp3", "epoch": NOW - commentary.RECENT_SECONDS - 1, "text": "old"}]
+    beat = commentary.detect_beat(
+        [_turn(1, NOW - 5)], _stats(), EMPTY_DIODE, [], NOW, spoken=spoken
+    )
+    assert beat["kind"] == "working"
+
+
+def test_spoke_is_a_known_beat_kind():
+    assert "spoke" in commentary.BEAT_KINDS
+    assert commentary.BEAT_TEMPLATES["spoke"]
+
+
 def test_reached_out_carries_the_command_word():
     diode = {"outputs": [{"command": "weather", "epoch": NOW - 20, "life": 4}]}
     beat = commentary.detect_beat([_turn(1, NOW - 5)], _stats(), diode, [], NOW)

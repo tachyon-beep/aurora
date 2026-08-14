@@ -430,7 +430,9 @@ def _assemble_snapshot(now):
     diode = data.diode_activity(DIODE_DIR, deaths=deaths, incarnation=incarnation)
     published, published_total = data.diode_published(DIODE_DIR, limit=DISPLAY_PUBLISHED)
     spoken, spoken_total = data.diode_spoken(DIODE_DIR, limit=DISPLAY_SPOKEN)
-    beat = commentary.detect_beat(data.loop_turns(turns), stats, diode, published, now)
+    beat = commentary.detect_beat(
+        data.loop_turns(turns), stats, diode, published, now, spoken=spoken
+    )
     commentary.publish_beat(beat)
     return {
         "now": now,

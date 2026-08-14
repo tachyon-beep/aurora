@@ -33,6 +33,7 @@ BEAT_KINDS = (
     "new_life",
     "self_edit",
     "repeat_failure",
+    "spoke",
     "published",
     "reached_out",
     "silence",
@@ -46,6 +47,7 @@ BEAT_TEMPLATES = {
     "new_life": "A new incarnation is awake and finding its footing.",
     "self_edit": "It is rewriting its own source while it runs.",
     "repeat_failure": "The same call keeps failing, and it keeps making it.",
+    "spoke": "It has put a voice to something.",
     "published": "It has said something to the outside world.",
     "reached_out": "It is reaching past the wall for something it cannot see.",
     "silence": "Nothing has moved for a while.",
@@ -133,7 +135,7 @@ def working_beat_id():
     return _beat("working")["id"]
 
 
-def detect_beat(turns, stats, diode, published, now):
+def detect_beat(turns, stats, diode, published, now, spoken=None):
     """The loudest true thing happening right now. Pure; never returns None.
 
     turns must already be filtered to loop turns, oldest first.
@@ -142,6 +144,7 @@ def detect_beat(turns, stats, diode, published, now):
     stats = stats if isinstance(stats, dict) else {}
     outputs = (diode or {}).get("outputs") or []
     published = published or []
+    spoken = spoken or []
 
     for turn in reversed(turns[-ENDING_WINDOW:]):
         if "done" in _tool_names(turn):
@@ -184,6 +187,17 @@ def detect_beat(turns, stats, diode, published, now):
                 count=len(failing),
                 novelty="repeat",
                 epoch=failure_epoch,
+            )
+
+    if spoken:
+        newest_spoken = max(spoken, key=lambda s: s.get("epoch") or 0)
+        spoken_epoch = newest_spoken.get("epoch")
+        if isinstance(spoken_epoch, (int, float)) and now - spoken_epoch <= RECENT_SECONDS:
+            return _beat(
+                "spoke",
+                count=len(spoken),
+                novelty="first_this_life" if len(spoken) <= 1 else "repeat",
+                epoch=spoken_epoch,
             )
 
     if published:
