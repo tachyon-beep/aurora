@@ -1145,3 +1145,15 @@ def test_state_omits_the_budget_block_and_pending_when_absent(tmp_path, monkeypa
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert "budget" not in state
     assert "pending" not in state
+
+
+def test_later_refuses_to_defer_a_credentialed_command(tmp_path, monkeypatch):
+    # Deferred spend would be authorised by a console variable the agent writes
+    # itself, with no turn behind it at delivery.
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    text, _ = diode.handle_command(
+        "later 60 speak hello", {"enable_scheduling": True, "enable_speech": True}, []
+    )
+    assert text == "cannot defer: speak"
+    assert not (tmp_path / "pending.json").exists()

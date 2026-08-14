@@ -265,6 +265,7 @@ COMMANDS = {
     "speak": {
         "gate": _speech_gate,
         "help": "speak <text> -> make text available outside the container as audio",
+        "credentialed": True,
     },
     "later": {
         "gate": lambda v: bool(v.get("enable_scheduling")),
@@ -749,7 +750,7 @@ def handle_command(command, variables, fetch_history):
             word = command_word(inner)
             if word not in COMMANDS:
                 return UNKNOWN_COMMAND.format(name=word), fetch_history
-            if word in DEFERRING_COMMANDS:
+            if word in DEFERRING_COMMANDS or COMMANDS[word].get("credentialed"):
                 return f"cannot defer: {word}", fetch_history
             item["kind"] = "command"
             item["command"] = inner

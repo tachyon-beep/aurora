@@ -274,8 +274,15 @@ not frozen at schedule time:
 
 - A command whose gate has since closed is refused, because `handle_command` checks availability
   itself (`diode.py:560`).
-- `speak` re-derives `min(fetch_limit(variables), speech_limit())` from the environment at call time
-  (`diode.py:600`), so a scheduled utterance cannot outlive or exceed the operator's ceiling.
+- No credentialed command can be deferred at all. `later` refuses any command marked `credentialed`
+  in `COMMANDS`, which today means `speak`. Re-checking the gate at delivery is weaker assurance for
+  spend than for anything else, because the gate is a console variable *the agent itself writes*: a
+  deferred utterance would spend the credential a week later with no agent turn behind it, authorised
+  only by the agent's own earlier decision. The operator's `ENABLE_SPEECH` and `SPEECH_HOURLY_MAX`
+  would still bind, so this is a policy choice rather than a containment hole — but it keeps faith
+  with the rule that both controls on credentialed spend stay out of the agent's reach. The marker
+  lives on the command rather than in a hardcoded name, so the next credentialed command inherits the
+  refusal instead of needing someone to remember.
 - The budget is charged on delivery by the same `check_rate_limit` path as a direct call. A deferred
   command that arrives into an exhausted budget is refused and its refusal is filed, spending nothing.
 - SSRF classification and redirect re-validation are unchanged; nothing about the deferred path

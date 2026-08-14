@@ -79,7 +79,9 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      redirect re-validation). Deferred commands (`echo`, `later`) are re-dispatched through
      `handle_command` on delivery, so gates, the speech ceiling, and the budget are all re-evaluated
      then and nothing is captured at schedule time. Keep that property when adding to the queue, and
-     keep `later` refusing to defer a deferring command. `state.json`'s `undocumented_commands` is a
+     keep `later` refusing to defer a deferring command or one marked `credentialed` — a deferred
+     spend would be authorised only by a console variable the agent wrote, with no agent turn behind
+     it at delivery. Mark any new credentialed command that way. `state.json`'s `undocumented_commands` is a
      live count of unlisted commands not yet run, derived from result *bodies* in `output/` because a
      refused guess leaves the same filename as a real run. Keep it derived, and keep a found command
      out of `HELP.md`.
