@@ -103,9 +103,13 @@ A sub-call renders as one quiet row beneath the loop turn that made it, not as a
 Mono, dimmed, no serif reasoning, never expandable. Sub-calls are attributed to the nearest
 preceding loop turn by transcript index.
 
-Reconciliation keys: `turnKey(t)` is `incarnation + ":" + index`, and expansion state must survive
-the 2 s poll. Child rows take their own distinct keys (`incarnation + ":" + index + ":sub"`) so
-keyed reconciliation is not broken by a parent gaining or losing children between polls.
+Reconciliation: `turnKey(t)` (`incarnation + ":" + index`) keys loop turns in the global
+`turnNodes`/`dividers` maps, and expansion state must survive the 2 s poll. Sub-rows are not
+entered into a global keyed map at all — each turn node holds its sub-calls positionally, in a
+`node.__subs[i]` array, mirroring the existing `node.__tools[i]` convention. This is sufficient
+because a sub-row carries no expansion state (it is never expandable): there is nothing for keyed
+reconciliation to protect. `updateSubRows` walks the array by index each poll, reusing a row in
+place when a position is still occupied and hiding it when the parent's sub-call count has shrunk.
 
 ### The layout pass
 
