@@ -256,3 +256,74 @@ def test_readme_names_the_protocol_and_stays_affectless(tmp_path):
     ):
         assert phrase in text
     assert "!" not in text
+
+
+def _registry(now=10_000.0):
+    return rs.StreamRegistry(clock=lambda: now)
+
+
+def test_apply_reports_added_and_removed():
+    registry = _registry()
+    added, removed = registry.apply({"aux": {}}, {})
+    assert added == ["aux"] and removed == []
+    added, removed = registry.apply({"other": {}}, {})
+    assert added == ["other"] and removed == ["aux"]
+
+
+def test_admit_composes_and_charges(monkeypatch):
+    monkeypatch.delenv("STREAM_HOURLY_MAX", raising=False)
+    registry = _registry()
+    registry.apply({"aux": {"model": "declared", "budget": 1}}, {})
+    body = json.dumps({"model": "sent", "messages": []}).encode("utf-8")
+    composed, refusal = registry.admit("aux", body)
+    assert refusal is None
+    assert json.loads(composed.decode("utf-8"))["model"] == "declared"
+    composed, refusal = registry.admit("aux", body)
+    assert composed == body
+    status, message = refusal
+    assert status == 429
+    assert message.startswith("rate limited: at most 1 request(s) per hour")
+    assert "next available in" in message
+
+
+def test_admit_refuses_a_bad_body_without_charging():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 1}}, {})
+    body, refusal = registry.admit("aux", b"not json")
+    assert refusal == (400, "request body is not a json object")
+    _, refusal = registry.admit("aux", json.dumps({"messages": []}).encode("utf-8"))
+    assert refusal is None
+
+
+def test_admit_on_an_unknown_stream():
+    registry = _registry()
+    body, refusal = registry.admit("gone", b"{}")
+    assert refusal == (503, "stream not available")
+
+
+def test_removed_streams_forget_their_histories():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 1}}, {})
+    registry.admit("aux", b"{}")
+    registry.apply({}, {})
+    registry.apply({"aux": {"budget": 1}}, {})
+    _, refusal = registry.admit("aux", b"{}")
+    assert refusal is None
+
+
+def test_reject_moves_a_stream_into_the_rejected_set():
+    registry = _registry()
+    registry.apply({"aux": {}}, {})
+    registry.reject("aux", "bind failed: OSError")
+    state = registry.state()
+    assert state["streams"]["aux"] == {"status": "rejected", "reason": "bind failed: OSError"}
+
+
+def test_state_reflects_use_and_console_errors():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 5}}, {})
+    registry.admit("aux", b"{}")
+    state = registry.state(console_error=None)
+    assert state["streams"]["aux"]["budget"]["used"] == 1
+    state = registry.state(console_error="console is not valid json")
+    assert state["console_error"] == "console is not valid json"

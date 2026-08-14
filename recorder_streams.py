@@ -2,6 +2,8 @@ import json
 import math
 import os
 import re
+import threading
+import time
 
 CONSOLE_FILE = os.environ.get("LLM_CONSOLE_FILE", "/llm/console/console.json")
 POLL_SECONDS = 5
@@ -244,3 +246,70 @@ def write_readme(sock_dir):
     """Write the socket directory's protocol description."""
     with open(os.path.join(sock_dir, "README.md"), "w", encoding="utf-8") as f:
         f.write(README_TEXT)
+
+
+class StreamRegistry:
+    """The live stream set: settings, rejections, and budget histories.
+
+    Request threads read settings and charge budgets while the poll thread
+    applies console changes, so every access holds the lock.
+    """
+
+    def __init__(self, clock=time.time):
+        self._lock = threading.Lock()
+        self._settings = {}
+        self._rejected = {}
+        self._histories = {}
+        self._clock = clock
+
+    def apply(self, accepted, rejected):
+        """Adopt a console evaluation. Returns (added, removed) stream names."""
+        with self._lock:
+            added = [name for name in accepted if name not in self._settings]
+            removed = [name for name in self._settings if name not in accepted]
+            self._settings = {name: dict(settings) for name, settings in accepted.items()}
+            self._rejected = dict(rejected)
+            for name in removed:
+                self._histories.pop(name, None)
+            return added, removed
+
+    def reject(self, name, reason):
+        """Record a stream the poll loop could not serve."""
+        with self._lock:
+            self._settings.pop(name, None)
+            self._histories.pop(name, None)
+            self._rejected[name] = reason
+
+    def admit(self, stream, body):
+        """Compose and charge one request. Returns (body, refusal).
+
+        refusal is None when the request may be forwarded, else a
+        (status, message) pair. A body that fails composition is refused
+        before any budget charge.
+        """
+        with self._lock:
+            settings = self._settings.get(stream)
+            settings = dict(settings) if settings is not None else None
+        if settings is None:
+            return body, (503, "stream not available")
+        composed, error = compose_body(body, settings)
+        if error is not None:
+            return body, (400, error)
+        allowance = effective_allowance(settings)
+        with self._lock:
+            now = self._clock()
+            history = self._histories.get(stream, [])
+            allowed, history = check_budget(history, now, allowance)
+            self._histories[stream] = history
+            if not allowed:
+                return body, (429, rate_limited_message(allowance, history, now))
+        return composed, None
+
+    def state(self, console_error=None, now=None):
+        """The current streams.json document."""
+        with self._lock:
+            if now is None:
+                now = self._clock()
+            return render_state(
+                self._settings, self._rejected, dict(self._histories), now, console_error
+            )
