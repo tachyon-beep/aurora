@@ -1358,13 +1358,23 @@ assert 'rate limited' in r.json()['error']['message']
 "
 
 echo "==> streams.json reports the stream and is agent-readable"
-docker compose exec -T agent python -c "
+# The state file is refreshed by the recorder's 5s poll loop, so the charge
+# from the completions above can take one cycle to appear on disk; retry for
+# up to 15s rather than reading once.
+i=0
+until docker compose exec -T agent python -c "
 import json
 with open('/llm/sock/streams.json') as f:
     state = json.load(f)
 assert state['streams']['aux']['status'] == 'active'
 assert state['streams']['aux']['budget']['used'] >= 1
-"
+" 2>/dev/null; do
+  i=$((i + 1))
+  if [ "$i" -ge 15 ]; then
+    echo "FAIL: streams.json did not report the stream's use"; exit 1
+  fi
+  sleep 1
+done
 
 echo "==> streams.json is not writable from the agent"
 if docker compose exec -T agent sh -c 'echo x > /llm/sock/streams.json' 2>/dev/null; then
