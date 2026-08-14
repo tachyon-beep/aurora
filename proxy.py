@@ -19,8 +19,11 @@ TRANSCRIPT_DIR = os.environ.get("TRANSCRIPT_DIR", os.path.dirname(os.path.abspat
 TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.jsonl")
 PLAIN_TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.txt")
 TRANSCRIPT_MAX_BYTES = int(os.environ.get("TRANSCRIPT_MAX_BYTES", str(134_217_728)))
+EVENTS_FILE = os.path.join(TRANSCRIPT_DIR, "events.jsonl")
+EVENTS_MAX_BYTES = 16_777_216
 
 _transcript_lock = threading.Lock()
+_events_lock = threading.Lock()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -100,6 +103,33 @@ def rotate_if_needed(path, max_bytes=None):
             except Exception:
                 pass
         return None
+
+
+def request_id():
+    """A random hex token pairing one request's open and close events."""
+    return os.urandom(8).hex()
+
+
+def log_event(event, stream, **fields):
+    """Append one telemetry event; failures never affect the request.
+
+    Events carry names, counts, statuses, durations, and token totals only,
+    never message content or headers.
+    """
+    entry = {
+        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "event": event,
+        "stream": stream,
+    }
+    entry.update(fields)
+    try:
+        with _events_lock:
+            os.makedirs(os.path.dirname(EVENTS_FILE) or ".", exist_ok=True)
+            with open(EVENTS_FILE, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry) + "\n")
+            rotate_if_needed(EVENTS_FILE, EVENTS_MAX_BYTES)
+    except Exception as e:
+        print(f"Error writing event: {e}", file=sys.stderr)
 
 
 class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
