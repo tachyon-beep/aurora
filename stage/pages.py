@@ -1347,7 +1347,7 @@ var spokenPlayed = (function () {
   } catch (e) {}
   return seen;
 })();
-var spokenQueue = [], spokenBusy = false;
+var spokenQueue = [], spokenBusy = false, spokenCurrent = null;
 function markSpokenPlayed(name) {
   spokenPlayed[name] = true;
   /* Names are UTC stamps, so lexical order is chronological and the tail is newest. */
@@ -1360,15 +1360,23 @@ function playNextSpoken() {
   var a = $("speak-audio");
   if (!a || spokenBusy || !spokenQueue.length) return;
   spokenBusy = true;
-  a.src = "/audio/" + encodeURIComponent(spokenQueue.shift());
+  spokenCurrent = spokenQueue.shift();
+  a.src = "/audio/" + encodeURIComponent(spokenCurrent);
+  /* A load failure fires "error" AND rejects this promise, so the rejection has
+     to name the item it belongs to: advancing on both would shift the next
+     utterance out of the queue and skip it unplayed. Testing spokenBusy would
+     not help, since by then the next item has already set it. */
+  var mine = spokenCurrent;
   try {
     var p = a.play();
-    if (p && p.catch) p.catch(spokenAdvance);
+    if (p && p.catch) p.catch(function () { if (mine === spokenCurrent) spokenAdvance(); });
   } catch (e) { spokenAdvance(); }
 }
 function spokenAdvance() {
   /* Reached on end, on a failed load, and on a refused autoplay: each of those
-     leaves the element idle, so the queue drains instead of wedging. */
+     leaves the element idle, so the queue drains instead of wedging. Takes no
+     argument — it is bound directly as an event listener. */
+  spokenCurrent = null;
   spokenBusy = false;
   playNextSpoken();
 }

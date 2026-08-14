@@ -298,10 +298,20 @@ Unit tests, in the existing direct-call + monkeypatch style:
   a large file without buffering it; the CSP header contains `media-src 'self'`.
 - Page: the queue walks oldest-first and pushes onto `spokenQueue`; playback advances on `ended`,
   on `error`, and on a rejected `play()`; the played set is persisted and bounded; a negative age
-  never plays.
+  never plays. These are **executed**, not grepped: `tests/test_stage_pages_js.py` runs the real
+  script through `node --check` and drives the playback block against a fake audio element, so a
+  syntax error — which would silence the whole page while every grep stayed green — and a queue
+  that skips or wedges both fail the suite. Skipped when node is absent; no new dependency.
+  A load failure fires `error` **and** rejects `play()`, so the rejection is matched against the
+  item it belongs to; advancing on both would shift the next utterance out unplayed, which is the
+  original defect reintroduced inside its own fix.
 - Commentary: a stale utterance does not fire the beat, and neither does a future-dated one.
 - Containment: the verify script checks the agent environment for `ELEVENLABS_*`, and checks that
-  an agent-written `enable_speech` does not put `speak` into HELP.md when `ENABLE_SPEECH` is unset.
+  an agent-written `enable_speech` puts neither `speak <text>` nor `enable_speech` into HELP.md
+  when `ENABLE_SPEECH` is unset. Every pattern that script greps out of HELP.md is asserted against
+  real `write_help` output by a unit test: `speak` takes an argument where `time` does not, so the
+  obvious `"speak ->"` pattern matches nothing and would have made the container assertion pass
+  unconditionally. A refutation check that cannot match is a check that is not there.
 
 **Manual completion criterion:** one `speak` played through a real OBS browser source, heard.
 Autoplay policy is the one thing no unit test in this suite can catch — the entire feature can be

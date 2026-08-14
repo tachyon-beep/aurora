@@ -40,6 +40,28 @@ def test_verifier_checks_the_console_cannot_open_the_speech_gate():
     assert "ENABLE_SPEECH" in text
 
 
+def test_verifier_greps_help_for_patterns_write_help_actually_emits():
+    """A refutation check that cannot match is a check that always passes.
+
+    Every pattern the script greps out of HELP.md is asserted against the real
+    write_help output here, so a help line that gains an argument (as `speak`
+    has, unlike `time`) cannot leave a container assertion silently dead.
+    """
+    import re
+
+    import diode
+
+    text = _script()
+    patterns = set(re.findall(r"""grep -q ["']([^"']+)["'] /diode/HELP\.md""", text))
+    assert patterns, "the HELP.md assertions moved or were renamed"
+    written = "\n".join(diode.COMMANDS[name]["help"] for name in diode.COMMANDS)
+    written += "\n" + "\n".join(
+        f"enable_{v}" for v in ("fetchlinks", "clock", "feeds", "speech", "publishing")
+    )
+    for pattern in patterns:
+        assert pattern in written, f"{pattern!r} never appears in a HELP.md line"
+
+
 def test_verifier_cleanup_names_only_its_isolated_volumes():
     text = _script()
     assert '"${COMPOSE_PROJECT_NAME}_state"' in text

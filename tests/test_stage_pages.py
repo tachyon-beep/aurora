@@ -143,10 +143,12 @@ def test_playback_queues_utterances_instead_of_playing_only_the_newest():
 
 
 def test_the_queue_advances_on_every_way_playback_can_stop():
-    # An unhandled failure would leave spokenBusy set and wedge the queue.
+    # An unhandled failure would leave spokenBusy set and wedge the queue. That
+    # the advance happens exactly once per item is executed, not grepped, in
+    # tests/test_stage_pages_js.py.
     assert 'a.addEventListener("ended", spokenAdvance)' in HTML
     assert 'a.addEventListener("error", spokenAdvance)' in HTML
-    assert "if (p && p.catch) p.catch(spokenAdvance)" in HTML
+    assert "if (mine === spokenCurrent) spokenAdvance();" in HTML
 
 
 def test_the_played_set_survives_a_reload():

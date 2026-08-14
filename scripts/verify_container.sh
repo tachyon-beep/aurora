@@ -138,9 +138,17 @@ echo "==> speech gate does not open from the agent-writable console"
 if docker compose exec -T diode sh -c 'test -z "$ENABLE_SPEECH"'; then
   docker compose exec -T agent sh -c 'printf "{\"commands\":[\"help\"],\"variables\":{\"enable_speech\":true}}" > /diode/console.json'
   sleep 10
-  if docker compose exec -T agent sh -c 'grep -q "speak ->" /diode/HELP.md'; then
+  # The help text is "speak <text> -> ...", so the pattern has to carry the
+  # argument; "speak ->" would match nothing and pass whatever the gate did.
+  if docker compose exec -T agent sh -c 'grep -q "speak <text>" /diode/HELP.md'; then
     echo "FAIL: the console alone made the credentialed command available"; exit 1
   fi
+  if docker compose exec -T agent sh -c 'grep -q "enable_speech" /diode/HELP.md'; then
+    echo "FAIL: help offers a speech gate variable that does not work"; exit 1
+  fi
+  docker compose exec -T agent sh -c 'grep -q "fetchhttp <url>" /diode/HELP.md' || {
+    echo "FAIL: help did not refresh, so the speech assertions proved nothing"; exit 1
+  }
 else
   echo "    skipped: ENABLE_SPEECH is set in this stack"
 fi
