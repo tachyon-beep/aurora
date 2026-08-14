@@ -1,3 +1,4 @@
+import httpx
 import pytest
 
 import chassis
@@ -104,6 +105,11 @@ def test_present_socket_builds_a_uds_client(clean_env, tmp_path):
 
     assert model == "some/model"
     assert str(client.base_url).rstrip("/") == "http://localhost/api/v1"
+    # The wiring under test is the UDS transport itself, not just the base_url,
+    # which stays the same string regardless of whether the transport used it.
+    transport = client._client._transport
+    assert isinstance(transport, httpx.HTTPTransport)
+    assert transport._pool._uds == str(path)
 
 
 def test_absent_socket_raises_environment_failure(clean_env, tmp_path, monkeypatch):
@@ -131,3 +137,12 @@ def test_wait_for_socket_gives_up_at_the_timeout(tmp_path):
     assert (
         chassis.wait_for_socket(str(tmp_path / "never"), timeout=0, sleep=lambda s: None) is False
     )
+
+
+def test_wait_for_socket_returns_true_immediately_when_already_present(tmp_path):
+    # The container cold-start case: the socket can already exist by the time the
+    # chassis checks, even with no time budget to wait for it.
+    path = tmp_path / "core.sock"
+    path.write_bytes(b"")
+
+    assert chassis.wait_for_socket(str(path), timeout=0, sleep=lambda s: None) is True
