@@ -7,6 +7,7 @@ import httpx
 import pytest
 
 import proxy
+import recorder_streams
 
 
 @pytest.fixture
@@ -99,3 +100,81 @@ def test_a_stale_socket_file_is_replaced_and_permissioned(tmp_path, transcripts)
 
 def test_the_default_socket_path_is_under_llm_sock():
     assert proxy.SOCKET_PATH == "/llm/sock/core.sock"
+
+
+@pytest.fixture
+def registry():
+    return recorder_streams.StreamRegistry()
+
+
+@pytest.fixture
+def stream_server(tmp_path, transcripts, fake_upstream, registry, monkeypatch):
+    monkeypatch.delenv("STREAM_HOURLY_MAX", raising=False)
+    registry.apply({"aux": {"model": "declared", "budget": 1}}, {})
+    path = str(tmp_path / "aux.sock")
+    instance = proxy.UnixHTTPServer(path, proxy.ProxyHTTPRequestHandler)
+    instance.stream_name = "aux"
+    instance.registry = registry
+    thread = threading.Thread(target=instance.serve_forever, daemon=True)
+    thread.start()
+    yield path
+    instance.shutdown()
+    instance.server_close()
+
+
+def _entries(transcripts):
+    lines = (transcripts / "transcript.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    return [json.loads(line) for line in lines]
+
+
+def test_core_entries_are_tagged_core(server, transcripts):
+    _post(server, {"model": "m", "messages": []})
+    (entry,) = _entries(transcripts)
+    assert entry["stream"] == "core"
+
+
+def test_a_declared_stream_composes_and_tags(stream_server, transcripts):
+    response = _post(stream_server, {"model": "sent", "messages": []})
+    assert response.status_code == 200
+    (entry,) = _entries(transcripts)
+    assert entry["stream"] == "aux"
+    assert entry["request"]["model"] == "declared"
+
+
+def test_an_exhausted_stream_refuses_and_records(stream_server, transcripts):
+    _post(stream_server, {"model": "m", "messages": []})
+    response = _post(stream_server, {"model": "m", "messages": []})
+    assert response.status_code == 429
+    message = response.json()["error"]["message"]
+    assert message.startswith("rate limited: at most 1 request(s) per hour on this socket")
+    assert "next available in" in message
+    entries = _entries(transcripts)
+    assert len(entries) == 2
+    assert entries[1]["response"]["error"]["message"] == message
+
+
+def test_a_non_object_body_on_a_stream_is_refused(stream_server, transcripts):
+    transport = httpx.HTTPTransport(uds=stream_server)
+    with httpx.Client(transport=transport, base_url="http://localhost") as client:
+        response = client.post(
+            "/api/v1/chat/completions",
+            content=b"[1, 2]",
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "request body is not a json object"
+
+
+def test_core_forwards_the_body_verbatim(server, transcripts, monkeypatch):
+    seen = {}
+    real_request = proxy.urllib.request.Request
+
+    def capture(url, data=None, headers=None, method=None):
+        seen["data"] = data
+        return real_request(url, data=data, headers=headers, method=method)
+
+    monkeypatch.setattr(proxy.urllib.request, "Request", capture)
+    payload = {"model": "m", "messages": [], "temperature": 0.5}
+    _post(server, payload)
+    assert json.loads(seen["data"].decode("utf-8")) == payload

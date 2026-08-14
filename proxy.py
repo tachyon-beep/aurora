@@ -113,6 +113,15 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         content_length = int(self.headers.get("Content-Length", 0))
         req_body = self.rfile.read(content_length)
+        stream = getattr(self.server, "stream_name", "core")
+        registry = getattr(self.server, "registry", None)
+
+        if registry is not None and stream != "core":
+            req_body, refused = registry.admit(stream, req_body)
+            if refused is not None:
+                status_code, message = refused
+                self._finish_local(stream, req_body, status_code, message)
+                return
 
         try:
             req_data = json.loads(req_body.decode("utf-8"))
@@ -167,7 +176,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         except Exception:
             res_data = {"raw_body": response_body.decode("utf-8", errors="replace")}
 
-        self.log_transcript(req_data, res_data)
+        self.log_transcript(req_data, res_data, stream=stream)
 
         self.send_response(response_code)
         for k, v in response_headers:
@@ -176,12 +185,30 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(response_body)
 
-    def log_transcript(self, request_data, response_data):
+    def _finish_local(self, stream, req_body, status_code, message):
+        """Answer a request locally with a factual error and record the exchange."""
+        try:
+            req_data = json.loads(req_body.decode("utf-8"))
+        except Exception:
+            req_data = None
+        if not isinstance(req_data, dict):
+            req_data = {"raw_body": req_body.decode("utf-8", errors="replace")}
+        res_data = {"error": {"message": message}}
+        body = json.dumps(res_data).encode("utf-8")
+        self.log_transcript(req_data, res_data, stream=stream)
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_transcript(self, request_data, response_data, stream="core"):
         """Appends a new conversation step to the transcript file and dumps it to stdout."""
         os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
 
         entry = {
             "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "stream": stream,
             "request": request_data,
             "response": response_data,
         }
