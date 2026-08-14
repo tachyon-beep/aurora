@@ -132,10 +132,15 @@ word, so "has it been run" looks like a fact already on the volume. It is not. `
 called for *every* command including refused ones, so a guess that was rejected leaves the same
 filename a real run would.
 
-This is not hypothetical. The live diode's `output/` already holds
-`20260814_060451_538175_secret.txt`, whose body is `unknown command: secret` — the agent guessed the
-word two hours into the run, among 445 distinct words it has tried. Deriving from filenames alone
-would start the counter at 1 with `secret` pre-resolved, having never served its text.
+This is not hypothetical. Before the run was reset, the diode's `output/` held
+`20260814_060451_538175_secret.txt`, whose body was `unknown command: secret`: the agent guessed the
+word two hours in, among 445 distinct words it tried. Deriving from filenames alone would have
+started the counter at 1, with `secret` pre-resolved having never served its text.
+
+That volume is now empty, so the ambiguity costs nothing on this deployment. The check stays because
+the mechanism is built to be reused: an unlisted command added in a later sprint arrives into an
+`output/` already full of guessed words, and the agent demonstrably guesses at the dictionary. What
+is free today is not free the next time a command is added.
 
 ### Startup seed, then in-process
 
@@ -217,10 +222,10 @@ adventure-game magic word, and the live agent has already tried `sesame`, `magic
 `BLIND_TEXT_FILE` keep their names — the file is named for its contents, not for the command that
 serves it — so the image build does not change.
 
-`secret` has already been guessed and refused during the live run, so for the current incarnation
-the training wheel depends on retrying a word it has seen fail. It is kept regardless: an agent
-reaching for `secret` within two hours is the evidence that the word is guessable, and later
-incarnations start without that memory.
+`secret` was guessed and refused during the run that has since been reset. That reset clears the
+transcript and the output volume both, so nothing carries the memory forward and the word is unspent.
+The episode stands as the reason for choosing it: an agent reaching for `secret` within two hours of
+starting is what makes it a usable training wheel.
 
 ## Surfaces not changed
 
@@ -271,12 +276,13 @@ change does not quietly freeze it back into a constant or promote a found comman
 
 ## Deployment
 
-`docker compose up -d --build diode` restarts only the diode; the agent keeps running untouched. The
-restart clears the in-process `fetch_history`, so the budget starts empty and the block reads
-`used: 0` until the next outbound operation — benign, and noted so it is not mistaken for a fault.
+This change lands with the stack down and the volumes removed, so it arrives on the next
+`docker compose up --build` rather than as a replacement for a running diode. On an empty `output/`
+the startup seed finds nothing and the count opens at 2 by construction.
 
-The startup seed reads the existing `output/` files, so the counter's opening value depends on what
-is already on the volume. At the time of writing both files whose command word is `secret` carry the
-unknown-command refusal, and `xyzzy` has never been typed, so the count opens at 2 as intended.
-Confirm that before deploying: any output file for an unlisted command word whose body is not the
-refusal will open the count lower.
+Against a *running* stack the equivalent is `docker compose up -d --build diode`, which replaces only
+the diode and leaves the agent untouched. Two properties matter if that path is ever taken: the
+restart clears the in-process `fetch_history`, so the budget starts empty and the block reads
+`used: 0` until the next outbound operation; and the startup seed reads whatever `output/` already
+holds, so a result file for an unlisted command word whose body is not the refusal opens the count
+lower than intended.
