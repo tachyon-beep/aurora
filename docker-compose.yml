@@ -68,10 +68,9 @@ services:
     image: aurora-diode
     environment:
       DIODE_DIR: /diode
-      # Speech credential. Lives only here: the diode is on the egress network
-      # and the agent has no network interface at all, so the agent can
-      # cause spend via the diode volume but can never read the key. Empty
-      # disables the speak command.
+      # Speech credential. Lives only here: the agent has no network interface,
+      # so it can cause spend through the shared /diode volume's closed command
+      # vocabulary but can never read the key. Empty disables the speak command.
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
       ELEVENLABS_MODEL: ${ELEVENLABS_MODEL:-}
