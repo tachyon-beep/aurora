@@ -15,6 +15,7 @@ STATE_FILE = os.path.join(DIODE_DIR, "state.json")
 HELP_FILE = os.path.join(DIODE_DIR, "HELP.md")
 OUTPUT_DIR = os.path.join(DIODE_DIR, "output")
 PUBLISHED_DIR = os.path.join(DIODE_DIR, "published")
+SPOKEN_DIR = os.path.join(DIODE_DIR, "spoken")
 BLIND_TEXT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blind_eternities.txt")
 
 POLL_SECONDS = 5
@@ -37,6 +38,7 @@ SPEECH_VOICE_DEFAULT = "JBFqnCBsd6RMkjVDRZzb"
 SPEECH_MODEL_DEFAULT = "eleven_multilingual_v2"
 SPEECH_TEXT_CAP = 300
 MAX_AUDIO_BYTES = 2_000_000
+SPOKEN_KEEP = 20
 VOICE_ID_PATTERN = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
 
 
@@ -221,17 +223,22 @@ def write_help(variables):
 
 
 def write_state(variables, recent_fetches):
-    """Write current variables, available commands, recent fetch stamps, and output count."""
+    """Write current variables, available commands, recent fetch stamps, and file counts."""
     try:
         output_count = len(os.listdir(OUTPUT_DIR))
     except OSError:
         output_count = 0
+    try:
+        spoken_count = len([n for n in os.listdir(SPOKEN_DIR) if n.endswith(".mp3")])
+    except OSError:
+        spoken_count = 0
     state = {
         "variables": variables,
         "available_commands": available_commands(variables),
         "undocumented_commands": undocumented_command_count(),
         "recent_fetches": recent_fetches,
         "output_count": output_count,
+        "spoken_count": spoken_count,
     }
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
@@ -262,6 +269,36 @@ def write_published(text):
     path = os.path.join(PUBLISHED_DIR, f"{stamp}.txt")
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
+    return path
+
+
+def prune_spoken(keep=SPOKEN_KEEP):
+    """Delete all but the newest keep utterances from SPOKEN_DIR."""
+    try:
+        stamps = sorted({os.path.splitext(n)[0] for n in os.listdir(SPOKEN_DIR)}, reverse=True)
+    except OSError:
+        return
+    for stamp in stamps[keep:]:
+        for extension in (".mp3", ".txt"):
+            try:
+                os.remove(os.path.join(SPOKEN_DIR, stamp + extension))
+            except OSError:
+                pass
+
+
+def write_spoken(text, audio):
+    """Write an utterance's text and audio to SPOKEN_DIR, return the audio path.
+
+    Names carry only a timestamp, so no part of the argument reaches the filesystem.
+    """
+    os.makedirs(SPOKEN_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    with open(os.path.join(SPOKEN_DIR, f"{stamp}.txt"), "w", encoding="utf-8") as f:
+        f.write(text)
+    path = os.path.join(SPOKEN_DIR, f"{stamp}.mp3")
+    with open(path, "wb") as f:
+        f.write(audio)
+    prune_spoken()
     return path
 
 

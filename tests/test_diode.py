@@ -628,3 +628,58 @@ def test_speak_request_contains_transport_errors(monkeypatch):
     ok, reason = diode._speak_request("hello")
     assert ok is False
     assert "speech error" in reason
+
+
+def test_write_spoken_names_files_from_the_timestamp_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    path = diode.write_spoken("../../etc/passwd", b"ID3audio")
+    name = os.path.basename(path)
+    assert name.endswith(".mp3")
+    assert "passwd" not in name and "/" not in name and ".." not in name
+    stem = name[: -len(".mp3")]
+    assert (tmp_path / "spoken" / (stem + ".txt")).read_text(encoding="utf-8") == "../../etc/passwd"
+    assert (tmp_path / "spoken" / name).read_bytes() == b"ID3audio"
+
+
+def test_write_spoken_prunes_after_each_write(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    calls = []
+    monkeypatch.setattr(diode, "prune_spoken", lambda: calls.append(True))
+    diode.write_spoken("hello", b"ID3audio")
+    assert calls == [True]
+
+
+def test_prune_spoken_keeps_only_the_newest(tmp_path, monkeypatch):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(spoken))
+    for i in range(5):
+        stem = f"2026081{i}_000000_000000"
+        (spoken / (stem + ".mp3")).write_bytes(b"a")
+        (spoken / (stem + ".txt")).write_text("t", encoding="utf-8")
+    diode.prune_spoken(keep=2)
+    remaining = sorted(p.name for p in spoken.iterdir())
+    assert remaining == [
+        "20260813_000000_000000.mp3",
+        "20260813_000000_000000.txt",
+        "20260814_000000_000000.mp3",
+        "20260814_000000_000000.txt",
+    ]
+
+
+def test_prune_spoken_tolerates_a_missing_directory(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    diode.prune_spoken(keep=2)
+
+
+def test_state_reports_the_spoken_count(tmp_path, monkeypatch):
+    spoken = tmp_path / "spoken"
+    spoken.mkdir()
+    (spoken / "20260814_000000_000000.mp3").write_bytes(b"a")
+    (spoken / "20260814_000000_000000.txt").write_text("t", encoding="utf-8")
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(spoken))
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    diode.write_state({}, [])
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    assert state["spoken_count"] == 1
