@@ -2,6 +2,7 @@ import datetime
 import ipaddress
 import json
 import os
+import re
 import socket
 import time
 import urllib.error
@@ -28,6 +29,15 @@ FEED_ITEM_CAP = 20
 FEED_TITLE_CAP = 300
 FEED_SUMMARY_CAP = 500
 PUBLISH_TEXT_CAP = 4000
+
+SPEECH_URL_TEMPLATE = (
+    "https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"
+)
+SPEECH_VOICE_DEFAULT = "JBFqnCBsd6RMkjVDRZzb"
+SPEECH_MODEL_DEFAULT = "eleven_multilingual_v2"
+SPEECH_TEXT_CAP = 300
+MAX_AUDIO_BYTES = 2_000_000
+VOICE_ID_PATTERN = re.compile(r"\A[A-Za-z0-9_-]{1,64}\Z")
 
 
 def _default_resolver(host):
@@ -403,6 +413,64 @@ def _fetch(url):
         return True, body.decode("utf-8", errors="replace")
     except Exception as e:
         return False, f"fetch error: {e}"
+
+
+def speech_key():
+    """The configured speech API key, or an empty string when unset."""
+    return os.environ.get("ELEVENLABS_API_KEY", "").strip()
+
+
+def speech_voice():
+    """The configured voice id, or an empty string when it is malformed."""
+    voice = os.environ.get("ELEVENLABS_VOICE_ID", "").strip() or SPEECH_VOICE_DEFAULT
+    return voice if VOICE_ID_PATTERN.match(voice) else ""
+
+
+def speech_model():
+    """The configured speech model name."""
+    return os.environ.get("ELEVENLABS_MODEL", "").strip() or SPEECH_MODEL_DEFAULT
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _speak_request(text):
+    """Render text to audio bytes. Returns (ok, audio_bytes_or_reason).
+
+    Takes no URL: the host and path are constants and the voice id comes from the
+    environment, so no agent input reaches the request target. Redirects are
+    refused rather than revalidated because a redirect would resend the key.
+    """
+    key = speech_key()
+    voice = speech_voice()
+    if not key or not voice:
+        return False, "speech not configured"
+    url = SPEECH_URL_TEMPLATE.format(voice=voice)
+    ok, reason = classify_url(url)
+    if not ok:
+        return False, f"refused: {reason}"
+    payload = json.dumps({"text": text, "model_id": speech_model()}).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=payload,
+        headers={
+            "xi-api-key": key,
+            "Content-Type": "application/json",
+            "User-Agent": "aurora-diode/1",
+        },
+        method="POST",
+    )
+    try:
+        opener = urllib.request.build_opener(_NoRedirectHandler)
+        with opener.open(request, timeout=FETCH_TIMEOUT) as resp:
+            audio = resp.read(MAX_AUDIO_BYTES)
+    except Exception as e:
+        return False, f"speech error: {e}"
+    if not audio:
+        return False, "speech error: empty response"
+    return True, audio
 
 
 def handle_command(command, variables, fetch_history):

@@ -524,3 +524,107 @@ def test_state_reports_undocumented_command_count(tmp_path, monkeypatch):
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert state["undocumented_commands"] == 1
     assert "blind" not in state["available_commands"]
+
+
+def test_speech_helpers_read_the_environment(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "  k  ")
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    monkeypatch.delenv("ELEVENLABS_MODEL", raising=False)
+    assert diode.speech_key() == "k"
+    assert diode.speech_voice() == diode.SPEECH_VOICE_DEFAULT
+    assert diode.speech_model() == diode.SPEECH_MODEL_DEFAULT
+
+
+def test_speech_voice_rejects_a_malformed_id(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_VOICE_ID", "../../etc/passwd")
+    assert diode.speech_voice() == ""
+
+
+def test_speak_request_without_a_key_is_refused(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "")
+    ok, reason = diode._speak_request("hello")
+    assert ok is False
+    assert reason == "speech not configured"
+
+
+def test_speak_request_takes_no_url_argument():
+    import inspect
+
+    assert list(inspect.signature(diode._speak_request).parameters) == ["text"]
+
+
+def test_speak_request_refuses_a_redirect():
+    handler = diode._NoRedirectHandler()
+    assert handler.redirect_request(None, None, 302, "Found", {}, "https://evil.example/") is None
+
+
+def test_speak_request_returns_audio_bytes(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    monkeypatch.delenv("ELEVENLABS_MODEL", raising=False)
+    seen = {}
+
+    class _Resp:
+        def read(self, n):
+            seen["cap"] = n
+            return b"ID3audio"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    class _Opener:
+        def open(self, req, timeout=None):
+            seen["url"] = req.full_url
+            seen["key"] = req.get_header("Xi-api-key")
+            seen["method"] = req.get_method()
+            seen["body"] = json.loads(req.data.decode("utf-8"))
+            return _Resp()
+
+    def _classify(url):
+        seen["classified"] = url
+        return True, ""
+
+    monkeypatch.setattr(diode, "classify_url", _classify)
+    monkeypatch.setattr(diode.urllib.request, "build_opener", lambda *a: _Opener())
+    ok, audio = diode._speak_request("hello")
+    assert ok is True
+    assert audio == b"ID3audio"
+    assert seen["cap"] == diode.MAX_AUDIO_BYTES
+    assert seen["url"].startswith("https://api.elevenlabs.io/v1/text-to-speech/")
+    assert seen["classified"] == seen["url"]
+    assert seen["key"] == "k"
+    assert seen["method"] == "POST"
+    assert seen["body"]["text"] == "hello"
+    assert seen["body"]["model_id"] == diode.SPEECH_MODEL_DEFAULT
+
+
+def test_speak_request_refuses_a_classified_url(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+
+    def _no_opener(*a):
+        raise AssertionError("no request may be made after a refusal")
+
+    monkeypatch.setattr(diode, "classify_url", lambda url: (False, "private/loopback target"))
+    monkeypatch.setattr(diode.urllib.request, "build_opener", _no_opener)
+    ok, reason = diode._speak_request("hello")
+    assert ok is False
+    assert reason.startswith("refused: ")
+
+
+def test_speak_request_contains_transport_errors(monkeypatch):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "k")
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+
+    class _Opener:
+        def open(self, req, timeout=None):
+            raise OSError("boom")
+
+    monkeypatch.setattr(diode, "classify_url", lambda url: (True, ""))
+    monkeypatch.setattr(diode.urllib.request, "build_opener", lambda *a: _Opener())
+    ok, reason = diode._speak_request("hello")
+    assert ok is False
+    assert "speech error" in reason
