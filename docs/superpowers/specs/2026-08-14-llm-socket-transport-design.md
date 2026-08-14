@@ -256,11 +256,18 @@ read as *"no network route to the key-holder."* After this change the agent has 
 anything, but it does hold a **socket** to the recorder, which is a credentialed service. The
 invariant restates as:
 
-> The agent has no network interface. Its only channel to any credentialed service is the recorder
-> socket, which carries one closed protocol; the recorder injects the upstream key and logs bodies
-> only, never headers, so the key never reaches the agent or the transcript.
+> The agent has no network interface. Its only channel to a credentialed service is the recorder
+> socket, which exposes exactly one route, `POST /api/v1/chat/completions`, and forwards its body
+> upstream verbatim. The recorder injects the upstream key and logs bodies only, never headers, so
+> the key never reaches the agent or the transcript.
 
 That is the same protection the proxy always provided. It simply no longer rests on topology.
+
+The wording matters: this is **one route, not a closed command vocabulary**. The diode's phrasing in
+invariant 3 is load-bearing and means something stricter — a fixed set of commands with no arbitrary
+content crossing. The recorder forwards an arbitrary JSON body. Borrowing the diode's language here
+would overclaim, and the distinction gets sharper in spec 2, where the recorder begins composing
+request bodies from agent-supplied configuration.
 
 ## Error handling
 
@@ -325,9 +332,23 @@ Two boundaries are explicitly *not* crossed:
   the recorder.
 - `tests/test_build_garden.py` *(extend)* — the generated `runtime.md` carries both new sentences and
   no longer contains `OPENROUTER_` or "no direct internet route".
+- `tests/test_cleanliness.py` *(extend)* — the needle list at `:82` (`openrouter`, `deepseek`,
+  `base_url`, `chat.completions`, `extra_headers`) keeps passing untouched, since `agent.py` is not
+  modified. It should gain the socket path and `uds`, so the invariant that transport identity lives
+  in `chassis.py` rather than `agent.py` continues to be enforced against the transport this spec
+  introduces rather than only the one it replaces.
 - `tests/test_verify_script.py` *(extend)* — covers the assertions added to the verify script.
 
 **Container — `scripts/verify_container.sh`:**
+
+One existing assertion must be **replaced**, not extended. Lines 78-79 currently read:
+
+```sh
+echo "==> agent CAN reach the recorder"
+docker compose exec -T agent python -c "import socket; ...create_connection(('recorder',8088))"
+```
+
+That is the assertion this spec falsifies by design. It becomes:
 
 ```
 /sys/class/net in agent       == exactly "lo"
@@ -336,6 +357,15 @@ connect /llm/sock/core.sock   == succeeds
 unlink /llm/sock/core.sock    == EROFS
 one chat completion           == round-trips and appears in the transcript
 ```
+
+Two further edits to the same script:
+
+- `cleanup()` at lines 19-23 removes the `state`, `diode`, `transcripts`, and `telemetry` volumes by
+  name. `llm_sock` and `llm_console` must join that list or verify runs leak volumes.
+- The existing "agent has NO internet route" check at lines 68-71 **stays unchanged and keeps
+  passing** — it connects to `1.1.1.1:443` and expects failure. Under `network_mode: none` it fails
+  immediately with `Errno 101` instead of consuming its 5-second timeout, so the check gets faster
+  and stricter without being touched.
 
 This block is what makes the documentation rewrites safe: the new wording is backed by an executable
 assertion rather than by a topology that could be quietly changed.
