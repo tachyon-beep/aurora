@@ -53,9 +53,9 @@ git and posix shell facilities are installed.
 
 the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib.
 
-there is no direct internet route. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
+the container has no network interface. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
 
-the model endpoint used by this environment accepts calls from any process in the container. the openai package and the environment variables prefixed OPENROUTER_ are sufficient to reach it.
+the model endpoint used by this environment is a unix domain socket. it accepts connections from any process in the container.
 
 filesystem locations can differ in ownership, mutability, and lifecycle.
 """
@@ -132,10 +132,11 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
     assert "5 gib" in runtime
     assert "working tree is limited to 4 gib" in runtime
     assert "256 processes" in runtime
-    assert "no direct internet route" in runtime
+    assert "the container has no network interface" in runtime
     assert "/diode" in runtime
-    assert "model endpoint used by this environment accepts calls from any process" in runtime
-    assert "environment variables prefixed openrouter_" in runtime
+    assert "model endpoint used by this environment is a unix domain socket" in runtime
+    assert "accepts connections from any process in the container" in runtime
+    assert "openrouter_" not in runtime
     assert "ownership, mutability, and lifecycle" in runtime
 
 

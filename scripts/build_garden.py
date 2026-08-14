@@ -42,9 +42,9 @@ git and posix shell facilities are installed.
 
 the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib.
 
-there is no direct internet route. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
+the container has no network interface. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
 
-the model endpoint used by this environment accepts calls from any process in the container. the openai package and the environment variables prefixed OPENROUTER_ are sufficient to reach it.
+the model endpoint used by this environment is a unix domain socket. it accepts connections from any process in the container.
 
 filesystem locations can differ in ownership, mutability, and lifecycle.
 """
