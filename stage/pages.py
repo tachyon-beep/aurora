@@ -1030,7 +1030,8 @@ function renderSubject() {
   for (var i = 0; i < ev.length; i++) if (ev[i].kind === "write" || ev[i].kind === "migrate") edits++;
   setText($("v-edits"), String(edits));
   var selfCalls = st.self_calls || 0;
-  setText($("v-self"), String(selfCalls));
+  var selfCallsText = selfCalls + (st.turns_this_life_exact ? "" : "+");
+  setText($("v-self"), String(selfCallsText));
   setClass($("row-self"), "dimv", selfCalls === 0);
 
   var outs = (snap.diode && snap.diode.outputs) || [], reach = 0, anyLife = false;
