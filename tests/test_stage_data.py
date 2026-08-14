@@ -811,6 +811,21 @@ def test_output_command_splits_the_slug():
     assert data.output_command("") == ""
 
 
+def test_a_spoken_output_row_has_its_own_phrase(tmp_path):
+    """Every diode command the agent can run carries a phrase; `output_verb`'s
+    `ran <name>` fallback is for names the stage does not know. `speak` writes an
+    output file like every other command, so the row it produces must not fall back."""
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    (out_dir / "20260814_120000_000000_speak_hello_there.txt").write_text(
+        "recorded as 20260814_120000_000000.mp3", encoding="utf-8"
+    )
+    entry = data.diode_activity(str(tmp_path))["outputs"][0]
+    assert entry["command"] == "speak"
+    assert entry["verb"] == data.DIODE_VERBS["speak"]
+    assert not entry["verb"].startswith("ran ")
+
+
 def test_diode_activity_separates_command_from_argument(tmp_path):
     out_dir = tmp_path / "output"
     out_dir.mkdir()

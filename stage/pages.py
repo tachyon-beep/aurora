@@ -448,6 +448,14 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 #speak-caption { font: 400 11px/16px var(--mono); color: var(--paper-dim); flex: none;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #said.is-captioned #speak-caption { margin-top: 4px; }
+/* An utterance with no publication behind it: renderRibbon has written the
+   "nothing said" placeholder into #said-text, which would contradict the caption
+   directly below it, so the caption takes the panel's line instead. */
+#said.is-captioned { border-left: 2px solid var(--say); }
+#said.is-captioned:not(.spoke) #said-text { display: none; }
+#said.is-captioned:not(.spoke) #speak-caption { white-space: normal; overflow-wrap: anywhere;
+  font: 400 15px/23px var(--serif); color: var(--paper); display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 #said.is-sparse.is-captioned #said-foot { margin-top: auto; }
 #speak-audio { display: none; }
 #said-foot { margin-top: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); flex: none; }

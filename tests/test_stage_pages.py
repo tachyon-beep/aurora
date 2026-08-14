@@ -105,6 +105,20 @@ def test_the_caption_clamps_the_published_line_to_make_room():
     assert 'setClass($("said"), "is-captioned"' in HTML
 
 
+def test_the_caption_replaces_the_placeholder_that_would_contradict_it():
+    """`renderRibbon` writes "It has said nothing to anyone outside." into `#said-text`
+    whenever nothing has been published, and marks a publication with `.spoke`. Speech
+    is not publication, so an utterance before the first publish would leave that
+    sentence sitting directly above a caption of what was just said. The placeholder is
+    hidden in that state and the caption takes the panel's line."""
+    assert "#said.is-captioned:not(.spoke) #said-text { display: none; }" in HTML
+    assert "#said.is-captioned:not(.spoke) #speak-caption" in HTML
+
+
+def test_the_panel_accent_lights_for_an_utterance_as_well_as_a_publication():
+    assert "#said.is-captioned { border-left: 2px solid var(--say); }" in HTML
+
+
 def test_stream_page_plays_each_utterance_once_and_only_when_fresh():
     assert "spokenPlayed" in HTML
     assert "/audio/" in HTML
