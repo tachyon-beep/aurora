@@ -50,7 +50,12 @@ CLOSING_INSTRUCTION = (
 
 _LOCK = threading.Lock()
 _CACHE = {"text": None, "generated_at": 0.0, "model": ""}
-_STATE = {"last_gen": None, "last_digest": None, "last_incarnation": None}
+_STATE = {
+    "last_attempt": None,
+    "last_gen": None,
+    "last_digest": None,
+    "last_incarnation": None,
+}
 _START_LOCK = threading.Lock()
 _THREAD = None
 _STARTED = False
@@ -293,9 +298,10 @@ def _refresh_if_due(state, telemetry_dir, transcript_path, now=None):
         return False
     if now is None:
         now = time.monotonic()
-    last_gen = state.get("last_gen")
-    if last_gen is not None and now - last_gen < MIN_REGEN_SECONDS:
+    last_attempt = state.get("last_attempt")
+    if last_attempt is not None and now - last_attempt < MIN_REGEN_SECONDS:
         return False
+    last_gen = state.get("last_gen")
     collected = _collect(telemetry_dir, transcript_path)
     digest = hashlib.sha256(collected["digest_material"].encode("utf-8")).hexdigest()
     incarnation = collected["incarnation"]
@@ -305,12 +311,13 @@ def _refresh_if_due(state, telemetry_dir, transcript_path, now=None):
     due = last_gen is None or death or (aged_out and digest != state.get("last_digest"))
     if not due:
         return False
-    state["last_gen"] = now
-    state["last_digest"] = digest
-    state["last_incarnation"] = incarnation
+    state["last_attempt"] = now
     text = _generate(collected["prompt"])
     if text:
         _store(text)
+        state["last_gen"] = now
+        state["last_digest"] = digest
+        state["last_incarnation"] = incarnation
     return True
 
 
@@ -349,7 +356,14 @@ def _reset_for_tests():
     global _THREAD, _STARTED
     with _LOCK:
         _CACHE.update({"text": None, "generated_at": 0.0, "model": ""})
-    _STATE.update({"last_gen": None, "last_digest": None, "last_incarnation": None})
+    _STATE.update(
+        {
+            "last_attempt": None,
+            "last_gen": None,
+            "last_digest": None,
+            "last_incarnation": None,
+        }
+    )
     _DELTA_MEMO.update({"key": None, "value": None})
     with _START_LOCK:
         _THREAD = None

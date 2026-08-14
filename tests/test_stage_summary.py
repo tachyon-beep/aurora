@@ -246,6 +246,10 @@ def test_failure_leaves_a_previous_story_in_place(tmp_path, monkeypatch):
     summary._refresh_if_due(summary._STATE, telemetry, transcript, now=1000.0)
     assert summary.cached_story()["text"] == "The first recap."
 
+    _install_transport(monkeypatch, _ok("The replacement recap."))
+    assert summary._refresh_if_due(summary._STATE, telemetry, transcript, now=1060.0) is True
+    assert summary.cached_story()["text"] == "The replacement recap."
+
 
 def test_missing_telemetry_tree_still_produces_a_prompt(tmp_path, monkeypatch):
     monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
@@ -372,6 +376,21 @@ def test_sixty_second_floor_holds_against_a_failing_endpoint(tmp_path, monkeypat
     assert len(calls) == 1
     assert summary._refresh_if_due(summary._STATE, telemetry, transcript, now=60.0) is True
     assert len(calls) == 2
+
+
+def test_failed_initial_recap_retries_after_the_sixty_second_floor(tmp_path, monkeypatch):
+    telemetry, transcript = _fixture_tree(tmp_path)
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    responses = iter([_Response("{}", status=503), _reply("The recovered recap.")])
+    calls = _install_transport(monkeypatch, lambda request: next(responses))
+
+    assert summary._refresh_if_due(summary._STATE, telemetry, transcript, now=0.0) is True
+    assert summary.cached_story() is None
+    assert summary._refresh_if_due(summary._STATE, telemetry, transcript, now=59.9) is False
+    assert summary._refresh_if_due(summary._STATE, telemetry, transcript, now=60.0) is True
+
+    assert len(calls) == 2
+    assert summary.cached_story()["text"] == "The recovered recap."
 
 
 # --- threading ------------------------------------------------------------
