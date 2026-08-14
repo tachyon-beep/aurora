@@ -1260,7 +1260,6 @@ function renderRibbon() {
   var pub = (snap.diode && snap.diode.published) || [];
   var total = (snap.diode && snap.diode.published_total) || 0;
   setClass($("said"), "spoke", total > 0);
-  setClass($("said"), "is-sparse", pub.length < 2);
   if (pub.length) {
     setText($("said-stamp"), "↗ PUBLISHED · " + hhmmss(new Date((pub[0].epoch || 0) * 1000).toISOString()));
     var p = $("said-text");
@@ -1282,6 +1281,7 @@ function renderRibbon() {
     }
     setText($("said-foot"), "");
   }
+  setClass($("said"), "is-sparse", $("said-text").scrollHeight <= 34);
 }
 
 /* ---------- beats ---------- */
