@@ -186,3 +186,61 @@ def compose_body(body_bytes, settings):
         if field in settings:
             data[field] = settings[field]
     return json.dumps(data).encode("utf-8"), None
+
+
+README_TEXT = """the sockets in this directory are model endpoints. each accepts POST
+/api/v1/chat/completions and nothing else.
+
+core.sock is always present and forwards requests unmodified.
+
+additional sockets appear when they are declared in /llm/console/console.json.
+that file has one field:
+  streams: an object mapping a name to its configuration
+
+each accepted declaration is served at <name>.sock. configuration fields:
+  budget: integer, requests allowed per hour on that socket
+  model: string
+  reasoning_effort: one of none, low, medium, high
+  temperature: number from 0 to 2
+  top_p: number from 0 to 1
+  max_tokens: positive integer
+
+declared values replace the corresponding fields of each request on that
+socket. the current sockets, their settings, and their use are in
+streams.json.
+"""
+
+
+def render_state(accepted, rejected, histories, now, console_error=None):
+    """The streams.json document describing every socket in the directory."""
+    streams = {"core": {"socket": "core.sock", "status": "active"}}
+    for name, settings in accepted.items():
+        streams[name] = {
+            "socket": f"{name}.sock",
+            "status": "active",
+            "settings": {k: v for k, v in settings.items() if k != "budget"},
+            "budget": {
+                "allowance": effective_allowance(settings),
+                **budget_status(histories.get(name, []), now),
+            },
+        }
+    for name, reason in rejected.items():
+        streams[name] = {"status": "rejected", "reason": reason}
+    state = {"streams": streams}
+    if console_error is not None:
+        state["console_error"] = console_error
+    return state
+
+
+def write_state(path, state):
+    """Write the state document via a rename, so a reader never sees a torn file."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+    os.replace(tmp, path)
+
+
+def write_readme(sock_dir):
+    """Write the socket directory's protocol description."""
+    with open(os.path.join(sock_dir, "README.md"), "w", encoding="utf-8") as f:
+        f.write(README_TEXT)

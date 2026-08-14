@@ -206,3 +206,53 @@ def test_compose_refuses_a_non_object_body():
         composed, error = rs.compose_body(body, {"model": "m"})
         assert composed is None
         assert error == "request body is not a json object"
+
+
+def test_render_state_reports_core_and_each_stream(monkeypatch):
+    monkeypatch.setenv("STREAM_HOURLY_MAX", "7")
+    now = 10_000.0
+    state = rs.render_state(
+        {"aux": {"budget": 500, "model": "m"}},
+        {"Bad": "invalid stream name"},
+        {"aux": [now - 100]},
+        now,
+    )
+    streams = state["streams"]
+    assert streams["core"] == {"socket": "core.sock", "status": "active"}
+    aux = streams["aux"]
+    assert aux["socket"] == "aux.sock"
+    assert aux["status"] == "active"
+    assert aux["settings"] == {"model": "m"}
+    assert aux["budget"]["allowance"] == 7
+    assert aux["budget"]["used"] == 1
+    assert aux["budget"]["oldest_expires_in_seconds"] == 3500
+    assert streams["Bad"] == {"status": "rejected", "reason": "invalid stream name"}
+    assert "console_error" not in state
+
+
+def test_render_state_carries_a_console_error_only_when_given():
+    state = rs.render_state({}, {}, {}, 0.0, console_error="console is not valid json")
+    assert state["console_error"] == "console is not valid json"
+
+
+def test_write_state_is_atomic_and_readable(tmp_path):
+    path = str(tmp_path / "streams.json")
+    rs.write_state(path, {"streams": {}})
+    assert json.loads((tmp_path / "streams.json").read_text(encoding="utf-8")) == {"streams": {}}
+    assert list(tmp_path.iterdir()) == [tmp_path / "streams.json"]
+
+
+def test_readme_names_the_protocol_and_stays_affectless(tmp_path):
+    rs.write_readme(str(tmp_path))
+    text = (tmp_path / "README.md").read_text(encoding="utf-8")
+    for phrase in (
+        "core.sock",
+        "/llm/console/console.json",
+        "streams:",
+        "budget:",
+        "reasoning_effort:",
+        "streams.json",
+        "POST",
+    ):
+        assert phrase in text
+    assert "!" not in text
