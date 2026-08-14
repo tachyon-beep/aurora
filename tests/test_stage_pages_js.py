@@ -60,12 +60,16 @@ var audio = {
   }
 };
 var NOW = 1000000;
+var caption = { textContent: "", classList: { toggle: function () {} } };
+var other = { textContent: "", classList: { toggle: function () {} } };
 global.$ = function (id) {
-  return id === "speak-audio" ? audio : { textContent: "", classList: { toggle: function () {} } };
+  if (id === "speak-audio") return audio;
+  if (id === "speak-caption") return caption;
+  return other;
 };
 global.clock = function () { return NOW; };
 global.norm = function (t) { return String(t == null ? "" : t).trim(); };
-global.setText = function () {};
+global.setText = function (node, value) { node.textContent = value; };
 global.setClass = function () {};
 global.snap = null;
 function stamp(n) { return "2026081" + n + "_120000_000000.mp3"; }
@@ -87,8 +91,12 @@ var out = {};
 global.snap = { diode: { spoken: [entry(2, 1), entry(1, 2)] } };
 renderSpoken();
 out.first_started = names();
+out.first_caption = caption.textContent;
+renderSpoken();
+out.caption_during_first = caption.textContent;
 audio.fire("ended");
 out.after_ended = names();
+out.second_caption = caption.textContent;
 audio.fire("ended");
 out.drained_queue = spokenQueue.length;
 
@@ -137,10 +145,13 @@ def test_playback_queue_behaviour(tmp_path):
     out = _run(HARNESS.replace("__BLOCK__", _spoken_block()), tmp_path)
     # Oldest first, one at a time: the newer utterance waits for "ended".
     assert out["first_started"] == ["20260811_120000_000000.mp3"]
+    assert out["first_caption"] == "u1"
+    assert out["caption_during_first"] == "u1"
     assert out["after_ended"] == [
         "20260811_120000_000000.mp3",
         "20260812_120000_000000.mp3",
     ]
+    assert out["second_caption"] == "u2"
     assert out["drained_queue"] == 0
     # One failure advances exactly one place, and the third stays queued.
     assert out["after_failure"] == [

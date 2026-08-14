@@ -1353,6 +1353,13 @@ var spokenPlayed = (function () {
   return seen;
 })();
 var spokenQueue = [], spokenBusy = false, spokenCurrent = null;
+function setSpokenCaption(text) {
+  var cap = $("speak-caption");
+  if (!cap) return;
+  var caption = norm(text || "");
+  setText(cap, caption);
+  setClass($("said"), "is-captioned", !!caption);
+}
 function markSpokenPlayed(name) {
   spokenPlayed[name] = true;
   /* Names are UTC stamps, so lexical order is chronological and the tail is newest. */
@@ -1366,7 +1373,8 @@ function playNextSpoken() {
   if (!a || spokenBusy || !spokenQueue.length) return;
   spokenBusy = true;
   spokenCurrent = spokenQueue.shift();
-  a.src = "/audio/" + encodeURIComponent(spokenCurrent);
+  setSpokenCaption(spokenCurrent.text);
+  a.src = "/audio/" + encodeURIComponent(spokenCurrent.name);
   /* A load failure fires "error" AND rejects this promise, so the rejection has
      to name the item it belongs to: advancing on both would shift the next
      utterance out of the queue and skip it unplayed. Testing spokenBusy would
@@ -1393,16 +1401,11 @@ function spokenAdvance() {
 })();
 function renderSpoken() {
   var sp = (snap && snap.diode && snap.diode.spoken) || [];
-  var cap = $("speak-caption");
-  if (!cap) return;
   if (!sp.length) {
-    setText(cap, "");
-    setClass($("said"), "is-captioned", false);
+    if (!spokenBusy) setSpokenCaption("");
     return;
   }
-  var caption = norm(sp[0].text || "");
-  setText(cap, caption);
-  setClass($("said"), "is-captioned", !!caption);
+  if (!spokenBusy && !spokenQueue.length) setSpokenCaption(sp[0].text);
   /* Oldest first, so a snapshot carrying more than one utterance queues them in
      the order they were made rather than playing only the newest. Every name is
      marked before the freshness check on purpose: one that was already stale when
@@ -1414,7 +1417,7 @@ function renderSpoken() {
     markSpokenPlayed(name);
     var ageMs = clock() - (sp[i].epoch || 0) * 1000;
     if (ageMs < 0 || ageMs > 180000) continue;
-    spokenQueue.push(name);
+    spokenQueue.push({ name: name, text: norm(sp[i].text || "") });
   }
   playNextSpoken();
 }

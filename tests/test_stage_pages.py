@@ -138,7 +138,7 @@ def test_playback_queues_utterances_instead_of_playing_only_the_newest():
     # reassigning src cuts off one still speaking.
     assert "spokenQueue" in HTML
     assert "for (var i = sp.length - 1; i >= 0; i--)" in HTML
-    assert "spokenQueue.push(name)" in HTML
+    assert "spokenQueue.push({ name: name, text:" in HTML
     assert "if (!a || spokenBusy || !spokenQueue.length) return;" in HTML
 
 
