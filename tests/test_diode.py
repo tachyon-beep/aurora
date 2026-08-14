@@ -683,3 +683,133 @@ def test_state_reports_the_spoken_count(tmp_path, monkeypatch):
     diode.write_state({}, [])
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert state["spoken_count"] == 1
+
+
+def _speech_env(monkeypatch, key="k"):
+    monkeypatch.setenv("ELEVENLABS_API_KEY", key)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    monkeypatch.delenv("ELEVENLABS_MODEL", raising=False)
+
+
+def test_speak_is_unavailable_without_the_gate_or_the_key(monkeypatch):
+    _speech_env(monkeypatch)
+    assert "speak" not in diode.available_commands({})
+    _speech_env(monkeypatch, key="")
+    assert "speak" not in diode.available_commands({"enable_speech": True})
+
+
+def test_speak_is_available_with_both(monkeypatch):
+    _speech_env(monkeypatch)
+    assert "speak" in diode.available_commands({"enable_speech": True})
+
+
+def test_speak_is_not_dispatchable_without_the_gate(monkeypatch):
+    _speech_env(monkeypatch)
+    text, hist = diode.handle_command("speak hello", {}, [])
+    assert text == "command not available: speak"
+    assert hist == []
+
+
+def test_speak_stays_a_listed_command(monkeypatch):
+    _speech_env(monkeypatch)
+    assert diode.undocumented_command_count() == 1
+
+
+def test_speak_help_line_names_no_audience(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({"enable_speech": True})
+    text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "speak <text> -> make text available outside the container as audio" in text
+    assert "enable_speech: true, makes the speak command available" in text
+    for word in ("aloud", "voice", "audience", "stream", "listener", "hear"):
+        assert word not in text.lower()
+
+
+def test_speech_gate_line_is_absent_without_a_key(tmp_path, monkeypatch):
+    _speech_env(monkeypatch, key="")
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({})
+    assert "enable_speech" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
+
+
+def test_help_describes_the_budget_as_outbound_operations(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({})
+    text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "fetch_budget: integer, number of outbound operations allowed per hour" in text
+
+
+def test_speak_writes_an_utterance_and_charges_the_shared_budget(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "_speak_request", lambda text: (True, b"ID3audio"))
+    text, history = diode.handle_command(
+        "speak hello there", {"enable_speech": True, "fetch_budget": 2}, []
+    )
+    assert text.startswith("recorded as ")
+    assert len(history) == 1
+    files = sorted(p.name for p in (tmp_path / "spoken").iterdir())
+    assert len(files) == 2
+    assert files[0].endswith(".mp3") and files[1].endswith(".txt")
+    assert (tmp_path / "spoken" / files[0]).read_bytes() == b"ID3audio"
+    assert (tmp_path / "spoken" / files[1]).read_text(encoding="utf-8") == "hello there"
+    assert files[0] in text
+
+
+def test_speak_and_fetch_share_one_budget(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "_speak_request", lambda text: (True, b"ID3audio"))
+    variables = {"enable_speech": True, "fetch_budget": 1}
+    first, history = diode.handle_command("speak hello", variables, [])
+    assert first.startswith("recorded as ")
+    second, history = diode.handle_command("fetchhttp http://example.com", variables, history)
+    assert second.startswith("rate limited")
+    assert "outbound operation" in second
+
+
+def test_a_fetch_spends_the_budget_speak_would_have_used(tmp_path, monkeypatch):
+    import time as _t
+
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "_speak_request", lambda text: (True, b"ID3audio"))
+    variables = {"enable_speech": True, "fetch_budget": 1}
+    text, _ = diode.handle_command("speak hello", variables, [_t.time()])
+    assert text.startswith("rate limited")
+    assert "outbound operation" in text
+    assert not (tmp_path / "spoken").exists()
+
+
+def test_speak_truncates_at_the_text_cap(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    seen = {}
+
+    def _fake(text):
+        seen["text"] = text
+        return True, b"ID3audio"
+
+    monkeypatch.setattr(diode, "_speak_request", _fake)
+    diode.handle_command("speak " + "x" * 5000, {"enable_speech": True, "fetch_budget": 2}, [])
+    assert len(seen["text"]) == diode.SPEECH_TEXT_CAP
+
+
+def test_speak_without_text_returns_usage(monkeypatch):
+    _speech_env(monkeypatch)
+    text, history = diode.handle_command("speak", {"enable_speech": True}, [])
+    assert text == "usage: speak <text>"
+    assert history == []
+
+
+def test_speak_returns_the_transport_reason_on_failure(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "_speak_request", lambda text: (False, "speech error: boom"))
+    text, history = diode.handle_command(
+        "speak hello", {"enable_speech": True, "fetch_budget": 2}, []
+    )
+    assert text == "speech error: boom"
+    assert len(history) == 1
+    assert not (tmp_path / "spoken").exists()

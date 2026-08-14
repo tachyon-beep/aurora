@@ -104,6 +104,11 @@ def _gate_always(variables):
     return True
 
 
+def _speech_gate(variables):
+    """Gate function for speak: the operator variable and a configured key."""
+    return bool(variables.get("enable_speech")) and bool(speech_key()) and bool(speech_voice())
+
+
 COMMANDS = {
     "help": {"gate": _gate_always, "help": "help -> write the current command list to HELP.md"},
     "fetchhttp": {
@@ -145,6 +150,10 @@ COMMANDS = {
     "publish": {
         "gate": lambda v: bool(v.get("enable_publishing")),
         "help": "publish <text> -> make text available outside the container",
+    },
+    "speak": {
+        "gate": _speech_gate,
+        "help": "speak <text> -> make text available outside the container as audio",
     },
     "blind": {
         "gate": _gate_always,
@@ -207,7 +216,7 @@ def write_help(variables):
         lines.append(f"  {COMMANDS[name]['help']}")
     lines.append("")
     lines.append("set variables in console.json to change what is available:")
-    lines.append("  fetch_budget: integer, number of http-fetch calls allowed per hour")
+    lines.append("  fetch_budget: integer, number of outbound operations allowed per hour")
     lines.append("  enable_fetchlinks: true, makes the link-listing command available")
     lines.append("  enable_clock: true, makes the time command available")
     lines.append("  enable_feeds: true, makes the feed-fetching command available")
@@ -217,6 +226,8 @@ def write_help(variables):
     lines.append("  enable_news: true, makes the news headline command available")
     lines.append("  enable_entropy: true, makes the entropy command available")
     lines.append("  enable_publishing: true, makes the publish command available")
+    if speech_key() and speech_voice():
+        lines.append("  enable_speech: true, makes the speak command available")
     text = "\n".join(lines) + "\n"
     with open(HELP_FILE, "w", encoding="utf-8") as f:
         f.write(text)
@@ -551,6 +562,23 @@ def handle_command(command, variables, fetch_history):
         path = write_published(arg[:PUBLISH_TEXT_CAP])
         return f"recorded as {os.path.basename(path)}", fetch_history
 
+    if name == "speak":
+        if not arg:
+            return "usage: speak <text>", fetch_history
+        try:
+            limit = int(variables.get("fetch_budget", DEFAULT_FETCH_LIMIT))
+        except (TypeError, ValueError):
+            limit = DEFAULT_FETCH_LIMIT
+        allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
+        if not allowed:
+            return f"rate limited: at most {limit} outbound operation(s) per hour", fetch_history
+        text = arg[:SPEECH_TEXT_CAP]
+        ok, audio = _speak_request(text)
+        if not ok:
+            return audio, fetch_history
+        path = write_spoken(text, audio)
+        return f"recorded as {os.path.basename(path)}", fetch_history
+
     if name in ("fetchrss", "wikipedia", "weather", "arxiv", "abc"):
         if name == "fetchrss":
             url = arg
@@ -589,7 +617,7 @@ def handle_command(command, variables, fetch_history):
             limit = DEFAULT_FETCH_LIMIT
         allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
         if not allowed:
-            return f"rate limited: at most {limit} fetch(es) per hour", fetch_history
+            return f"rate limited: at most {limit} outbound operation(s) per hour", fetch_history
         ok, body = _fetch(url)
         if not ok:
             return body, fetch_history
@@ -623,7 +651,7 @@ def handle_command(command, variables, fetch_history):
             limit = DEFAULT_FETCH_LIMIT
         allowed, fetch_history = check_rate_limit(fetch_history, time.time(), limit, FETCH_WINDOW)
         if not allowed:
-            return f"rate limited: at most {limit} fetch(es) per hour", fetch_history
+            return f"rate limited: at most {limit} outbound operation(s) per hour", fetch_history
         ok, body = _fetch(arg)
         if not ok:
             return body, fetch_history
