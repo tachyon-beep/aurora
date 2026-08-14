@@ -8,6 +8,8 @@ ever reads the cache.
 
 import statistics
 
+from stage import data
+
 SILENCE_SECONDS = 90
 RECENT_SECONDS = 180
 NEW_LIFE_TURNS = 3
@@ -21,6 +23,52 @@ LONG_THINK_FACTOR = 2.0
 LONG_THINK_SAMPLES = 3
 
 EDIT_TOOLS = ("write_file", "migrate", "reset")
+
+BEAT_KINDS = (
+    "ending",
+    "new_life",
+    "self_edit",
+    "repeat_failure",
+    "published",
+    "reached_out",
+    "silence",
+    "tool_fixation",
+    "long_think",
+    "working",
+)
+
+BEAT_TEMPLATES = {
+    "ending": "It has called an end to this life.",
+    "new_life": "A new incarnation is awake and finding its footing.",
+    "self_edit": "It is rewriting its own source while it runs.",
+    "repeat_failure": "The same call keeps failing, and it keeps making it.",
+    "published": "It has said something to the outside world.",
+    "reached_out": "It is reaching past the wall for something it cannot see.",
+    "silence": "Nothing has moved for a while.",
+    "tool_fixation": "It has settled into one move and is repeating it.",
+    "long_think": "This is the longest it has stopped to think all life.",
+    "working": "It is working through its turn.",
+}
+
+TOOL_TAGS = {
+    "read_file": "RF",
+    "write_file": "WF",
+    "validate": "VA",
+    "migrate": "MG",
+    "done": "DN",
+    "reset": "RS",
+    "list_dir": "LD",
+}
+
+TOOL_PHRASES = {
+    "read_file": "reading its own source",
+    "write_file": "rewriting its own source",
+    "validate": "checking its own syntax",
+    "migrate": "restarting into new source",
+    "done": "ending this life",
+    "reset": "restoring the clean seed",
+    "list_dir": "looking around",
+}
 
 
 def _epoch_of(turn):
@@ -175,3 +223,51 @@ def detect_beat(turns, stats, diode, published, now):
                     )
 
     return _beat("working", count=stats.get("turns_this_life"), epoch=_newest_epoch(turns))
+
+
+def template_line(beat):
+    """The fixed prose line for a beat's kind; the no-key fallback.
+
+    Templates carry no interpolated fields, so a beat missing everything but
+    its kind still renders a full sentence.
+    """
+    kind = beat.get("kind") if isinstance(beat, dict) else None
+    return BEAT_TEMPLATES.get(kind, BEAT_TEMPLATES["working"])
+
+
+def _tool_tag(name):
+    """An uppercase short code for a tool name."""
+    if name in TOOL_TAGS:
+        return TOOL_TAGS[name]
+    letters = [c for c in name if c.isalnum()][:2]
+    return "".join(letters).upper()
+
+
+def _tool_phrase(name):
+    """A present-tense activity phrase for a tool name."""
+    if name in TOOL_PHRASES:
+        return TOOL_PHRASES[name]
+    if name in data.DIODE_VERBS:
+        return data.DIODE_VERBS[name]
+    return f"running {name}"
+
+
+def play_by_play(turns, diode, stats):
+    """The deterministic line naming what the newest loop turn is doing.
+
+    Recomputed every poll from the newest turn alone, so it is never stale
+    and never describes anything the turn did not actually do. Involves no
+    model. turns must already be filtered to loop turns, oldest first.
+    """
+    turns = [t for t in (turns or []) if isinstance(t, dict)]
+    if not turns:
+        return {"tag": "··", "phrase": "waiting for the first word", "epoch": None}
+
+    newest = turns[-1]
+    epoch = _epoch_of(newest)
+    names = _tool_names(newest)
+    if not names:
+        return {"tag": "··", "phrase": "thinking it over", "epoch": epoch}
+
+    name = names[-1]
+    return {"tag": _tool_tag(name), "phrase": _tool_phrase(name), "epoch": epoch}

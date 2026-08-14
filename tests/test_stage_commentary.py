@@ -162,3 +162,51 @@ def test_silence_threshold_matches_the_pages_state_ladder():
     thinking = re.search(r"if \(age < (\d+)\) return \"thinking\"", source)
     assert thinking, "the thinking boundary moved or was renamed"
     assert commentary.SILENCE_SECONDS == int(thinking.group(1))
+
+
+def test_every_beat_kind_has_a_template():
+    for kind in commentary.BEAT_KINDS:
+        assert kind in commentary.BEAT_TEMPLATES
+
+
+def test_no_beat_can_render_an_empty_line():
+    for kind in commentary.BEAT_KINDS:
+        beat = commentary._beat(kind, tool="read_file", detail="weather", count=3, span=120.0)
+        line = commentary.template_line(beat)
+        assert line.strip()
+        assert "{" not in line and "}" not in line
+
+
+def test_template_line_survives_a_beat_with_every_field_missing():
+    for kind in commentary.BEAT_KINDS:
+        line = commentary.template_line({"kind": kind})
+        assert line.strip()
+        assert "None" not in line
+
+
+def test_play_by_play_names_the_newest_tool():
+    turns = [_turn(1, NOW - 30, tools=("read_file",))]
+    play = commentary.play_by_play(turns, EMPTY_DIODE, _stats())
+    assert play["tag"]
+    assert play["phrase"]
+    assert play["epoch"] == NOW - 30
+
+
+def test_play_by_play_is_never_empty_without_turns():
+    play = commentary.play_by_play([], EMPTY_DIODE, {})
+    assert play["tag"]
+    assert play["phrase"]
+
+
+def test_a_read_is_never_phrased_as_a_self_edit():
+    """data._phrase_event falls through to REWROTE ITS OWN SOURCE for every non-edit tool."""
+    for name in ("read_file", "validate", "list_dir", "llm"):
+        play = commentary.play_by_play([_turn(1, NOW - 5, tools=(name,))], EMPTY_DIODE, _stats())
+        assert "rewrot" not in play["phrase"].lower(), name
+        assert "rewrit" not in play["phrase"].lower(), name
+
+
+def test_an_agent_built_tool_still_gets_a_tag_and_a_phrase():
+    play = commentary.play_by_play([_turn(1, NOW - 5, tools=("summarise",))], EMPTY_DIODE, _stats())
+    assert play["tag"] == "SU"
+    assert play["phrase"].strip()
