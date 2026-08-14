@@ -9,7 +9,7 @@ carry a cap.
 
 import json
 
-from stage import data, server, summary
+from stage import data, llm, server, summary
 
 SECRET = "OUTSIDE_THE_MOUNT_c0ffee"
 
@@ -93,18 +93,18 @@ def test_summariser_does_not_read_through_a_tombstone_symlink(tmp_path):
 
 
 def test_summariser_refuses_redirects(tmp_path):
-    handler = summary._NoRedirect()
+    handler = llm._NoRedirect()
 
     assert handler.redirect_request(None, None, 302, "Found", {}, "https://evil.test/x") is None
     assert handler.redirect_request(None, None, 307, "Temp", {}, "https://evil.test/x") is None
 
 
 def test_summariser_endpoint_scheme_is_restricted():
-    assert summary._permitted_url("https://openrouter.ai/api/v1/chat/completions") is True
-    assert summary._permitted_url("http://127.0.0.1:9/v1/chat/completions") is True
-    assert summary._permitted_url("http://evil.test/v1/chat/completions") is False
-    assert summary._permitted_url("file:///etc/passwd") is False
-    assert summary._permitted_url("ftp://evil.test/x") is False
+    assert llm._permitted_url("https://openrouter.ai/api/v1/chat/completions") is True
+    assert llm._permitted_url("http://127.0.0.1:9/v1/chat/completions") is True
+    assert llm._permitted_url("http://evil.test/v1/chat/completions") is False
+    assert llm._permitted_url("file:///etc/passwd") is False
+    assert llm._permitted_url("ftp://evil.test/x") is False
 
 
 def test_agent_controlled_public_fields_are_capped():
