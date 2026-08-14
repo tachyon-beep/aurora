@@ -65,8 +65,24 @@ The recorder binds `/llm/sock/core.sock` and serves the existing
 `POST /api/v1/chat/completions` handler over it. The chassis connects through an httpx UDS
 transport. No TCP listener remains in the LLM path, and the `internal` network is deleted.
 
-`httpx` is already a transitive dependency of `openai`, so `requirements-agent.txt` is unchanged and
-there is no image-size question.
+`requirements-agent.txt` gains two entries: `openai<3` and an explicit `httpx`.
+
+An earlier draft of this spec claimed `httpx` needed no manifest entry because it is already a
+transitive dependency of `openai`. That was measured against the local `.venv` (`openai` 2.41.0 →
+`httpx` 0.28.1) and is **false of a fresh image build**: the manifest pins nothing, so the image
+resolved `openai` 3.0.0, which depends on `httpx2` rather than `httpx`. `chassis.py` imports `httpx`
+directly, so the agent container failed at import and crash-looped through all three recovery tiers.
+
+The rule this violated: **a module that imports a package directly must declare it**, whatever
+happens to be available transitively. The version floor is separate — pinning `openai<3` keeps the
+image matching the venv so the transport change is verified on its own, and defers the `openai` 2→3
+major upgrade to its own change. Both `httpx2.HTTPTransport` and `httpx.HTTPTransport` accept `uds=`,
+and `openai` 3.0.0 still accepts `http_client=`, so the design holds under either resolution — this
+is a sequencing decision, not a technical constraint.
+
+Adding `httpx` to the manifest also adds it to the garden's package inventory, which
+`scripts/build_garden.py` generates from that file. That is correct and factual: the package is
+genuinely present in the image.
 
 ## Topology
 

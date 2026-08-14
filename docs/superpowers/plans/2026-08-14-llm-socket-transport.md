@@ -22,7 +22,7 @@
 - Tests live in `tests/` and are never shipped into any image.
 - Do not add `README.md`, `CLAUDE.md`, `docs/`, or `tests/` to the Dockerfile `COPY` allow-list.
 - Garden text must stay bland and factual: no authorial voice, no suggested uses, no executable examples.
-- No new third-party dependencies. `httpx` is already installed as a dependency of `openai`; do not add it to `requirements-agent.txt`.
+- No new third-party packages enter the image, but `httpx` must be declared explicitly in `requirements-agent.txt` because `chassis.py` imports it directly, and `openai` must be pinned `<3`. Without the pin a fresh image resolves `openai` 3.0.0, which depends on `httpx2` rather than `httpx`, and the agent fails at import. A module that imports a package directly declares it, whatever is available transitively.
 
 ## File Structure
 
