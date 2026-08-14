@@ -159,6 +159,7 @@ def _summarize(entry, index):
         "content": content,
         "tool_calls": tool_calls,
         "error": response.get("error"),
+        "_has_tools": bool(request.get("tools")) if isinstance(request, dict) else False,
     }
 
 
@@ -194,6 +195,14 @@ def load_tail_turns(transcript_path, max_turns=40):
         except ValueError:
             continue
         turns.append(_summarize(entry, base + offset))
+    has_tools = [turn.pop("_has_tools") for turn in turns]
+    if turns and not any(has_tools):
+        # A sub-call can only exist because a tool the agent built made the
+        # request, and a tooled agent sends `tools` on its own loop requests
+        # too. So when nothing in the window carries `tools`, the agent is
+        # toolless and every entry in the window is its own turn.
+        for turn in turns:
+            turn["kind"] = "loop"
     return turns, total
 
 

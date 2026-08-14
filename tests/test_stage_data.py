@@ -642,6 +642,45 @@ def test_load_tail_turns_tags_kind_and_subcall_prompt(tmp_path):
     assert turns[0]["prompt"] == ""
 
 
+def test_load_tail_turns_treats_a_toolless_window_as_all_loop(tmp_path):
+    """A window with no `tools` anywhere cannot contain a real sub-call: a sub-call
+
+    only exists because a tool the agent built made the request, and a tooled
+    agent sends `tools` on its own loop requests too. So a toolless window must
+    be the agent's own turns, however few messages each entry carries.
+    """
+    p = tmp_path / "t.jsonl"
+    one_message = _entry(content="short")
+    one_message["request"]["messages"] = [{"role": "user", "content": "hi"}]
+    two_message = _entry(content="also short")
+    two_message["request"]["messages"] = [{"role": "system"}, {"role": "user"}]
+    _write_jsonl(p, [one_message, two_message])
+    turns, _ = data.load_tail_turns(str(p))
+    assert [t["kind"] for t in turns] == ["loop", "loop"]
+    assert "_has_tools" not in turns[0]
+    assert "_has_tools" not in turns[1]
+
+
+def test_load_tail_turns_keeps_subcalls_when_the_window_has_tools_elsewhere(tmp_path):
+    """A mixed window (some entries carry tools) must not be swept into all-loop:
+
+    the toolless-window fallback exists for a window where the agent has zero
+    tools, not as a way to hide sub-calls whenever any one entry lacks tools.
+    """
+    p = tmp_path / "t.jsonl"
+    tooled_loop = _entry(content="loop turn")
+    tooled_loop["request"]["tools"] = [{"type": "function"}]
+    tooled_loop["request"]["messages"] = [{"role": "system"}, {"role": "user"}]
+    sub = _entry(content="PONG")
+    sub["request"]["messages"] = [{"role": "user", "content": "reply"}]
+    other_loop = _entry(content="second loop turn")
+    other_loop["request"]["tools"] = [{"type": "function"}]
+    other_loop["request"]["messages"] = [{"role": "system"}, {"role": "user"}]
+    _write_jsonl(p, [tooled_loop, sub, other_loop])
+    turns, _ = data.load_tail_turns(str(p))
+    assert [t["kind"] for t in turns] == ["loop", "subcall", "loop"]
+
+
 def test_subcall_prompt_is_capped_and_tolerates_junk():
     long_request = {"messages": [{"role": "user", "content": "x" * 500}]}
     assert len(data._subcall_prompt(long_request)) == data.SUBCALL_PROMPT_CHARS
@@ -666,6 +705,22 @@ def _turn(index, kind="loop", model="m", tool_calls=None, error=None, life=None,
 def test_loop_turns_filters_subcalls():
     turns = [_turn(0), _turn(1, kind="subcall"), _turn(2)]
     assert [t["index"] for t in data.loop_turns(turns)] == [0, 2]
+
+
+def test_incarnation_stats_never_double_counts_a_toolless_window(tmp_path):
+    """After the toolless-window relabel, loop_turns and the self-call count must
+
+    partition the same window: no entry can be both a loop turn and a self-call.
+    """
+    p = tmp_path / "t.jsonl"
+    short = _entry(content="c")
+    short["request"]["messages"] = [{"role": "user", "content": "hi"}]
+    _write_jsonl(p, [short, short])
+    turns, total = data.load_tail_turns(str(p))
+    assert all(t["kind"] == "loop" for t in turns)
+    stats = data.incarnation_stats(turns, total, str(tmp_path))
+    assert stats["self_calls"] == 0
+    assert stats["turns_this_life"] == len(data.loop_turns(turns)) == 2
 
 
 def test_incarnation_stats_ignores_subcalls(tmp_path):
