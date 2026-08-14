@@ -3,7 +3,7 @@ import threading
 
 import pytest
 
-from stage import summary
+from stage import llm, summary
 
 RECORDER_SENTINEL = "sk-recorder-DO-NOT-LEAK-0001"
 STAGE_KEY = "sk-stage-summary-0002"
@@ -49,7 +49,7 @@ def _install_transport(monkeypatch, handler):
         calls.append(request)
         return handler(request)
 
-    monkeypatch.setattr(summary, "_send", fake_send)
+    monkeypatch.setattr(llm, "_send", fake_send)
     return calls
 
 
@@ -103,9 +103,9 @@ def test_disabled_by_default(tmp_path, monkeypatch):
     def explode(request, timeout=None):
         raise AssertionError("the summariser made a request while disabled")
 
-    monkeypatch.setattr(summary, "_send", explode)
-    monkeypatch.setattr(summary.urllib.request, "urlopen", explode)
-    monkeypatch.setattr(summary.urllib.request, "build_opener", explode)
+    monkeypatch.setattr(llm, "_send", explode)
+    monkeypatch.setattr(llm.urllib.request, "urlopen", explode)
+    monkeypatch.setattr(llm.urllib.request, "build_opener", explode)
 
     assert summary.enabled() is False
     assert summary.cached_story() is None
@@ -176,10 +176,13 @@ def test_stage_service_carries_only_its_own_summary_key():
         "STAGE_SUMMARY_BASE_URL: ${STAGE_SUMMARY_BASE_URL:-}",
         "STAGE_SUMMARY_MODEL: ${STAGE_SUMMARY_MODEL:-}",
         "STAGE_SUMMARY_INTERVAL_SECONDS: ${STAGE_SUMMARY_INTERVAL_SECONDS:-}",
+        "STAGE_COMMENTARY_MODEL: ${STAGE_COMMENTARY_MODEL:-}",
+        "STAGE_COMMENTARY_INTERVAL_SECONDS: ${STAGE_COMMENTARY_INTERVAL_SECONDS:-}",
     ):
         assert name in stage_block
     assert "OPENROUTER_API_KEY" not in stage_block
     assert "LLM_API_KEY" not in stage_block
+    assert "STAGE_COMMENTARY_API_KEY" not in stage_block
 
 
 def test_env_example_documents_the_summariser():
@@ -189,13 +192,20 @@ def test_env_example_documents_the_summariser():
     assert "#STAGE_SUMMARY_BASE_URL=https://openrouter.ai/api/v1" in text
     assert "#STAGE_SUMMARY_MODEL=anthropic/claude-sonnet-5" in text
     assert "#STAGE_SUMMARY_INTERVAL_SECONDS=300" in text
+    assert "#STAGE_COMMENTARY_MODEL=anthropic/claude-haiku-4-5-20251001" in text
+    assert "#STAGE_COMMENTARY_INTERVAL_SECONDS=60" in text
 
 
 def test_module_source_never_names_the_recorder_credentials():
-    with open("stage/summary.py", "r", encoding="utf-8") as f:
-        source = f.read()
-    assert "OPENROUTER_API_KEY" not in source
-    assert "LLM_API_KEY" not in source
+    for path in ("stage/summary.py", "stage/llm.py"):
+        with open(path, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "OPENROUTER_API_KEY" not in source, path
+        assert "LLM_API_KEY" not in source, path
+
+
+def test_recap_prompt_carries_the_shared_injection_framing():
+    assert llm.RECORDS_FRAMING in summary.SYSTEM_PROMPT
 
 
 # --- fail open ------------------------------------------------------------
@@ -262,13 +272,15 @@ def test_output_cap_holds_without_any_sentence_boundary(tmp_path, monkeypatch):
 
 def test_output_cut_prefers_a_sentence_boundary():
     text = ("Sentence about the agent. " * 200) + "trailing fragment without an end"
-    cleaned = summary._clean(text)
+    cleaned = llm.clean(text, summary.MAX_OUTPUT_CHARS)
     assert len(cleaned) <= summary.MAX_OUTPUT_CHARS
     assert cleaned.endswith(".")
 
 
 def test_output_is_flattened_to_one_paragraph():
-    cleaned = summary._clean("```\n# Heading\nLine one.\n\n\n   Line   two.\n```")
+    cleaned = llm.clean(
+        "```\n# Heading\nLine one.\n\n\n   Line   two.\n```", summary.MAX_OUTPUT_CHARS
+    )
     assert cleaned == "Heading Line one. Line two."
 
 

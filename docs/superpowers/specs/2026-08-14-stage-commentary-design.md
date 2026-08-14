@@ -160,7 +160,7 @@ one operator. Independent overrides:
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `STAGE_COMMENTARY_MODEL` | the summary model | a line every ~30 s wants a cheaper, faster model than a 5-minute recap |
-| `STAGE_COMMENTARY_INTERVAL_SECONDS` | 30 | maximum colour-line refresh rate |
+| `STAGE_COMMENTARY_INTERVAL_SECONDS` | 60 | how often an *unchanged* beat's line is refreshed. The 60 s regeneration floor always wins, so a value below 60 is inert — do not document one |
 | `STAGE_ANALYSIS_INTERVAL_SECONDS` | 180 | how often the analysis segment runs |
 | `STAGE_ANALYSIS_DURATION_SECONDS` | 30 | how long the package holds the panel |
 
@@ -190,8 +190,15 @@ evidence, never the raw stream**, so it cannot narrate an event that did not occ
 ### The two lines
 
 **Play-by-play** — recomputed every 2 s poll from the newest loop turn, entirely deterministic:
-`▸ SH · reading its own source · 29s`. Verb phrasing reuses `data._phrase_event` and `DIODE_VERBS`.
-Never generated, never stale, never wrong.
+`▸ SH · reading its own source · 29s`. Never generated, never stale, never wrong.
+
+**Do not phrase it with `data._phrase_event`.** That function is written for the four
+self-modification tools only; after its `migrate`/`reset`/`done` branches it falls through to
+`("write", "REWROTE ITS OWN SOURCE", …)` for *every* other name. Its existing caller filters to
+those four first, so the fall-through never fires there — but the play-by-play sees every tool the
+agent calls, and routing through it labels every file read, validate, and agent-built tool a
+self-edit. Part 2 uses explicit `TOOL_TAGS`/`TOOL_PHRASES` maps with `DIODE_VERBS` as a fallback,
+and a test pins it. Do not reinstate the shortcut.
 
 **Colour** — one interpretive sentence, regenerated only when the beat *identity* changes, subject to
 a minimum regeneration floor (60 s, matching `summary.MIN_REGEN_SECONDS`) so a beat storm cannot

@@ -354,6 +354,21 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   font: 400 13px/19px var(--mono); color: var(--paper-dim); }
 #strip-glyph { font-size: 11px; }
 
+/* commentary:start */
+#now { padding: 0 0 10px 0; }
+#now-play { font-family: var(--mono); font-size: 12px; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--paper-dim); display: flex; gap: 8px;
+  align-items: baseline; min-width: 0; }
+#play-tag { color: var(--world); flex: none; }
+#play-phrase { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+#play-age { flex: none; color: var(--paper-faint); font-variant-numeric: tabular-nums; }
+#now-colour { font-family: var(--sans); font-size: 17px; line-height: 24px;
+  color: var(--paper); margin: 6px 0 0 0; display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
+#now-by { font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+  color: var(--paper-faint); margin-top: 4px; }
+/* commentary:end */
 #story .recap-wrap { flex: none; }
 #recap-box .more { margin-top: 2px; }
 #recap { margin: 0; font: 400 17px/27px var(--serif); max-width: 62ch; color: var(--paper-dim);
@@ -523,6 +538,12 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 
     <section id="story" class="panel">
       <div class="ptitle"><span>THE STORY SO FAR</span></div>
+      <div id="now">
+        <div id="now-play"><span id="play-tag"></span><span id="play-phrase"></span><span id="play-age"></span></div>
+        <p id="now-colour"></p>
+        <div id="now-by">&mdash; the stage, not the subject</div>
+      </div>
+      <hr class="rule" id="now-rule">
       <div class="recap-wrap">
         <div id="recap-box" class="blk rail-blk">
           <p id="recap" class="clamp"><span id="recap-lede"></span><span id="recap-rest"></span></p>
@@ -1108,6 +1129,19 @@ function fallbackRecap() {
   }
   return out.join(" ");
 }
+function dropLede(text) {
+  var parts = text.split(/(?<=\.)\s+/);
+  if (parts.length >= 3) return parts.slice(1).join(" ");
+  return text;
+}
+function renderNow() {
+  var c = (snap.commentary || {}), play = c.play || {}, colour = c.colour || {};
+  setText($("play-tag"), play.tag || "··");
+  setText($("play-phrase"), play.phrase || "waiting for the first word");
+  var age = play.epoch == null ? null : Math.max(0, clock() / 1000 - play.epoch);
+  setText($("play-age"), age == null ? "" : dur(age));
+  setText($("now-colour"), colour.text || "");
+}
 function renderStory() {
   var story = snap.story, text, model = null, gen = null;
   if (story && typeof story.text === "string" && story.text.trim()) {
@@ -1117,6 +1151,7 @@ function renderStory() {
   } else {
     text = norm(fallbackRecap());
   }
+  text = dropLede(text);
   var lede = text, rest = "";
   var idx = text.indexOf(". ");
   if (idx > -1 && idx < 200) { lede = text.slice(0, idx + 2); rest = text.slice(idx + 2); }
@@ -1378,6 +1413,7 @@ function tick() {
     ? dur(nowMs / 1000 - st.started_epoch) : "—");
   setInflight(age, state);
   setRelativeTimes(nowMs);
+  renderNow();
   if (announceUntil && Date.now() > announceUntil) {
     announceUntil = 0;
     $("premise").classList.remove("announce");

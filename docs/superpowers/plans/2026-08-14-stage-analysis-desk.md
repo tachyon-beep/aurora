@@ -21,6 +21,17 @@ Identical to Part 2's, and binding here for the same reasons:
 - **No new writable mount.** The stage container stays `read_only`.
 - **The stream port (8091) serves no mutating endpoints.**
 - **Any new stage-side read of an agent-writable root goes through `data.contained_file`.**
+- **Cap every agent-controlled string before it reaches a prompt or the public snapshot.** This is
+  not optional and it is the one constraint Part 2 lacked. Part 2 shipped a Critical defect because
+  no task owned it: `server._public_turn` capped tool names at `NAME_CAP = 64`, but the commentary
+  path published the same agent-controlled name uncapped, and a 50,000-character tool name reached
+  `/api/stream` through two fields. `/api/stream` is polled every 2 s by every viewer of a service
+  that can be tunnel-exposed, at `mem_limit: 256m`. Part 3's exposure is **larger**: the analyst
+  prompt consumes tombstone notes and published statements, both written by an agent that has a
+  shell and writes freely in `/work`, and both far longer than a tool name. Cap at the boundary where
+  the value enters the module — one choke point, not per-field — reuse `server.NAME_CAP` for names,
+  and extend `tests/test_stage_containment.py::test_agent_controlled_public_fields_are_capped`
+  rather than writing a separate test, so the paths stay pinned together.
 - **Every prompt carries `llm.RECORDS_FRAMING`.** Tombstone notes are written by the agent and are the analyst's main input — this is the highest-risk injection surface in the whole stage.
 - **All rendered content is escaped text.** `setText` / `textContent`. Never `innerHTML`.
 - **Generation fails open**, and here it fails *silent*: no key means no segment at all, not a starless placeholder.

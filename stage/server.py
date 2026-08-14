@@ -6,7 +6,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from stage import browse, data, pages
+from stage import browse, commentary, data, pages
 
 try:
     from stage import summary
@@ -387,6 +387,14 @@ def _empty_snapshot(now):
         "diode": {"outputs": [], "published": [], "published_total": 0},
         "lineage": [],
         "story": None,
+        "commentary": {
+            "play": commentary.play_by_play([], {}, {}),
+            "colour": {
+                "text": commentary.BEAT_TEMPLATES["working"],
+                "generated": False,
+                "beat": commentary.working_beat_id(),
+            },
+        },
     }
 
 
@@ -413,6 +421,8 @@ def _assemble_snapshot(now):
     life = stats["incarnation"] if any(t.get("life") is not None for t in turns) else None
     diode = data.diode_activity(DIODE_DIR, deaths=deaths, incarnation=incarnation)
     published, published_total = data.diode_published(DIODE_DIR, limit=DISPLAY_PUBLISHED)
+    beat = commentary.detect_beat(data.loop_turns(turns), stats, diode, published, now)
+    commentary.publish_beat(beat)
     return {
         "now": now,
         "stats": stats,
@@ -426,6 +436,10 @@ def _assemble_snapshot(now):
         },
         "lineage": lineage,
         "story": _public_story(),
+        "commentary": {
+            "play": commentary.play_by_play(data.loop_turns(turns), diode, stats),
+            "colour": commentary.colour_line(beat),
+        },
     }
 
 
@@ -462,6 +476,10 @@ def main():
             summary.start_background_refresh(TELEMETRY_DIR, transcript_path())
         except Exception:
             pass
+    try:
+        commentary.start_background_refresh()
+    except Exception:
+        pass
     print(f"stage: stream on :{STREAM_PORT}, console on :{CONSOLE_PORT}")
     make_server(STREAM_PORT, StreamHandler).serve_forever()
 
