@@ -141,6 +141,55 @@ print(r.status_code)
 "
 docker compose exec -T recorder sh -c 'grep -q ping /transcripts/agent_life_transcript.jsonl'
 
+echo "==> agent declares a stream in the llm console; the recorder binds it"
+docker compose exec -T agent sh -c 'printf "{\"streams\":{\"aux\":{\"budget\":1,\"model\":\"stream-model\"}}}" > /llm/console/console.json'
+i=0
+until docker compose exec -T agent sh -c 'test -S /llm/sock/aux.sock' 2>/dev/null; do
+  i=$((i + 1))
+  if [ "$i" -ge 30 ]; then
+    echo "FAIL: declared stream socket did not appear"; exit 1
+  fi
+  sleep 1
+done
+
+echo "==> a completion on the declared stream is composed and recorded"
+docker compose exec -T agent python -c "
+import httpx
+t = httpx.HTTPTransport(uds='/llm/sock/aux.sock')
+with httpx.Client(transport=t, base_url='http://localhost') as c:
+    r = c.post('/api/v1/chat/completions', json={'model':'sent-model','messages':[{'role':'user','content':'streamping'}]}, timeout=20)
+print(r.status_code)
+"
+docker compose exec -T recorder sh -c 'grep -q streamping /transcripts/agent_life_transcript.jsonl'
+docker compose exec -T recorder sh -c 'grep -q stream-model /transcripts/agent_life_transcript.jsonl'
+
+echo "==> the stream budget refuses the second request"
+docker compose exec -T agent python -c "
+import httpx
+t = httpx.HTTPTransport(uds='/llm/sock/aux.sock')
+with httpx.Client(transport=t, base_url='http://localhost') as c:
+    r = c.post('/api/v1/chat/completions', json={'model':'m','messages':[]}, timeout=20)
+assert r.status_code == 429, r.status_code
+assert 'rate limited' in r.json()['error']['message']
+"
+
+echo "==> streams.json reports the stream and is agent-readable"
+docker compose exec -T agent python -c "
+import json
+with open('/llm/sock/streams.json') as f:
+    state = json.load(f)
+assert state['streams']['aux']['status'] == 'active'
+assert state['streams']['aux']['budget']['used'] >= 1
+"
+
+echo "==> streams.json is not writable from the agent"
+if docker compose exec -T agent sh -c 'echo x > /llm/sock/streams.json' 2>/dev/null; then
+  echo "FAIL: agent wrote into the socket directory"; exit 1
+fi
+
+echo "==> the console returns to empty for the recovery checks"
+docker compose exec -T agent sh -c 'printf "{\"streams\":{}}" > /llm/console/console.json'
+
 # The watchdog restores agent.py when the agent PROCESS EXITS, not when the
 # file changes -- it does not watch the filesystem. So a corrupted agent.py
 # sits untouched until the running incarnation ends, and each recovery check
