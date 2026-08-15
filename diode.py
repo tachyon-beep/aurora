@@ -226,6 +226,30 @@ def _speech_gate(variables):
     return speech_configured() and bool(variables.get("enable_speech"))
 
 
+NEWS_SOURCES = {
+    "abc": ("abc.net.au", "https://www.abc.net.au/news/feed/51120/rss.xml"),
+    "bbc": ("bbc.co.uk", "https://feeds.bbci.co.uk/news/world/rss.xml"),
+    "aljazeera": ("aljazeera.com", "https://www.aljazeera.com/xml/rss/all.xml"),
+    "nhk": ("nhk.or.jp", "https://www3.nhk.or.jp/rss/news/cat0.xml"),
+    "lemonde": ("lemonde.fr", "https://www.lemonde.fr/rss/une.xml"),
+    "dw": ("dw.com", "https://rss.dw.com/rdf/rss-de-all"),
+    "elpais": (
+        "elpais.com",
+        "https://feeds.elpais.com/mrss-s/pages/ep/site/elpais.com/portada",
+    ),
+    "thehindu": ("thehindu.com", "https://www.thehindu.com/feeder/default.rss"),
+    "g1": ("g1.globo.com", "https://g1.globo.com/rss/g1/"),
+    "allafrica": (
+        "allafrica.com",
+        "https://allafrica.com/tools/headlines/rdf/latest/headlines.rdf",
+    ),
+}
+
+
+def _news_gate(variables):
+    return bool(variables.get("enable_news"))
+
+
 COMMANDS = {
     "help": {"gate": _gate_always, "help": "help -> write the current command list to HELP.md"},
     "fetchhttp": {
@@ -255,10 +279,6 @@ COMMANDS = {
     "arxiv": {
         "gate": lambda v: bool(v.get("enable_papers")),
         "help": "arxiv <query> -> return recent paper titles and summaries for a query",
-    },
-    "abc": {
-        "gate": lambda v: bool(v.get("enable_news")),
-        "help": "abc -> return current news headlines from abc.net.au",
     },
     "entropy": {
         "gate": lambda v: bool(v.get("enable_entropy")),
@@ -298,6 +318,12 @@ COMMANDS = {
         "hidden": True,
     },
 }
+
+for _news_name, (_news_domain, _news_url) in NEWS_SOURCES.items():
+    COMMANDS[_news_name] = {
+        "gate": _news_gate,
+        "help": f"{_news_name} -> return current news headlines from {_news_domain}",
+    }
 
 
 def available_commands(variables):
@@ -401,7 +427,7 @@ def write_help(variables):
     lines.append("  enable_reference: true, makes the wikipedia command available")
     lines.append("  enable_weather: true, makes the weather command available")
     lines.append("  enable_papers: true, makes the arxiv command available")
-    lines.append("  enable_news: true, makes the news headline command available")
+    lines.append("  enable_news: true, makes the news headline commands available")
     lines.append("  enable_entropy: true, makes the entropy command available")
     lines.append("  enable_publishing: true, makes the publish command available")
     lines.append("  enable_scheduling: true, makes the delayed command available")
@@ -909,7 +935,7 @@ def handle_command(command, variables, fetch_history):
         path = write_clone_archive(owner, repo, archive)
         return f"recorded as {os.path.basename(path)} ({len(archive)} bytes)", fetch_history
 
-    if name in ("fetchrss", "wikipedia", "weather", "arxiv", "abc"):
+    if name in ("fetchrss", "wikipedia", "weather", "arxiv") or name in NEWS_SOURCES:
         if name == "fetchrss":
             url = arg
         elif name == "wikipedia":
@@ -940,7 +966,7 @@ def handle_command(command, variables, fetch_history):
                 + "&max_results=5"
             )
         else:
-            url = "https://www.abc.net.au/news/feed/51120/rss.xml"
+            url = NEWS_SOURCES[name][1]
         limit = fetch_limit(variables)
         now = time.time()
         allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
@@ -949,7 +975,7 @@ def handle_command(command, variables, fetch_history):
         ok, body = _fetch(url)
         if not ok:
             return body, fetch_history
-        if name in ("fetchrss", "abc"):
+        if name == "fetchrss" or name in NEWS_SOURCES:
             items = parse_feed(body)
             if items is None:
                 return "could not parse feed", fetch_history

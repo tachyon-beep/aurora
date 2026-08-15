@@ -439,6 +439,23 @@ def test_new_commands_are_gated():
         assert text == f"command not available: {name}"
 
 
+def test_news_commands_are_gated_by_enable_news():
+    for name in diode.NEWS_SOURCES:
+        text, _ = diode.handle_command(name, {}, [])
+        assert text == f"command not available: {name}"
+    names = diode.available_commands({"enable_news": True})
+    for name in diode.NEWS_SOURCES:
+        assert name in names
+
+
+def test_news_sources_have_https_urls_and_help_entries():
+    for name, (domain, url) in diode.NEWS_SOURCES.items():
+        assert url.startswith("https://")
+        assert diode.COMMANDS[name]["help"] == (
+            f"{name} -> return current news headlines from {domain}"
+        )
+
+
 def test_gate_variables_open_new_commands():
     variables = {
         "enable_feeds": True,
@@ -469,6 +486,16 @@ def test_handle_abc_uses_fixed_feed(monkeypatch):
     text, hist = diode.handle_command("abc", {"enable_news": True, "fetch_budget": 5}, [])
     assert "First story" in text
     assert len(hist) == 1
+
+
+def test_each_news_command_fetches_its_fixed_feed(monkeypatch):
+    for name, (domain, url) in diode.NEWS_SOURCES.items():
+        fake, calls = _stub_fetch(url, RSS_SAMPLE)
+        monkeypatch.setattr(diode, "_fetch", fake)
+        text, hist = diode.handle_command(name, {"enable_news": True, "fetch_budget": 5}, [])
+        assert "First story" in text
+        assert calls == [url]
+        assert len(hist) == 1
 
 
 def test_handle_wikipedia_quotes_title(monkeypatch):
