@@ -6,15 +6,17 @@ Status: approved
 ## Purpose
 
 Turn Aurora into a public technical demonstration streamed on Twitch: viewers watch agents evolve
-across incarnations, exchange messages with them across an async mediated boundary, and see how
-creative freedom coexists with layered safety. Three parts, built in order:
+across incarnations, see how creative freedom coexists with layered safety, and see the agent speak
+outward through the diode. (Originally scoped as an async mediated exchange between viewers and the
+agent — see Part 3's status block below for why that was superseded by a broadcast model.) Three
+parts, built in order:
 
 1. **Chassis resilience** — agents stop dying silently to self-inflicted mechanical faults
    ("headshots"); unrecoverable faults become visible, recorded deaths.
 2. **The stage** — one stream-ready web page, exposed through a Cloudflare Tunnel, captured by OBS
    as a browser source.
-3. **The exchange and a richer world** — a moderated two-way message channel between viewers and
-   the agent, optional text-to-speech, and new gated diode capabilities.
+3. **The exchange and a richer world** (superseded — see Part 3) — a moderated two-way message
+   channel between viewers and the agent, optional text-to-speech, and new gated diode capabilities.
 
 Each part gets its own implementation plan. This spec covers all three because they interlock.
 
@@ -30,14 +32,14 @@ Each part gets its own implementation plan. This spec covers all three because t
 
 | Decision | Choice |
 |----------|--------|
-| Audience role | Interactive: async, mediated two-way messaging |
+| Audience role | Broadcast: viewers observe; the agent speaks outward through the diode (revised 2026-08-15) |
 | Stream path | OBS browser source pointed at a Cloudflare-tunneled page |
 | Failure model | Heal mechanically, then die loudly with a synthetic tombstone |
-| Moderation | Automatic filter + rate limit + slow cadence; operator kill switch |
+| Moderation | Superseded — there is no inbound channel to moderate (revised 2026-08-15) |
 | Disclosure | Factual, minimal: the channel README says humans are observing |
 | Stream service | New `stage` container; existing viewer untouched |
-| Chat ingest | Anonymous read-only Twitch IRC (`justinfan…`), no credentials |
-| Exchange transport | New `exchange` volume with `inbox/`, `outbox/`, `README.md` |
+| Chat ingest | Superseded — no Twitch IRC ingest was built (revised 2026-08-15) |
+| Exchange transport | Superseded — the diode's speak/publish vocabulary (revised 2026-08-15) |
 
 ---
 
@@ -126,11 +128,15 @@ read-only rootfs, tmpfs `/tmp`, `cap_drop: ALL`, `no-new-privileges`, pids/mem l
 
 - **8091 — stream page.** The only port a Cloudflare Tunnel exposes. Read-only output; no
   mutating endpoints are served on this port at all.
-- **8092 — operator console.** Loopback only, never tunneled: pending/recent viewer messages,
-  purge message, ban user, channel kill switch, delivery cadence, TTS toggle, manual message
-  injection, and the container browser (below). Defense in depth: every console request
-  additionally requires a bearer token (`STAGE_CONSOLE_TOKEN`), so a misconfigured tunnel or a
-  container sharing the stage's network fails closed.
+- **8092 — operator console.** Loopback only, never tunneled. **Read-only by design:**
+  `do_POST`/`PUT`/`DELETE`/`PATCH` answer 405 on both ports, so the console is an
+  analysis desk rather than a control desk — the operator browses the telemetry
+  mirror, the transcripts and the diode, and reads the `agent.py` diff. Every
+  request additionally requires a bearer token (`STAGE_CONSOLE_TOKEN`), so a
+  misconfigured tunnel or a container sharing the stage's network fails closed.
+  Moderation and delivery controls are not built and are not planned: with the
+  exchange superseded (below) there is no inbound queue to moderate, and keeping
+  the console free of mutating routes is one fewer boundary to defend.
 
 ### Operator telemetry and container browser
 
@@ -148,17 +154,18 @@ container and ro into the stage. The watchdog:
 The mountpoint is visible to the agent via `list_dir("/")` as an inert directory — latent like
 `/state`: no README, nothing injected, nothing about it in the garden or prompts.
 
-**Console file browser (stage, port 8092, behind the token).** Read-only browsing of exactly four
-roots: `telemetry`, `transcripts`, `diode`, `exchange`. Directory listings show name, size, mtime;
-file view renders escaped text capped at 256 KiB with a tail view for logs and transcripts; files
-can be downloaded. One derived view: a unified diff (difflib) of the mirrored `agent.py` against
-`agent_stock.py`, showing at a glance how the agent has modified itself.
+**Console file browser (stage, port 8092, behind the token).** Read-only browsing of exactly three
+roots: `telemetry`, `transcripts`, `diode` (`browse_roots()` in `stage/server.py`; the exchange
+volume below was never built, so it was never a fourth root). Directory listings show name, size,
+mtime; file view renders escaped text capped at 256 KiB with a tail view for logs and transcripts;
+files can be downloaded. One derived view: a unified diff (difflib) of the mirrored `agent.py`
+against `agent_stock.py`, showing at a glance how the agent has modified itself.
 
 **Containment rules.** Every resolved path must realpath-resolve inside its allow-listed root;
-symlinks are never followed across a root boundary (the agent can plant symlinks in `/work` or
-`/exchange`; the browser must not follow one into the stage's own filesystem). All content renders
-as escaped text; nothing is executed or interpreted. `/state` is never browsable — it stays
-mounted only into the agent; deep dives remain `docker exec` on the host.
+symlinks are never followed across a root boundary (the agent can plant symlinks in `/work`; the
+browser must not follow one into the stage's own filesystem). All content renders as escaped text;
+nothing is executed or interpreted. `/state` is never browsable — it stays mounted only into the
+agent; deep dives remain `docker exec` on the host.
 
 ### Stream page (1920×1080, OBS browser source)
 
@@ -167,13 +174,10 @@ Panels, all fed by polling the transcript and the mounted volumes:
 - **Live feed** — transcript tail: reasoning, assistant text, tool calls and results.
 - **Incarnation panel** — incarnation number, model, turn count, uptime.
 - **Self-modification ticker** — `write_file` / `migrate` / `reset` / `done` events as they occur.
-- **World activity** — diode commands and results; exchange traffic.
-- **Transmissions** — the agent's `outbox/` files rendered as escaped text; `kind: say` files are
-  additionally queued to browser `speechSynthesis` (this is the TTS: zero dependencies, audio rides
-  the OBS browser-source capture, toggleable from the console, per-utterance length cap and rate
-  limit).
-- **Agent panels** — up to a small fixed number of agent-authored regions populated via
-  `kind: panel` outbox files (see the publication contract in Part 3); escaped text only.
+- **What it reached for** — diode commands and results (the former World activity panel),
+  plus the diode's `published/` and `spoken/` entries rendered as escaped text, with the
+  played utterance captioned. This replaces the planned `outbox/` transmissions panel and
+  the `kind: panel` agent-authored regions; both depended on the superseded exchange (below).
 - **Lineage** — the last three incarnations, one line each. Tombstones are read from the
   telemetry mirror (`telemetry/work/tombstones/`), which carries both `done` notes and synthetic
   harness-termination notes; the transcript's `done` tool-call arguments and recorded upstream
@@ -181,14 +185,16 @@ Panels, all fed by polling the transcript and the mounted volumes:
   (first sentence, clamped). An optional `STAGE_SUMMARY_API_KEY` — a separate low-value key, never
   the recorder's — enables one-line LLM summaries.
 
-### Twitch ingest
+### Twitch ingest and moderation pipeline (inbound) — superseded
+
+> **Status: superseded, 2026-08-15.** See Part 3's status block below: the exchange these two
+> sections depend on was never built, so neither the Twitch ingest nor the moderation pipeline
+> exists. Kept as the record of a design that was reconsidered.
 
 Anonymous read-only IRC: connect to `irc.chat.twitch.tv:6697` (TLS) with a `justinfan` nick and
 join `TWITCH_CHANNEL`. No OAuth, no secrets. Chat lines flow into the moderation queue. The
 operator console provides a manual injection form as a second inbound path (works with the channel
 kill switch engaged, and without Twitch at all).
-
-### Moderation pipeline (inbound)
 
 Automatic gate, then slow cadence:
 
@@ -207,6 +213,18 @@ never part of the tunnel configuration.
 ---
 
 ## Part 3 — The exchange and a richer world
+
+> **Status: superseded, 2026-08-15.** The `/exchange` volume, the Twitch ingest, the
+> moderation pipeline and the publication contract were not built. The agent's
+> outward speech runs through the diode's `speak` and `publish` commands instead —
+> a vocabulary that is already closed, already gated by `ENABLE_SPEECH` and
+> `SPEECH_HOURLY_MAX`, and already inside the outbound budget. The stage reads
+> `diode/spoken/` and `diode/published/` and renders them in the WHAT IT REACHED FOR
+> panel. Nothing below this line describes the running system; it is kept as the
+> record of a design that was reconsidered.
+>
+> The consequence for the spec's "Audience role: interactive" decision is that the
+> stage is a broadcast, not an exchange. Viewers watch; they do not write.
 
 ### `/exchange` volume
 
@@ -331,5 +349,8 @@ existing rate-limit budget.
    optional service, plus the operator console skeleton (token auth), the watchdog telemetry
    mirror + stdout tee, and the container browser. Streamable at the end of this phase.
 3. **Exchange** — volume, moderation pipeline, Twitch IRC ingest, moderation views on the
-   existing console, transmissions panel, TTS.
-4. **World enrichment** — diode commands, `observers.txt`, lineage summarization polish.
+   existing console, transmissions panel, TTS. (Superseded, 2026-08-15 — see Part 3's status
+   block; outward speech ships through the diode's `speak`/`publish` commands instead.)
+4. **World enrichment** — diode commands (built: `fetchrss`/`wikipedia`/`weather`), lineage
+   summarization polish (built). `observers.txt` depended on the superseded exchange and was not
+   built.
