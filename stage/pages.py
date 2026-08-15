@@ -1636,7 +1636,10 @@ function laneCount(n) {
 function renderLanes() {
   var host = $("stream-rows"), lanes = (snap && snap.lanes) || [];
   if (!host) return;
-  var shown = lanes.slice(0, 8), built = 0, live = 0;
+  /* #stream-rows is a 2-column grid, 64px tall, of 20px rows: 3 rows x 2
+     columns fit without clipping. A larger slice would render lanes into
+     overflow that #stream-foot never discloses. */
+  var shown = lanes.slice(0, 6), built = 0, live = 0;
   while (host.children.length > shown.length) host.removeChild(host.lastChild);
   for (var i = 0; i < shown.length; i++) {
     var lane = shown[i], node = host.children[i];

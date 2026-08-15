@@ -235,6 +235,12 @@ def test_the_legend_no_longer_shares_a_row_with_the_streams():
     assert "lane" not in mh_b
 
 
+def test_the_lane_slice_matches_what_the_grid_can_show():
+    """#stream-rows fits 3 rows x 2 columns = 6 lanes without clipping; a larger
+    slice would render lanes into overflow that #stream-foot never discloses."""
+    assert "lanes.slice(0, 6)" in HTML
+
+
 def test_the_ribbon_gives_the_streams_the_widest_column():
     block = HTML[HTML.index("#ribbon {") :]
     block = block[: block.index("}")]
