@@ -491,6 +491,10 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 #reached.is-sparse.is-captioned #reached-foot { margin-top: auto; }
 #speak-audio { display: none; }
+#sound-on { align-self: flex-start; margin-top: 6px; flex: none; cursor: pointer;
+  background: none; border: 1px solid var(--rule-2); border-radius: 4px; padding: 2px 8px;
+  font: 600 13px/18px var(--mono); letter-spacing: .12em; color: var(--say); }
+#sound-on:focus-visible { outline: 1px solid var(--rule-2); outline-offset: 2px; }
 #reached-foot { margin-top: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint); flex: none; }
 #reached-said { flex: none; }
 #reached-said:empty, #reached-said.is-quiet { display: none; }
@@ -1455,7 +1459,10 @@ function playNextSpoken() {
   var mine = spokenCurrent;
   try {
     var p = a.play();
-    if (p && p.catch) p.catch(function () { if (mine === spokenCurrent) spokenAdvance(); });
+    if (p && p.catch) p.catch(function () {
+      soundBlocked();
+      if (mine === spokenCurrent) spokenAdvance();
+    });
   } catch (e) { spokenAdvance(); }
 }
 function spokenAdvance() {
@@ -1465,6 +1472,19 @@ function spokenAdvance() {
   spokenCurrent = null;
   spokenBusy = false;
   playNextSpoken();
+}
+/* An OBS browser source is allowed to autoplay, so this never runs there. A
+   person opening the tunnelled page is not, and would otherwise watch every
+   utterance drain past with no way to ask for it. */
+function soundBlocked() {
+  var b = $("sound-on");
+  if (!b || !b.hidden) return;
+  b.hidden = false;
+  b.addEventListener("click", function () {
+    b.hidden = true;
+    var a = $("speak-audio");
+    if (a) { try { a.play(); } catch (e) {} }
+  });
 }
 (function () {
   var a = $("speak-audio");

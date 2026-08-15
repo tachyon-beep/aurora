@@ -407,6 +407,13 @@ def test_the_stream_page_stylesheet_declares_no_px_font_size_under_the_floor():
     assert too_small == [], f"below the {BROADCAST_TYPE_FLOOR}px floor: {too_small}"
 
 
+def test_a_refused_autoplay_offers_sound_instead_of_only_advancing():
+    assert 'id="sound-on"' in HTML
+    assert "soundBlocked" in HTML
+    # the control is revealed by the refusal path, not rendered unconditionally
+    assert HTML.index("soundBlocked") > HTML.index('id="sound-on"')
+
+
 CONSOLE = pages.CONSOLE_PAGE_HTML
 
 
