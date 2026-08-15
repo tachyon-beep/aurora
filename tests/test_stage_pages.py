@@ -92,31 +92,58 @@ def test_stream_page_has_an_audio_element_and_caption():
 
 
 def test_the_caption_sits_above_the_foot_so_the_panel_does_not_clip_it():
-    """`#said` is a flex column inside a 136px ribbon row and `#said-foot` carries
+    """`#reached` is a flex column inside a 136px ribbon row and `#reached-foot` carries
     `margin-top: auto`, so anything after the foot is pushed past the panel's
     `overflow: hidden` edge and never reads. The caption must render whether or not
     playback succeeds, so its position is behaviour, not decoration."""
     assert HTML.index('id="said-text"') < HTML.index('id="speak-caption"')
-    assert HTML.index('id="speak-caption"') < HTML.index('id="said-foot"')
+    assert HTML.index('id="speak-caption"') < HTML.index('id="reached-foot"')
 
 
 def test_the_caption_clamps_the_published_line_to_make_room():
-    assert "#said.is-captioned #said-text" in HTML
-    assert 'setClass($("said"), "is-captioned"' in HTML
+    assert "#reached.is-captioned #said-text" in HTML
+    assert 'setClass($("reached"), "is-captioned"' in HTML
 
 
 def test_the_caption_replaces_the_placeholder_that_would_contradict_it():
-    """`renderRibbon` writes "It has said nothing to anyone outside." into `#said-text`
-    whenever nothing has been published, and marks a publication with `.spoke`. Speech
-    is not publication, so an utterance before the first publish would leave that
-    sentence sitting directly above a caption of what was just said. The placeholder is
-    hidden in that state and the caption takes the panel's line."""
-    assert "#said.is-captioned:not(.spoke) #said-text { display: none; }" in HTML
-    assert "#said.is-captioned:not(.spoke) #speak-caption" in HTML
+    """`renderRibbon` leaves `#said-text` empty whenever nothing has been published,
+    and marks a publication with `.spoke`. Speech is not publication, so an utterance
+    before the first publish would leave an empty `#said-text` sitting directly above
+    a caption of what was just said. `#said-text` is hidden in that state and the
+    caption takes the panel's line."""
+    assert "#reached.is-captioned:not(.spoke) #said-text { display: none; }" in HTML
+    assert "#reached.is-captioned:not(.spoke) #speak-caption" in HTML
 
 
 def test_the_panel_accent_lights_for_an_utterance_as_well_as_a_publication():
-    assert "#said.is-captioned { border-left: 2px solid var(--say); }" in HTML
+    assert "#reached.is-captioned { border-left: 2px solid var(--say); }" in HTML
+
+
+def test_the_outward_panels_are_one_panel():
+    assert 'id="reached"' in HTML
+    assert 'id="asked"' not in HTML
+    assert 'id="said"' not in HTML
+
+
+def test_the_merged_panel_keeps_the_whole_playback_path():
+    """The merge must not cost the audio path: Task 7's control lives here too."""
+    for token in ('id="speak-audio"', 'id="speak-caption"', 'id="sound-on"', "renderSpoken"):
+        assert token in HTML, token
+
+
+def test_the_merged_panel_states_the_fact_across_lives_not_per_life():
+    assert "has never reached outside the box" in HTML
+
+
+def test_the_merged_panel_playback_path_is_structurally_wired():
+    """No live stack here to drop a file into `spoken/` and watch it play, so this
+    checks the structural equivalent: `#speak-audio` is nested inside the `#reached`
+    section (not a sibling), and `renderSpoken` is still wired into `render`."""
+    start = HTML.index('id="reached"')
+    end = HTML.index("</section>", start)
+    section = HTML[start:end]
+    assert 'id="speak-audio"' in section
+    assert "\n  renderSpoken();\n" in HTML
 
 
 def test_stream_page_plays_each_utterance_once_and_only_when_fresh():

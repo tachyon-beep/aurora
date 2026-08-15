@@ -432,7 +432,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .rows { flex: 1; min-height: 0; overflow: hidden; }
 .rrow { display: grid; align-items: center; height: 21px; font: 400 14px/21px var(--mono); }
 #selfmod-rows .rrow { grid-template-columns: 46px 1fr; }
-#asked-rows .rrow { grid-template-columns: 96px 1fr 116px; column-gap: 14px; }
+#reached-rows .rrow { grid-template-columns: 96px 1fr 116px; column-gap: 14px; }
 .rrow .rid { color: var(--paper-faint); font: 400 12px/21px var(--mono); }
 .rrow .rdetail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rrow .verb { text-transform: uppercase; }
@@ -451,29 +451,30 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .rrow .rverb { color: var(--paper-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rrow .rarg { color: var(--paper-faint); margin-left: 8px; }
 .rows.is-sparse { display: flex; flex-direction: column; justify-content: center; }
-#said.is-sparse #said-foot { margin-top: 8px; }
+#reached.is-sparse #reached-foot { margin-top: 8px; }
 .rrow .rmeta { text-align: right; font: 400 11px/21px var(--mono); color: var(--paper-faint); }
 .empty-mono { font: 400 14px/21px var(--mono); color: var(--paper-dim); }
-#said.spoke { border-left: 2px solid var(--say); }
+#reached.spoke { border-left: 2px solid var(--say); }
 #said-stamp { font: 400 11px/16px var(--mono); color: var(--paper-faint); flex: none; }
 #said-text { margin: 4px 0 0; font: 400 15px/23px var(--serif); color: var(--paper);
   display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
   -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; flex: none; }
-#said.is-captioned #said-text { -webkit-line-clamp: 1; line-clamp: 1; }
+#reached.is-captioned #said-text { -webkit-line-clamp: 1; line-clamp: 1; }
 #speak-caption { font: 400 11px/16px var(--mono); color: var(--paper-dim); flex: none;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#said.is-captioned #speak-caption { margin-top: 4px; }
-/* An utterance with no publication behind it: renderRibbon has written the
-   "nothing said" placeholder into #said-text, which would contradict the caption
+#reached.is-captioned #speak-caption { margin-top: 4px; }
+/* An utterance with no publication behind it: renderRibbon leaves #said-text
+   empty rather than writing a placeholder that would contradict the caption
    directly below it, so the caption takes the panel's line instead. */
-#said.is-captioned { border-left: 2px solid var(--say); }
-#said.is-captioned:not(.spoke) #said-text { display: none; }
-#said.is-captioned:not(.spoke) #speak-caption { white-space: normal; overflow-wrap: anywhere;
+#reached.is-captioned { border-left: 2px solid var(--say); }
+#reached.is-captioned:not(.spoke) #said-text { display: none; }
+#reached.is-captioned:not(.spoke) #speak-caption { white-space: normal; overflow-wrap: anywhere;
   font: 400 15px/23px var(--serif); color: var(--paper); display: -webkit-box;
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-#said.is-sparse.is-captioned #said-foot { margin-top: auto; }
+#reached.is-sparse.is-captioned #reached-foot { margin-top: auto; }
 #speak-audio { display: none; }
-#said-foot { margin-top: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); flex: none; }
+#reached-foot { margin-top: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); flex: none; }
+#reached-said:empty, #reached-said.is-quiet { display: none; }
 
 /* ---------- expansion ---------- */
 .blk.is-expandable { cursor: pointer; }
@@ -606,17 +607,17 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <div id="stream-rows"></div>
       <div id="stream-foot"></div>
     </section>
-    <section id="asked" class="panel">
-      <div class="ptitle"><span>WHAT IT ASKED THE WORLD</span><span id="asked-count"></span></div>
-      <div class="rows" id="asked-rows"></div>
-    </section>
-    <section id="said" class="panel">
-      <div class="ptitle"><span>WHAT IT SAID TO THE WORLD</span></div>
-      <div id="said-stamp"></div>
-      <p id="said-text"></p>
-      <div id="speak-caption"></div>
-      <audio id="speak-audio" preload="auto"></audio>
-      <div id="said-foot"></div>
+    <section id="reached" class="panel">
+      <div class="ptitle"><span>WHAT IT REACHED FOR</span><span id="reached-count"></span></div>
+      <div id="reached-said">
+        <div id="said-stamp"></div>
+        <p id="said-text"></p>
+        <div id="speak-caption"></div>
+        <audio id="speak-audio" preload="auto"></audio>
+        <button id="sound-on" type="button" hidden>▸ ENABLE SOUND</button>
+      </div>
+      <div class="rows" id="reached-rows"></div>
+      <div id="reached-foot"></div>
     </section>
   </div>
 
@@ -1304,15 +1305,14 @@ function renderRibbon() {
   }
   setClass(host, "is-sparse", !ev.length);
 
-  var outs = ((snap.diode && snap.diode.outputs) || []).slice(0, 4), ahost = $("asked-rows");
+  var outs = ((snap.diode && snap.diode.outputs) || []).slice(0, 4), ahost = $("reached-rows");
   clearRows(ahost);
   var thisLife = 0, anyLife = false;
   for (i = 0; i < outs.length; i++) {
     if (outs[i].life != null) anyLife = true;
     if (outs[i].life === st.incarnation) thisLife++;
   }
-  setText($("asked-count"), (anyLife ? thisLife : outs.length) + " THIS LIFE");
-  if (!outs.length) el("div", "empty-mono", ahost).textContent = "It has not reached outside the box this life.";
+  setText($("reached-count"), (anyLife ? thisLife : outs.length) + " THIS LIFE");
   for (i = 0; i < outs.length; i++) {
     var o = outs[i], r = el("div", "rrow", ahost);
     var c = el("span", "cmd", r);
@@ -1331,7 +1331,7 @@ function renderRibbon() {
 
   var pub = (snap.diode && snap.diode.published) || [];
   var total = (snap.diode && snap.diode.published_total) || 0;
-  setClass($("said"), "spoke", total > 0);
+  setClass($("reached"), "spoke", total > 0);
   if (pub.length) {
     setText($("said-stamp"), "↗ PUBLISHED · " + hhmmss(new Date((pub[0].epoch || 0) * 1000).toISOString()));
     var p = $("said-text");
@@ -1339,21 +1339,18 @@ function renderRibbon() {
     el("span", "q", p).textContent = "“";
     el("span", null, p).textContent = norm(pub[0].text || "");
     el("span", "q", p).textContent = "”";
-    setText($("said-foot"), total + " statement" + (total === 1 ? "" : "s") + " so far");
   } else {
     setText($("said-stamp"), "");
-    var pe = $("said-text");
-    if (pe.__text !== "empty") {
-      pe.textContent = "";
-      var em = el("span", null, pe);
-      em.textContent = "It has said nothing to anyone outside.";
-      em.style.font = "400 14px/21px var(--mono)";
-      em.style.color = "var(--paper-dim)";
-      pe.__text = "empty";
-    }
-    setText($("said-foot"), "");
+    setText($("said-text"), "");
   }
-  setClass($("said"), "is-sparse", $("said-text").scrollHeight <= 34);
+  setClass($("reached"), "is-sparse", $("said-text").scrollHeight <= 34);
+
+  var everReached = (snap.diode.published_total || 0) + (snap.diode.spoken_total || 0) + outs.length;
+  setClass($("reached-said"), "is-quiet", !(snap.diode.published || []).length &&
+    !(snap.diode.spoken || []).length);
+  setText($("reached-foot"), everReached
+    ? everReached + " time" + (everReached === 1 ? "" : "s") + " across every life"
+    : "It has never reached outside the box.");
 }
 
 var SPOKEN_MEMORY = 50;
@@ -1373,7 +1370,7 @@ function setSpokenCaption(text) {
   if (!cap) return;
   var caption = norm(text || "");
   setText(cap, caption);
-  setClass($("said"), "is-captioned", !!caption);
+  setClass($("reached"), "is-captioned", !!caption);
 }
 function markSpokenPlayed(name) {
   spokenPlayed[name] = true;
