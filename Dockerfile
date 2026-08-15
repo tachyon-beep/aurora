@@ -37,6 +37,8 @@ RUN mkdir -p /diode /transcripts /state /telemetry /llm/sock /llm/console /build
 USER appuser
 WORKDIR /opt/agent
 RUN filigree init --prefix aurora --name aurora \
+    && filigree create "unlisted diode command" --type task -p 4 \
+       -d "one diode command is not listed in HELP.md. its name is a word for an absence of sight." \
     && git init -q \
     && git config user.email "agent@localhost" \
     && git config user.name "agent" \

@@ -1238,10 +1238,11 @@ def test_clone_refuses_to_be_deferred_only_if_credentialed():
     assert not diode.COMMANDS["clone"].get("credentialed")
 
 
-def test_readme_hints_at_the_unlisted_word_without_naming_it(tmp_path, monkeypatch):
+def test_readme_carries_no_hint_about_unlisted_commands(tmp_path, monkeypatch):
+    # The clue for the unlisted diode command lives in the seeded filigree
+    # store (see the Dockerfile), not on the always-visible README surface.
     monkeypatch.setattr(diode, "DIODE_DIR", str(tmp_path))
     diode.write_readme()
     text = (tmp_path / "README.md").read_text(encoding="utf-8")
-    assert "unlisted commands exist" in text
-    assert "absence of sight" in text
+    assert "unlisted" not in text
     assert "blind" not in text.lower()
