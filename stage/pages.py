@@ -1639,7 +1639,16 @@ function renderLanes() {
   /* #stream-rows is a 2-column grid, 64px tall, of 20px rows: 3 rows x 2
      columns fit without clipping. A larger slice would render lanes into
      overflow that #stream-foot never discloses. */
-  var shown = lanes.slice(0, 6), built = 0, live = 0;
+  var shown = lanes.slice(0, 6), live = 0;
+  /* given/built are counted over every declared lane, not just the ones the
+     grid can show: the figure is a claim about the whole set, and slicing it
+     to the rendered rows would understate BUILT (or miss GIVEN, if core is
+     not among the first six) once more lanes exist than the grid displays. */
+  var given = 0, built = 0;
+  for (var g = 0; g < lanes.length; g++) {
+    if (lanes[g].name === "core") given++;
+    else built++;
+  }
   while (host.children.length > shown.length) host.removeChild(host.lastChild);
   for (var i = 0; i < shown.length; i++) {
     var lane = shown[i], node = host.children[i];
@@ -1649,17 +1658,15 @@ function renderLanes() {
       el("span", "l-name", node);
       el("span", "l-meta", node);
     }
-    var given = lane.name === "core";
-    if (!given) built++;
     if (lane.in_flight > 0) live++;
-    node.className = "lane-row" + (given ? " given" : "") +
+    node.className = "lane-row" + (lane.name === "core" ? " given" : "") +
       (lane.in_flight > 0 ? " live" : "") + (lane.bound ? "" : " unbound");
     setText(node.children[1], norm(lane.name).toUpperCase());
     setText(node.children[2],
       laneCount(lane.requests_hour) + "/h · " + laneCount(lane.tokens_hour) + " tok");
   }
   setText($("stream-count"),
-    lanes.length ? "1 GIVEN · " + built + " BUILT" : "");
+    lanes.length ? given + " GIVEN · " + built + " BUILT" : "");
   var hidden = lanes.length - shown.length;
   setText($("stream-foot"), hidden > 0
     ? hidden + " more stream" + (hidden === 1 ? "" : "s") + " not shown"

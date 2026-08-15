@@ -48,6 +48,17 @@ def _provenance_block():
     return block
 
 
+def _lanes_block():
+    """renderLanes plus the two helpers it calls (coreLane is unused by
+    renderLanes itself but lives in the same sentinel block, so it comes
+    along for free), without `el`, `setText`, or `norm`, which the harness
+    stubs directly."""
+    text = _script()
+    start = text.index("/* ---------- lanes ---------- */")
+    end = text.index("/* ---------- render ---------- */")
+    return text[start:end]
+
+
 def _run(source, tmp_path):
     path = tmp_path / "harness.js"
     path.write_text(source, encoding="utf-8")
@@ -248,3 +259,98 @@ def test_playback_queue_behaviour(tmp_path):
     assert out["replayed_after_reload"] == 0
     # A future-dated stamp is as dead as a stale one.
     assert out["future_played"] == 0
+
+
+LANES_HARNESS = """
+function makeNode(tag) {
+  var n = {
+    tagName: tag, className: "", textContent: "", children: [],
+    appendChild: function (child) { this.children.push(child); },
+    removeChild: function (child) {
+      var idx = this.children.indexOf(child);
+      if (idx >= 0) this.children.splice(idx, 1);
+    }
+  };
+  Object.defineProperty(n, "lastChild", {
+    get: function () { return this.children[this.children.length - 1]; }
+  });
+  return n;
+}
+var host = makeNode("div");
+var streamCount = { textContent: "" };
+var streamFoot = { textContent: "" };
+global.$ = function (id) {
+  if (id === "stream-rows") return host;
+  if (id === "stream-count") return streamCount;
+  if (id === "stream-foot") return streamFoot;
+  return { textContent: "" };
+};
+global.el = function (tag, cls, parent) {
+  var n = makeNode(tag);
+  if (cls) n.className = cls;
+  if (parent) parent.appendChild(n);
+  return n;
+};
+global.setText = function (node, value) { node.textContent = String(value == null ? "" : value); return true; };
+global.norm = function (t) { return String(t == null ? "" : t).replace(/\\s+/g, " ").trim(); };
+global.snap = null;
+function lane(name, opts) {
+  opts = opts || {};
+  return {
+    name: name,
+    bound: opts.bound !== false,
+    in_flight: opts.in_flight || 0,
+    requests_hour: opts.requests_hour || 0,
+    tokens_hour: opts.tokens_hour || 0
+  };
+}
+function others(n) {
+  var list = [];
+  for (var i = 1; i <= n; i++) list.push(lane("built-" + i));
+  return list;
+}
+
+__BLOCK__
+
+var out = {};
+
+/* Nine declared lanes -- core plus eight built -- with core among the first
+   six the grid renders. */
+global.snap = { lanes: [lane("core")].concat(others(8)) };
+renderLanes();
+out.count_core_first = streamCount.textContent;
+out.foot_core_first = streamFoot.textContent;
+out.rows_core_first = host.children.length;
+
+/* Same nine lanes, but core sits at index 8 -- past the six-lane slice --
+   so a version that hardcodes "1 GIVEN" (or counts BUILT only over the
+   rendered rows) would report a different figure than the case above. */
+host = makeNode("div");
+global.snap = { lanes: others(8).concat([lane("core")]) };
+renderLanes();
+out.count_core_last = streamCount.textContent;
+out.foot_core_last = streamFoot.textContent;
+out.rows_core_last = host.children.length;
+
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_given_built_figure_counts_every_declared_lane_not_just_the_shown_rows(tmp_path):
+    """renderLanes shows at most 6 lanes but #stream-count's GIVEN/BUILT figure is
+    a claim about every lane the agent declared, not just the ones the grid has
+    room for. A string-presence test cannot see this: the bug was in what the
+    two numbers were computed *from* (the sliced `shown` array instead of the
+    full `lanes` list), which no grep on the page's source text distinguishes
+    from a correct version -- only running the function catches it. The second
+    case (core past the slice) additionally catches a hardcoded "1 GIVEN"
+    literal, which the first case alone would not: it stays right by
+    coincidence when core happens to be lane 0."""
+    out = _run(LANES_HARNESS.replace("__BLOCK__", _lanes_block()), tmp_path)
+    assert out["count_core_first"] == "1 GIVEN · 8 BUILT"
+    assert out["foot_core_first"] == "3 more streams not shown"
+    assert out["rows_core_first"] == 6
+    assert out["count_core_last"] == "1 GIVEN · 8 BUILT"
+    assert out["foot_core_last"] == "3 more streams not shown"
+    assert out["rows_core_last"] == 6
