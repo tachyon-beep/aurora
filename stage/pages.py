@@ -309,7 +309,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   text-wrap: pretty; }
 
 /* ---------- rail ---------- */
-#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 196px 268px 268px;
+#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 196px 296px 240px;
   row-gap: 20px; min-height: 0; }
 #rail .panel { padding: 14px 20px; }
 #rail .ptitle { margin-bottom: 8px; }
@@ -1267,7 +1267,13 @@ function makeGrave() {
 }
 var KIND_LABEL = { declared: "ENDED BY ITS OWN HAND", harness: "STOPPED BY THE HARNESS",
   unknown: "CAUSE UNRECORDED" };
-var GRAVE_ROWS = 3;
+// #dead is 240px tall (#rail's third row) with a fixed 32px title and 16px foot
+// line, leaving ~162px for #graves. Each grave is a real record now (facts line
+// plus two lines of note, min-height 80px) rather than a one-liner, so 162px
+// holds two full graves and not a third. Raising this back to 3 needs a taller
+// #dead row, which only comes out of #rail's other two rows (#subject or
+// #story's .recap-wrap, the one region built to absorb it) or #rail overall.
+var GRAVE_ROWS = 2;
 function renderDead() {
   var lin = (snap.lineage || []).slice(0, GRAVE_ROWS), st = snap.stats, box = $("graves");
   setText($("dead-count"), st.incarnation + " LIVE" + (st.incarnation === 1 ? "" : "S") + " SO FAR");
