@@ -418,7 +418,10 @@ def test_console_rows_are_real_buttons():
 
 
 def test_console_declares_a_visible_focus_state():
-    assert ":focus-visible" in CONSOLE
+    """Asserting bare ':focus-visible' would stay green even if '.entry:focus-visible'
+    were dropped from the selector list while 'select:focus-visible' remained — the
+    rows are the navigation surface this task exists for, so pin them specifically."""
+    assert ".entry:focus-visible" in CONSOLE
 
 
 def test_console_root_select_is_labelled():
@@ -441,6 +444,18 @@ def test_console_diff_button_reports_its_own_failure():
     end = CONSOLE.index("};", start)
     handler = CONSOLE[start:end]
     assert ".catch(err =>" in handler, handler
+
+
+def test_console_load_restores_focus_into_the_rebuilt_tree():
+    """load() rebuilds every row from scratch on each navigation. Without restoring
+    focus, a keyboard user's focused button is destroyed, focus reverts to <body>,
+    and the next Tab starts over from the top of the document — reachable rows with
+    a ring, but no way to actually walk the tree by keyboard."""
+    start = CONSOLE.index("function load() {")
+    end = CONSOLE.index("\nfunction show(", start)
+    body = CONSOLE[start:end]
+    assert "document.activeElement" in body, body
+    assert re.search(r"hadFocus\b.*\.focus\(\)", body, re.S), body
 
 
 def test_the_grounded_count_sits_beside_the_interpretation():

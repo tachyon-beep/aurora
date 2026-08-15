@@ -70,6 +70,7 @@ function load() {
   crumb();
   api(`/api/browse?root=${root}&path=${encodeURIComponent(path)}`).then(d => {
     const box = document.getElementById("entries");
+    const hadFocus = box.contains(document.activeElement);
     box.textContent = "";
     for (const e of d.entries) {
       const row = document.createElement("button");
@@ -86,6 +87,10 @@ function load() {
         else { show(path ? path + "/" + e.name : e.name); }
       };
       box.appendChild(row);
+    }
+    if (hadFocus) {
+      const first = box.querySelector(".entry");
+      if (first) first.focus();
     }
   }).catch(err => { document.getElementById("content").textContent = String(err); });
 }
