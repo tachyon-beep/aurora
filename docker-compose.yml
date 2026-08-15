@@ -8,6 +8,10 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       STREAM_HOURLY_MAX: ${STREAM_HOURLY_MAX:-}
+      # Tokens added to a composed request's max_tokens when reasoning is on,
+      # so a declared cap bounds the response rather than being consumed by
+      # reasoning. Empty keeps the default; 0 disables the addition.
+      STREAM_REASONING_ALLOWANCE: ${STREAM_REASONING_ALLOWANCE:-}
       TRANSCRIPT_DIR: /transcripts
     extra_hosts:
       - "host.docker.internal:host-gateway"

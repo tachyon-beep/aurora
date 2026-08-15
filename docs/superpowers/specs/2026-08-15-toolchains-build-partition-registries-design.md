@@ -191,3 +191,21 @@ ambient feed) are queued as tracker issues, not built here.
   cycle; /vendor and /corpus read-only
 - record final image size next to the 688 MiB toolchain measurement
 - ruff format + check; full pytest run (container smoke separate)
+
+## 10. Response-only max_tokens on stream sockets (added same day)
+
+Probed empirically against the configured upstream (deepseek-v4-pro direct):
+max_tokens counts reasoning tokens — a 40-token cap yielded 40 reasoning
+tokens, empty content, finish_reason length — and the OpenRouter-style
+`reasoning: {max_tokens}` object is silently ignored, so no provider-side
+split exists. The recorder therefore pins the semantics at composition: when
+a composed request carries a positive integer max_tokens and its effective
+reasoning_effort is not "none", the operator's `STREAM_REASONING_ALLOWANCE`
+(default 8192, 0 disables) is added to the forwarded max_tokens, so the
+declared value bounds the visible response. streams.json keeps reporting the
+declared value; core.sock stays verbatim (its invariant); the chassis's own
+loop sends no max_tokens, so nothing changes for core requests. Honest
+limit: the model does not reserve the response portion — pathological
+reasoning can still consume the whole compensated cap; the allowance makes
+starvation rare rather than impossible. Verified live: the same prompt that
+produced empty output at max_tokens 40 answered correctly at 40 + 8192.
