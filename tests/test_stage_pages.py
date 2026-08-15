@@ -369,6 +369,29 @@ def test_the_rail_rows_still_fill_the_rail():
     assert sum(rows) + 2 * 20 == 772, f"{rows} plus two 20px gaps is not 772"
 
 
+def test_the_recap_is_the_region_that_absorbs_a_full_story_panel():
+    """#story is fixed-height and overflow:hidden. Something has to give when the
+    recap runs long, and it must not be the byline that discloses who wrote it."""
+    block = HTML[HTML.index("#story .recap-wrap {") :]
+    block = block[: block.index("}")]
+    assert "flex: 1 1 auto" in block, block
+    assert "min-height: 0" in block, block
+    assert "overflow: hidden" in block, block
+
+
+def test_the_byline_and_pull_quote_are_never_the_thing_that_shrinks():
+    for selector in ("#pull-box {", "#byline {"):
+        block = HTML[HTML.index(selector) :]
+        block = block[: block.index("}")]
+        assert "flex: none" in block, selector
+
+
+def test_the_byline_is_still_pinned_to_the_panel_floor():
+    block = HTML[HTML.index("#byline {") :]
+    block = block[: block.index("}")]
+    assert "margin-top: auto" in block
+
+
 def test_the_stream_page_stylesheet_declares_no_px_font_size_under_the_floor():
     """The enumerated `BROADCAST_SMALL_TYPE` list is only as good as the reconciliation
     that built it. This scans the actual stylesheet text directly, the same way that

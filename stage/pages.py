@@ -309,7 +309,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   text-wrap: pretty; }
 
 /* ---------- rail ---------- */
-#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 196px 296px 240px;
+#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 196px 268px 268px;
   row-gap: 20px; min-height: 0; }
 #rail .panel { padding: 14px 20px; }
 #rail .ptitle { margin-bottom: 8px; }
@@ -368,7 +368,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #now-by { font-family: var(--mono); font-size: 13px; letter-spacing: .08em;
   color: var(--paper-faint); margin-top: 4px; }
 /* commentary:end */
-#story .recap-wrap { flex: none; }
+#story .recap-wrap { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 #recap-box .more { margin-top: 2px; }
 #recap { margin: 0; font: 400 17px/27px var(--serif); max-width: 62ch; color: var(--paper-dim);
   -webkit-line-clamp: 4; line-clamp: 4; text-wrap: pretty; }
