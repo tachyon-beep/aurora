@@ -1053,3 +1053,27 @@ def test_stream_lanes_preserves_a_bind_older_than_the_old_tail(tmp_path):
 
     aux = next(lane for lane in lanes if lane["name"] == "aux")
     assert aux["bound"] is True
+
+
+def test_first_sentence_keeps_reading_past_a_very_short_opener():
+    """Real tombstone shape: a four-word label, then the substance. Splitting on the
+    first '. ' renders the label and discards 2,200 characters of the note."""
+    note = (
+        "inc10 complete. Substantive action: FIRST REAL USE of subagent streams "
+        "— a parallel 3-lens critique of my own durable memory. VERIFIED this boot: "
+        "baseline==HEAD, 17 tools, bootcheck 12/12."
+    )
+    out = data.first_sentence(note, cap=320, floor=data.MIN_SUMMARY_CHARS)
+    assert out.startswith("inc10 complete. Substantive action:")
+    assert len(out) >= data.MIN_SUMMARY_CHARS
+
+
+def test_first_sentence_default_behaviour_is_unchanged():
+    """_phrase_event wants one short sentence; the floor is opt-in."""
+    assert data.first_sentence("One. Two. Three.") == "One."
+    assert data.first_sentence("One. Two. Three.", floor=0) == "One."
+
+
+def test_first_sentence_still_honours_its_cap_with_a_floor():
+    out = data.first_sentence("a. " * 400, cap=320, floor=data.MIN_SUMMARY_CHARS)
+    assert len(out) <= 323

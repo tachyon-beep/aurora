@@ -19,6 +19,7 @@ SPOKEN_TEXT_CAP = 400
 MAX_EPOCH_AGE_SECONDS = 30 * 86400
 SUBCALL_MESSAGE_LIMIT = 2
 SUBCALL_PROMPT_CHARS = 200
+MIN_SUMMARY_CHARS = 80
 
 DIODE_VERBS = {
     "weather": "read the weather",
@@ -528,13 +529,22 @@ def self_modification_events(turns, limit=6, life=None):
     return events[-limit:]
 
 
-def first_sentence(text, cap=140):
-    """The first sentence of a text, clamped to cap characters."""
+def first_sentence(text, cap=140, floor=0):
+    """The opening of a text, clamped to cap characters.
+
+    Stops at the first sentence boundary that leaves at least floor characters.
+    A note opening "inc10 complete." is a label, not a summary; with a floor the
+    extraction reads on into the substance instead of returning the label.
+    """
     text = " ".join(text.split())
-    for stop in (". ", "! ", "? "):
-        if stop in text:
-            text = text.split(stop, 1)[0] + stop.strip()
-            break
+    cut = None
+    for index, char in enumerate(text):
+        if char in ".!?" and index + 1 < len(text) and text[index + 1] == " ":
+            cut = index + 1
+            if cut >= floor:
+                break
+    if cut is not None:
+        text = text[:cut]
     if len(text) > cap:
         text = text[:cap] + "..."
     return text
@@ -561,12 +571,12 @@ def _lineage_entry(source, label, text, ordinal, kind, turn, ended_epoch):
     return {
         "source": source,
         "label": label,
-        "summary": first_sentence(text),
+        "summary": first_sentence(text, floor=MIN_SUMMARY_CHARS),
         "ordinal": ordinal,
         "kind": kind,
         "turn": turn,
         "ended_epoch": ended_epoch,
-        "sentence": first_sentence(text, cap=320),
+        "sentence": first_sentence(text, cap=320, floor=MIN_SUMMARY_CHARS),
         "sentence_chars": len(collapsed),
     }
 
