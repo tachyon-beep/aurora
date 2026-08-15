@@ -178,8 +178,12 @@ Panels, all fed by polling the transcript and the mounted volumes:
   plus the diode's `published/` and `spoken/` entries rendered as escaped text, with the
   played utterance captioned. This replaces the planned `outbox/` transmissions panel and
   the `kind: panel` agent-authored regions; both depended on the superseded exchange (below).
-- **Lineage** — the last three incarnations, one line each. Tombstones are read from the
-  telemetry mirror (`telemetry/work/tombstones/`), which carries both `done` notes and synthetic
+- **What it thinks with** — the model sockets in play: the `core` socket it was given plus
+  any it declared, each lane's given/built status, in-flight state, and its requests/hour
+  and tokens/hour, sourced from the recorder's `events.jsonl`.
+- **Lineage** — the last two incarnations, each shown as a derived-facts line plus a
+  clamped note. Tombstones are read from the telemetry mirror
+  (`telemetry/work/tombstones/`), which carries both `done` notes and synthetic
   harness-termination notes; the transcript's `done` tool-call arguments and recorded upstream
   error entries are the fallback when the mirror is empty. Default summarization is extractive
   (first sentence, clamped). An optional `STAGE_SUMMARY_API_KEY` — a separate low-value key, never
