@@ -452,6 +452,7 @@ def test_prompt_still_carries_the_durable_facts(tmp_path):
     prompt = summary._collect(telemetry, transcript)["prompt"]
     assert "current incarnation:" in prompt
     assert "endings on record:" in prompt
+    assert "model in use:" in prompt
     assert "1 line added and 0 removed" in prompt
     assert "saved session file:" in prompt
 
@@ -464,7 +465,7 @@ def test_the_instruction_forbids_elapsed_time_and_turn_counts(tmp_path):
     assert "how many turns" in summary.CLOSING_INSTRUCTION
 
 
-def test_the_digest_no_longer_moves_with_the_turn_count(tmp_path, monkeypatch):
+def test_the_digest_no_longer_moves_with_the_turn_count(tmp_path):
     """The recap should regenerate when history changes, not every turn."""
     telemetry, transcript = _fixture_tree(tmp_path)
     before = summary._collect(telemetry, transcript)["digest_material"]
