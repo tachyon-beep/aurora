@@ -19,6 +19,7 @@ SPOKEN_TEXT_CAP = 400
 MAX_EPOCH_AGE_SECONDS = 30 * 86400
 SUBCALL_MESSAGE_LIMIT = 2
 SUBCALL_PROMPT_CHARS = 200
+MIN_SUMMARY_CHARS = 80
 
 DIODE_VERBS = {
     "weather": "read the weather",
@@ -528,13 +529,22 @@ def self_modification_events(turns, limit=6, life=None):
     return events[-limit:]
 
 
-def first_sentence(text, cap=140):
-    """The first sentence of a text, clamped to cap characters."""
+def first_sentence(text, cap=140, floor=0):
+    """The opening of a text, clamped to cap characters.
+
+    Stops at the first sentence boundary that leaves at least floor characters.
+    A note opening "inc10 complete." is a label, not a summary; with a floor the
+    extraction reads on into the substance instead of returning the label.
+    """
     text = " ".join(text.split())
-    for stop in (". ", "! ", "? "):
-        if stop in text:
-            text = text.split(stop, 1)[0] + stop.strip()
-            break
+    cut = None
+    for index, char in enumerate(text):
+        if char in ".!?" and index + 1 < len(text) and text[index + 1] == " ":
+            cut = index + 1
+            if cut >= floor:
+                break
+    if cut is not None:
+        text = text[:cut]
     if len(text) > cap:
         text = text[:cap] + "..."
     return text
@@ -561,14 +571,41 @@ def _lineage_entry(source, label, text, ordinal, kind, turn, ended_epoch):
     return {
         "source": source,
         "label": label,
-        "summary": first_sentence(text),
+        "summary": first_sentence(text, floor=MIN_SUMMARY_CHARS),
         "ordinal": ordinal,
         "kind": kind,
         "turn": turn,
         "ended_epoch": ended_epoch,
-        "sentence": first_sentence(text, cap=320),
+        "sentence": first_sentence(text, cap=320, floor=MIN_SUMMARY_CHARS),
         "sentence_chars": len(collapsed),
+        "lifespan_seconds": None,
+        "turns_lived": None,
     }
+
+
+def _derive_lives(entries, turns):
+    """Fill each ending's lifespan and turn count from what the stage can observe.
+
+    An incarnation began when the one before it ended, so consecutive endings give
+    the span. Turn counts come from the life tag annotate_lives already put on each
+    turn; a turn number named in the note is only the fallback, because a note
+    reading "inc9 complete." names none.
+    """
+    lived = {}
+    for turn in turns or []:
+        life = turn.get("life")
+        if isinstance(life, int):
+            lived[life] = lived.get(life, 0) + 1
+    for index, entry in enumerate(entries):
+        older = entries[index + 1] if index + 1 < len(entries) else None
+        ended = entry.get("ended_epoch")
+        began = older.get("ended_epoch") if older else None
+        if isinstance(ended, (int, float)) and isinstance(began, (int, float)) and ended > began:
+            entry["lifespan_seconds"] = float(ended - began)
+        ordinal = entry.get("ordinal")
+        counted = lived.get(ordinal) if isinstance(ordinal, int) else None
+        entry["turns_lived"] = counted if counted else entry.get("turn")
+    return entries
 
 
 def lineage(work_dir, turns, limit=5, now=None):
@@ -595,7 +632,7 @@ def lineage(work_dir, turns, limit=5, now=None):
             )
         )
     if out:
-        return out
+        return _derive_lives(out, loop_turns(turns))
     for turn in reversed(loop_turns(turns)):
         for tc in turn.get("tool_calls", []) or []:
             if tc.get("name") == "done":
@@ -617,8 +654,8 @@ def lineage(work_dir, turns, limit=5, now=None):
                     )
                 )
                 if len(out) >= limit:
-                    return out
-    return out
+                    return _derive_lives(out, loop_turns(turns))
+    return _derive_lives(out, loop_turns(turns))
 
 
 def _capped_text(path, cap=2000):

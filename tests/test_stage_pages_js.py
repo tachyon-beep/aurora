@@ -34,6 +34,31 @@ def _spoken_block():
     return text[start:end]
 
 
+def _provenance_block():
+    """The provenance rotation plus its transport guard (setTransport), without
+    the page's own setInterval(rotateProvenance, ...) call, which would leave a
+    timer pending and hang the node process."""
+    text = _script()
+    start = text.index("var PROVENANCE_LINES")
+    end = text.index("if (!REDUCED) setInterval(rotateProvenance, 20000);")
+    block = text[start:end]
+    start2 = text.index("function setTransport(ok) {")
+    end2 = text.index("\n}\n\n/* ---------- subject ---------- */", start2) + len("\n}")
+    block += "\n" + text[start2:end2]
+    return block
+
+
+def _lanes_block():
+    """renderLanes plus the two helpers it calls (coreLane is unused by
+    renderLanes itself but lives in the same sentinel block, so it comes
+    along for free), without `el`, `setText`, or `norm`, which the harness
+    stubs directly."""
+    text = _script()
+    start = text.index("/* ---------- lanes ---------- */")
+    end = text.index("/* ---------- render ---------- */")
+    return text[start:end]
+
+
 def _run(source, tmp_path):
     path = tmp_path / "harness.js"
     path.write_text(source, encoding="utf-8")
@@ -140,6 +165,76 @@ def test_the_stream_page_script_parses(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+PROVENANCE_HARNESS = """
+var out = {};
+var provenanceEl = { textContent: "", classList: { toggle: function () {} } };
+var clusterEl = { classList: { toggle: function () {} } };
+global.$ = function (id) {
+  if (id === "provenance") return provenanceEl;
+  if (id === "state-cluster") return clusterEl;
+  return { textContent: "", classList: { toggle: function () {} } };
+};
+global.setText = function (node, value) { node.textContent = value; };
+global.setClass = function () {};
+
+__BLOCK__
+
+// The module-level showProvenance() call already ran above: index 0 is showing.
+out.initial = provenanceEl.textContent;
+
+// A genuine 20s tick while online advances the rotation.
+rotateProvenance();
+out.after_manual_rotate = provenanceEl.textContent;
+var indexAfterRotate = provenanceAt;
+
+// 1. setTransport(true), called on every 2s poll, must not itself advance
+// the rotation -- the currently displayed line must be unchanged.
+setTransport(true);
+out.after_ok_1 = provenanceEl.textContent;
+setTransport(true);
+out.after_ok_2 = provenanceEl.textContent;
+
+// 2. While offline, rotateProvenance() must not advance the index, and the
+// OFFLINE text must remain displayed.
+setTransport(false);
+out.offline_text = provenanceEl.textContent;
+rotateProvenance();
+out.offline_after_rotate = provenanceEl.textContent;
+out.index_unchanged_offline = provenanceAt === indexAfterRotate;
+
+// 3. On recovery, the previously displayed line is restored -- not reset to
+// index 0, and not left showing OFFLINE.
+setTransport(true);
+out.recovered_text = provenanceEl.textContent;
+
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_provenance_rotation_survives_the_transport_poll(tmp_path):
+    """setTransport(true) fires on every successful 2s poll. Before this test
+    existed, it unconditionally rewrote #provenance's text, which would have
+    made the rotating line invisible in production (overwritten within 2s of
+    every 20s tick) while every string-presence test stayed green."""
+    lines = [
+        "the agent has no network interface · one unix socket to the model, nothing else",
+        "the model key lives in the recorder · the agent runs with a dummy",
+    ]
+    out = _run(PROVENANCE_HARNESS.replace("__BLOCK__", _provenance_block()), tmp_path)
+    assert out["initial"] == lines[0]
+    assert out["after_manual_rotate"] == lines[1]
+    # setTransport(true) does not advance the rotation.
+    assert out["after_ok_1"] == lines[1]
+    assert out["after_ok_2"] == lines[1]
+    # Offline: no advance, OFFLINE text stays displayed.
+    assert out["offline_text"] == "STAGE OFFLINE · this page cannot reach the stage"
+    assert out["offline_after_rotate"] == out["offline_text"]
+    assert out["index_unchanged_offline"] is True
+    # Recovery restores the line that was showing, not index 0 and not OFFLINE.
+    assert out["recovered_text"] == lines[1]
+
+
 @needs_node
 def test_playback_queue_behaviour(tmp_path):
     out = _run(HARNESS.replace("__BLOCK__", _spoken_block()), tmp_path)
@@ -164,3 +259,210 @@ def test_playback_queue_behaviour(tmp_path):
     assert out["replayed_after_reload"] == 0
     # A future-dated stamp is as dead as a stale one.
     assert out["future_played"] == 0
+
+
+SOUND_HARNESS = """
+var store = {};
+global.window = { localStorage: {
+  getItem: function (k) { return k in store ? store[k] : null; },
+  setItem: function (k, v) { store[k] = String(v); }
+}};
+var audio = {
+  src: "", listeners: {}, played: [], pending: null,
+  addEventListener: function (e, f) { (this.listeners[e] = this.listeners[e] || []).push(f); },
+  fire: function (e) { (this.listeners[e] || []).forEach(function (f) { f({ type: e }); }); },
+  play: function () {
+    audio.played.push(audio.src);
+    return { catch: function (fn) { audio.pending = fn; } };
+  }
+};
+var soundBtn = { hidden: true, __wired: false, clicks: [] };
+soundBtn.addEventListener = function (e, f) { if (e === "click") this.clicks.push(f); };
+var caption = { textContent: "", classList: { toggle: function () {} } };
+var other = { textContent: "", classList: { toggle: function () {} } };
+var NOW = 1000000;
+global.$ = function (id) {
+  if (id === "speak-audio") return audio;
+  if (id === "speak-caption") return caption;
+  if (id === "sound-on") return soundBtn;
+  return other;
+};
+global.clock = function () { return NOW; };
+global.norm = function (t) { return String(t == null ? "" : t).trim(); };
+global.setText = function (node, value) { node.textContent = value; };
+global.setClass = function () {};
+global.snap = null;
+function stamp(n) { return "2026081" + n + "_120000_000000.mp3"; }
+function entry(n, ageSeconds) {
+  return { name: stamp(n), epoch: NOW / 1000 - ageSeconds, text: "u" + n };
+}
+function reset() {
+  audio.played = []; audio.src = ""; audio.pending = null;
+  spokenQueue = []; spokenBusy = false; spokenCurrent = null;
+  soundBtn.hidden = true; soundBtn.__wired = false; soundBtn.clicks = [];
+}
+
+__BLOCK__
+
+var out = {};
+
+/* NotAllowedError is a refused autoplay: the recovery button is revealed,
+   and the queue still advances to the second utterance. */
+global.snap = { diode: { spoken: [entry(2, 1), entry(1, 2)] } };
+renderSpoken();
+audio.pending({ name: "NotAllowedError" });
+out.allowed_button_hidden = soundBtn.hidden;
+out.allowed_advanced_to = spokenCurrent && spokenCurrent.name;
+
+/* NotSupportedError is a load failure (a missing or mid-write file), not a
+   permission problem sound would fix. Revealing the button here would plant
+   a dead control on a broadcast with no pointer to hide it again, so it
+   must stay hidden -- but the queue must still drain either way. */
+reset();
+global.snap = { diode: { spoken: [entry(4, 1), entry(3, 2)] } };
+renderSpoken();
+audio.pending({ name: "NotSupportedError" });
+out.unsupported_button_hidden = soundBtn.hidden;
+out.unsupported_advanced_to = spokenCurrent && spokenCurrent.name;
+
+/* An unrecognised rejection reason fails closed: hidden stays hidden, and
+   the queue still drains. */
+reset();
+global.snap = { diode: { spoken: [entry(6, 1), entry(5, 2)] } };
+renderSpoken();
+audio.pending({});
+out.unrecognised_button_hidden = soundBtn.hidden;
+out.unrecognised_advanced_to = spokenCurrent && spokenCurrent.name;
+
+/* The click listener is wired once, not on every hidden->shown transition:
+   simulate two separate reveals (a click in between would set hidden back
+   to true, which is all soundBlocked's guard looks at) and confirm the
+   listener count does not grow past one. */
+soundBtn.hidden = true; soundBtn.clicks = []; soundBtn.__wired = false;
+soundBlocked();
+out.clicks_after_first_reveal = soundBtn.clicks.length;
+soundBtn.hidden = true;
+soundBlocked();
+out.clicks_after_second_reveal = soundBtn.clicks.length;
+
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_a_load_failure_never_reveals_sound_on_but_still_drains_the_queue(tmp_path):
+    """The .catch on a.play() runs for two different rejection reasons: a
+    refused autoplay (NotAllowedError) and a load failure (NotSupportedError,
+    e.g. a diode audio file mid-write or one that rotated away between
+    snapshot and fetch). A string-presence test cannot see which reasons the
+    handler discriminates between -- "soundBlocked" appears in the source
+    either way -- only running the rejection through the real handler with a
+    real reason object does. A version that called soundBlocked()
+    unconditionally would reveal the button on an OBS broadcast (no pointer,
+    no way to hide it again) whenever a spoken file failed to load; this
+    proves it does not, while still proving the queue drains on every
+    rejection reason, recognised or not."""
+    out = _run(SOUND_HARNESS.replace("__BLOCK__", _spoken_block()), tmp_path)
+    assert out["allowed_button_hidden"] is False
+    assert out["allowed_advanced_to"] == "20260812_120000_000000.mp3"
+    assert out["unsupported_button_hidden"] is True
+    assert out["unsupported_advanced_to"] == "20260814_120000_000000.mp3"
+    assert out["unrecognised_button_hidden"] is True
+    assert out["unrecognised_advanced_to"] == "20260816_120000_000000.mp3"
+    assert out["clicks_after_first_reveal"] == 1
+    assert out["clicks_after_second_reveal"] == 1
+
+
+LANES_HARNESS = """
+function makeNode(tag) {
+  var n = {
+    tagName: tag, className: "", textContent: "", children: [],
+    appendChild: function (child) { this.children.push(child); },
+    removeChild: function (child) {
+      var idx = this.children.indexOf(child);
+      if (idx >= 0) this.children.splice(idx, 1);
+    }
+  };
+  Object.defineProperty(n, "lastChild", {
+    get: function () { return this.children[this.children.length - 1]; }
+  });
+  return n;
+}
+var host = makeNode("div");
+var streamCount = { textContent: "" };
+var streamFoot = { textContent: "" };
+global.$ = function (id) {
+  if (id === "stream-rows") return host;
+  if (id === "stream-count") return streamCount;
+  if (id === "stream-foot") return streamFoot;
+  return { textContent: "" };
+};
+global.el = function (tag, cls, parent) {
+  var n = makeNode(tag);
+  if (cls) n.className = cls;
+  if (parent) parent.appendChild(n);
+  return n;
+};
+global.setText = function (node, value) { node.textContent = String(value == null ? "" : value); return true; };
+global.norm = function (t) { return String(t == null ? "" : t).replace(/\\s+/g, " ").trim(); };
+global.snap = null;
+function lane(name, opts) {
+  opts = opts || {};
+  return {
+    name: name,
+    bound: opts.bound !== false,
+    in_flight: opts.in_flight || 0,
+    requests_hour: opts.requests_hour || 0,
+    tokens_hour: opts.tokens_hour || 0
+  };
+}
+function others(n) {
+  var list = [];
+  for (var i = 1; i <= n; i++) list.push(lane("built-" + i));
+  return list;
+}
+
+__BLOCK__
+
+var out = {};
+
+/* Nine declared lanes -- core plus eight built -- with core among the first
+   six the grid renders. */
+global.snap = { lanes: [lane("core")].concat(others(8)) };
+renderLanes();
+out.count_core_first = streamCount.textContent;
+out.foot_core_first = streamFoot.textContent;
+out.rows_core_first = host.children.length;
+
+/* Same nine lanes, but core sits at index 8 -- past the six-lane slice --
+   so a version that hardcodes "1 GIVEN" (or counts BUILT only over the
+   rendered rows) would report a different figure than the case above. */
+host = makeNode("div");
+global.snap = { lanes: others(8).concat([lane("core")]) };
+renderLanes();
+out.count_core_last = streamCount.textContent;
+out.foot_core_last = streamFoot.textContent;
+out.rows_core_last = host.children.length;
+
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_given_built_figure_counts_every_declared_lane_not_just_the_shown_rows(tmp_path):
+    """renderLanes shows at most 6 lanes but #stream-count's GIVEN/BUILT figure is
+    a claim about every lane the agent declared, not just the ones the grid has
+    room for. A string-presence test cannot see this: the bug was in what the
+    two numbers were computed *from* (the sliced `shown` array instead of the
+    full `lanes` list), which no grep on the page's source text distinguishes
+    from a correct version -- only running the function catches it. The second
+    case (core past the slice) additionally catches a hardcoded "1 GIVEN"
+    literal, which the first case alone would not: it stays right by
+    coincidence when core happens to be lane 0."""
+    out = _run(LANES_HARNESS.replace("__BLOCK__", _lanes_block()), tmp_path)
+    assert out["count_core_first"] == "1 GIVEN · 8 BUILT"
+    assert out["foot_core_first"] == "3 more streams not shown"
+    assert out["rows_core_first"] == 6
+    assert out["count_core_last"] == "1 GIVEN · 8 BUILT"
+    assert out["foot_core_last"] == "3 more streams not shown"
+    assert out["rows_core_last"] == 6

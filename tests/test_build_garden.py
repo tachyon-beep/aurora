@@ -49,15 +49,15 @@ third-party python packages:
 - alpha
 - beta
 
-rustc, cargo, sbcl, pforth, swi-prolog, nasm, make, jq, sqlite3, miller, and datamash are installed.
+rustc, cargo, sbcl, pforth, swi-prolog, gcc, nasm, make, jq, sqlite3, miller, and datamash are installed.
 
 a local rust crate registry is present; cargo resolves against it. common lisp systems are present under /vendor/lisp; asdf can load them. a static sentence embedding model is present under /vendor/models.
 
 git and posix shell facilities are installed.
 
-the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib.
+the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib and is held in memory, which counts against the memory limit.
 
-a writable location exists at /build with 5 gib of capacity. its contents are cleared when a session ends.
+the root filesystem is read-only. a writable location exists at /build with 5 gib of capacity. its contents are cleared when a session ends.
 
 read-only data files are present at /corpus.
 

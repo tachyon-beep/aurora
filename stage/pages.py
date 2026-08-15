@@ -15,8 +15,11 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
   #list { border-right: 1px solid #303941; overflow-y: auto; padding: 8px; }
   #view { overflow: auto; padding: 12px 16px; }
   .entry { display: flex; justify-content: space-between; padding: 3px 6px;
-           cursor: pointer; border-radius: 4px; }
+           cursor: pointer; border-radius: 4px; width: 100%; text-align: left;
+           background: none; border: 0; color: inherit; font: inherit; }
   .entry:hover { background: #1f252b; }
+  .entry:focus-visible, .bar button:focus-visible, select:focus-visible {
+           outline: 2px solid #66d9c2; outline-offset: 1px; }
   .entry .size { color: #79848c; }
   .dir { color: #77bdfb; }
   pre { white-space: pre-wrap; word-break: break-all; margin: 0; }
@@ -32,7 +35,7 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
 <main>
   <div id="list">
     <div class="bar">
-      <select id="root"></select>
+      <select id="root" aria-label="browse root"></select>
       <button id="up">up</button>
       <button id="diff">agent.py diff</button>
     </div>
@@ -50,8 +53,14 @@ let root = "telemetry";
 let path = "";
 function api(url) {
   return fetch(url, {headers: {"X-Console-Token": token}}).then(r => {
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
+    if (r.ok) return r.json();
+    return r.json().then(function (body) {
+      var msg = (body && body.error) || ("request failed with status " + r.status);
+      if (r.status === 401) msg += " — append ?token=<STAGE_CONSOLE_TOKEN> and reload";
+      throw new Error(msg);
+    }, function () {
+      throw new Error("request failed with status " + r.status);
+    });
   });
 }
 function crumb() {
@@ -61,9 +70,11 @@ function load() {
   crumb();
   api(`/api/browse?root=${root}&path=${encodeURIComponent(path)}`).then(d => {
     const box = document.getElementById("entries");
+    const hadFocus = box.contains(document.activeElement);
     box.textContent = "";
     for (const e of d.entries) {
-      const row = document.createElement("div");
+      const row = document.createElement("button");
+      row.type = "button";
       row.className = "entry" + (e.is_dir ? " dir" : "");
       const name = document.createElement("span");
       name.textContent = e.name + (e.is_dir ? "/" : "");
@@ -76,6 +87,10 @@ function load() {
         else { show(path ? path + "/" + e.name : e.name); }
       };
       box.appendChild(row);
+    }
+    if (hadFocus) {
+      const first = box.querySelector(".entry");
+      if (first) first.focus();
     }
   }).catch(err => { document.getElementById("content").textContent = String(err); });
 }
@@ -95,7 +110,7 @@ function show(p, tail) {
       ev.preventDefault();
       const url = `/download?root=${root}&path=${encodeURIComponent(p)}`;
       fetch(url, {headers: {"X-Console-Token": token}}).then(r => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
+        if (!r.ok) throw new Error("download failed with status " + r.status);
         return r.blob();
       }).then(blob => {
         const objectUrl = URL.createObjectURL(blob);
@@ -120,7 +135,7 @@ document.getElementById("diff").onclick = () => {
   api("/api/diff").then(d => {
     document.getElementById("viewbar").textContent = "agent.py vs agent_stock.py";
     document.getElementById("content").textContent = d.diff || "(no differences)";
-  });
+  }).catch(err => { document.getElementById("content").textContent = String(err); });
 };
 const sel = document.getElementById("root");
 api("/api/roots").then(roots => {
@@ -174,9 +189,9 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 
 .panel { background: var(--ink-1); border: 1px solid var(--rule); border-radius: 10px;
   padding: 18px 22px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
-.ptitle { height: 22px; margin-bottom: 10px; display: flex; align-items: center;
+.ptitle { height: 24px; margin-bottom: 10px; display: flex; align-items: center;
   justify-content: space-between; flex: none;
-  font: 600 11px/16px var(--mono); text-transform: uppercase; letter-spacing: .12em;
+  font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   color: var(--paper-faint); }
 
 /* ---------- masthead ---------- */
@@ -189,7 +204,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #premise { margin: 0; font: 400 15px/22px var(--sans); color: var(--paper-dim); max-width: 900px; }
 #premise.announce { color: var(--paper); }
 #state-cluster { margin-left: auto; display: flex; align-items: center; gap: 10px; flex: none; }
-#state-word { font: 600 11px/16px var(--mono); text-transform: uppercase; letter-spacing: .12em;
+#state-word { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   color: var(--paper-dim); }
 #state-clock { font: 400 13px/19px var(--mono); font-variant-numeric: tabular-nums;
   color: var(--paper-dim); min-width: 62px; }
@@ -210,19 +225,14 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 
 #mh-b { display: flex; align-items: center; gap: 26px; }
 .chip { display: flex; align-items: center; gap: 8px; }
-.chip b { font: 600 11px/16px var(--mono); text-transform: uppercase; letter-spacing: .12em; }
-.chip em { font: 400 11px/16px var(--mono); font-style: normal; color: var(--paper-faint); }
+.chip b { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em; }
+.chip em { font: 400 13px/18px var(--mono); font-style: normal; color: var(--paper-faint); }
 .chip.c-think b { color: var(--think); }
-.chip.c-think em { font: italic 400 11px/16px var(--serif); }
+.chip.c-think em { font: italic 400 13px/18px var(--serif); }
 .chip.c-say b { color: var(--say); }
 .chip.c-act b { color: var(--act); }
-#provenance { margin-left: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); }
+#provenance { margin-left: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint); }
 #provenance.offline { color: var(--fault); }
-#lanes { display: flex; align-items: center; gap: 18px; }
-#lanes .chip b { color: var(--paper-dim); }
-#lanes .chip .dot.live { background: var(--act); }
-#lanes .chip .dot.idle { background: none; border: 1px solid var(--paper-faint); }
-
 #death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 2px;
   background: var(--taken); z-index: 20; transform-origin: left; transform: scaleX(1); }
 #death-sweep.sweeping { animation: sweep 900ms cubic-bezier(.22,.61,.36,1); }
@@ -251,11 +261,11 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .turn.is-error { background: var(--fault-soft); box-shadow: inset 3px 0 0 var(--fault); }
 .turn.is-end { border-top: 2px solid var(--chosen); }
 
-.gutter { text-align: right; font: 400 12px/18px var(--mono); color: var(--paper-faint);
+.gutter { text-align: right; font: 400 13px/18px var(--mono); color: var(--paper-faint);
   font-variant-numeric: tabular-nums; padding-right: 0; }
 .gutter .g-mark { display: block; }
 .gutter .g-mark.edit { color: var(--act); }
-.gutter .g-mark.end { font: 600 11px/18px var(--mono); letter-spacing: .12em; color: var(--chosen); }
+.gutter .g-mark.end { font: 600 13px/18px var(--mono); letter-spacing: .12em; color: var(--chosen); }
 
 .col { grid-column: 3; min-width: 0; }
 .blk { position: relative; }
@@ -263,23 +273,23 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .clamp, .tool, .err { overflow-wrap: anywhere; }
 .clamp { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
 
-.clamp.think { -webkit-line-clamp: 5; line-clamp: 5; font: 400 19px/29px var(--serif);
+.clamp.think { -webkit-line-clamp: 14; line-clamp: 14; font: 400 19px/29px var(--serif);
   color: var(--think); max-width: 68ch; white-space: pre-wrap; text-wrap: pretty; hyphens: none; }
 .blk-think::before { content: ""; position: absolute; left: -14px; top: 2px; bottom: 2px;
   width: 2px; background: var(--think-rule); }
 .blk-think.open::before { display: none; }
 
-.clamp.say { -webkit-line-clamp: 3; line-clamp: 3; font: 500 18px/27px var(--sans);
+.clamp.say { -webkit-line-clamp: 6; line-clamp: 6; font: 500 18px/27px var(--sans);
   color: var(--say); max-width: 68ch; white-space: pre-wrap; text-wrap: pretty; }
-.clamp.say::before { content: "\00AB "; font: 400 12px/27px var(--mono); color: var(--paper-faint); }
+.clamp.say::before { content: "\00AB "; font: 400 13px/27px var(--mono); color: var(--paper-faint); }
 
 .tool { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
-  -webkit-line-clamp: 2; line-clamp: 2; font: 400 14px/21px var(--mono); color: var(--act);
+  -webkit-line-clamp: 3; line-clamp: 3; font: 400 14px/21px var(--mono); color: var(--act);
   white-space: pre-wrap; cursor: default; word-break: break-all; }
 .tool .t-name { word-break: normal; }
 .tool .t-args { opacity: .7; }
 .subrow { display: grid; grid-template-columns: 22px 1fr 52px; column-gap: 8px;
-  align-items: baseline; margin-top: 6px; font: 400 12px/19px var(--mono);
+  align-items: baseline; margin-top: 6px; font: 400 13px/20px var(--mono);
   color: var(--paper-faint); }
 .subrow .s-mark { color: var(--rule-2); }
 .subrow .s-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -289,12 +299,12 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 
 .divider { height: 34px; display: flex; align-items: center; gap: 14px; margin: 14px 0; flex: none; }
 .divider i { flex: 1; height: 1px; background: var(--taken); }
-.divider span { font: 600 11px/16px var(--mono); text-transform: uppercase; letter-spacing: .14em;
+.divider span { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .14em;
   color: var(--taken); }
 
 #inflight { height: 44px; flex: none; margin-top: 14px; border: 1px dashed var(--rule-2);
   border-radius: 6px; padding: 0 14px; display: flex; align-items: center; gap: 14px; }
-#if-row { font: 400 12px/18px var(--mono); color: var(--paper-faint);
+#if-row { font: 400 13px/18px var(--mono); color: var(--paper-faint);
   font-variant-numeric: tabular-nums; }
 #if-text { font: italic 400 19px/24px var(--serif); color: var(--think); }
 .dots { display: inline-flex; gap: 5px; align-items: center; }
@@ -314,7 +324,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   text-wrap: pretty; }
 
 /* ---------- rail ---------- */
-#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 168px 296px 268px;
+#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 196px 292px 244px;
   row-gap: 20px; min-height: 0; }
 #rail .panel { padding: 14px 20px; }
 #rail .ptitle { margin-bottom: 8px; }
@@ -328,7 +338,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   35% { border-color: var(--act); box-shadow: 0 0 12px rgba(240,189,104,.35) }
   100% { border-color: var(--rule); box-shadow: none } }
 #subj-top { display: grid; grid-template-columns: 236px 1fr; column-gap: 20px; min-height: 0; }
-.eyebrow { font: 600 11px/16px var(--mono); text-transform: uppercase; letter-spacing: .12em;
+.eyebrow { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   color: var(--paper-faint); }
 #subj-ord { font: 600 34px/38px var(--sans); color: var(--paper); font-variant-numeric: tabular-nums;
   margin-top: 2px; }
@@ -337,10 +347,10 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   100% { transform: scale(1) } }
 #subj-model { font: 400 13px/19px var(--mono); color: var(--paper-dim); margin-top: 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#subj-stats { display: grid; grid-template-rows: repeat(7, 17px); align-content: start; }
+#subj-stats { display: grid; grid-template-rows: repeat(7, 20px); align-content: start; }
 .srow { display: grid; grid-template-columns: 104px 1fr; align-items: baseline;
-  font: 400 13px/18px var(--mono); font-variant-numeric: tabular-nums; }
-#subj-stats .srow { line-height: 17px; }
+  font: 400 15px/20px var(--mono); font-variant-numeric: tabular-nums; }
+#subj-stats .srow { line-height: 20px; }
 .srow .k { color: var(--paper-faint); }
 .srow .v { color: var(--vital); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .srow .v .rate { color: var(--paper-faint); }
@@ -355,25 +365,26 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .srow.src .plain { color: var(--paper-dim); }
 .srow.src .none { color: var(--paper-faint); }
 #subj-strip { border-top: 1px solid var(--rule); display: flex; align-items: center; gap: 8px;
-  font: 400 13px/19px var(--mono); color: var(--paper-dim); }
-#strip-glyph { font-size: 11px; }
+  font: 400 14px/20px var(--mono); color: var(--paper-dim); }
+#strip-glyph { font-size: 13px; }
 
 /* commentary:start */
 #now { padding: 0 0 10px 0; }
-#now-play { font-family: var(--mono); font-size: 12px; letter-spacing: .06em;
+#now-play { font-family: var(--mono); font-size: 13px; letter-spacing: .06em;
   text-transform: uppercase; color: var(--paper-dim); display: flex; gap: 8px;
   align-items: baseline; min-width: 0; }
 #play-tag { color: var(--world); flex: none; }
 #play-phrase { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
+#play-evidence { flex: none; color: var(--paper-faint); font-variant-numeric: tabular-nums; }
 #play-age { flex: none; color: var(--paper-faint); font-variant-numeric: tabular-nums; }
 #now-colour { font-family: var(--sans); font-size: 17px; line-height: 24px;
   color: var(--paper); margin: 6px 0 0 0; display: -webkit-box; -webkit-box-orient: vertical;
   -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-#now-by { font-family: var(--mono); font-size: 10px; letter-spacing: .08em;
+#now-by { font-family: var(--mono); font-size: 13px; letter-spacing: .08em;
   color: var(--paper-faint); margin-top: 4px; }
 /* commentary:end */
-#story .recap-wrap { flex: none; }
+#story .recap-wrap { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 #recap-box .more { margin-top: 2px; }
 #recap { margin: 0; font: 400 17px/27px var(--serif); max-width: 62ch; color: var(--paper-dim);
   -webkit-line-clamp: 4; line-clamp: 4; text-wrap: pretty; }
@@ -385,7 +396,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
   -webkit-line-clamp: 2; line-clamp: 2; }
 .q { color: var(--paper-faint); font-style: normal; }
 #byline { margin-top: auto; padding-top: 4px; display: flex; align-items: center; gap: 6px;
-  font: 400 11px/16px var(--mono); color: var(--paper-dim); flex: none; }
+  font: 400 13px/18px var(--mono); color: var(--paper-dim); flex: none; }
 #byline.stale, #byline.stale #byline-text { color: var(--paper-faint); }
 #byline-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--paper-faint);
   display: inline-block; flex: none; }
@@ -393,36 +404,54 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 
 #graves { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
 .grave { display: grid; grid-template-columns: 22px 1fr; column-gap: 14px; flex: none;
-  min-height: 62px; }
+  min-height: 80px; }
 .grave .g-body { position: relative; min-width: 0; }
 .grave .blk-tomb { position: static; }
-.grave .blk-tomb .more { position: absolute; right: 0; bottom: 2px; height: 16px; margin: 0;
-  font: 600 11px/16px var(--mono); }
+.grave .blk-tomb .more { position: absolute; right: 0; bottom: 2px; height: 18px; margin: 0;
+  font: 600 13px/18px var(--mono); }
 .grave .blk-tomb.open .more { position: static; margin-top: 6px; }
 .grave.slide { animation: slidein 500ms cubic-bezier(.22,.61,.36,1); }
 @keyframes slidein { from { transform: translateY(-14px); opacity: 0 } to { transform: none; opacity: 1 } }
 .grave .tick { width: 2px; height: 100%; justify-self: end; }
-.grave .g-eyebrow { font: 600 11px/16px var(--mono); text-transform: uppercase; letter-spacing: .12em;
+.grave .g-eyebrow { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.g-facts { font: 400 13px/18px var(--mono); color: var(--paper-faint); margin-top: 2px;
+  font-variant-numeric: tabular-nums; }
 .clamp.tomb { -webkit-line-clamp: 2; line-clamp: 2; font: 400 15px/23px var(--serif);
   color: var(--paper-dim); max-width: 60ch; margin-top: 2px; text-wrap: pretty; }
 .k-declared { color: var(--chosen); } .k-declared .tick { background: var(--chosen); }
 .k-harness { color: var(--taken); } .k-harness .tick { background: var(--taken); }
 .k-unknown { color: var(--broken); } .k-unknown .tick { background: var(--broken); }
 .empty-serif { font: 400 15px/23px var(--serif); color: var(--paper-dim); }
-#dead-foot { font: 400 11px/14px var(--mono); color: var(--paper-faint); flex: none; height: 14px;
+#dead-foot { font: 400 13px/16px var(--mono); color: var(--paper-faint); flex: none; height: 16px;
   overflow: hidden; }
 
 /* ---------- ribbon ---------- */
-#ribbon { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: repeat(3, 1fr);
+#ribbon { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: 1fr 1.6fr 1fr;
   gap: 20px; min-height: 0; }
 #ribbon .panel { padding: 10px 18px; }
 #ribbon .ptitle { margin-bottom: 8px; }
+#stream-rows { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr);
+  column-gap: 22px; align-content: start; overflow: hidden; }
+.lane-row { display: grid; grid-template-columns: 12px 74px 1fr; column-gap: 8px;
+  align-items: baseline; height: 20px; font: 400 13px/20px var(--mono);
+  font-variant-numeric: tabular-nums; }
+.lane-row .l-dot { width: 6px; height: 6px; border-radius: 50%; align-self: center;
+  background: none; border: 1px solid var(--paper-faint); }
+.lane-row.live .l-dot { background: var(--act); border-color: var(--act); }
+.lane-row.unbound { color: var(--paper-faint); }
+.lane-row .l-name { color: var(--paper-dim); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.lane-row.given .l-name { color: var(--vital); }
+.lane-row .l-meta { color: var(--paper-faint); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+#stream-foot { margin-top: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint);
+  flex: none; }
 .rows { flex: 1; min-height: 0; overflow: hidden; }
 .rrow { display: grid; align-items: center; height: 21px; font: 400 14px/21px var(--mono); }
 #selfmod-rows .rrow { grid-template-columns: 46px 1fr; }
-#asked-rows .rrow { grid-template-columns: 96px 1fr 116px; column-gap: 14px; }
-.rrow .rid { color: var(--paper-faint); font: 400 12px/21px var(--mono); }
+#reached-rows .rrow { grid-template-columns: 96px 1fr 116px; column-gap: 14px; }
+.rrow .rid { color: var(--paper-faint); font: 400 13px/21px var(--mono); }
 .rrow .rdetail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rrow .verb { text-transform: uppercase; }
 .rrow .verb.v-act { color: var(--act); }
@@ -440,29 +469,40 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .rrow .rverb { color: var(--paper-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rrow .rarg { color: var(--paper-faint); margin-left: 8px; }
 .rows.is-sparse { display: flex; flex-direction: column; justify-content: center; }
-#said.is-sparse #said-foot { margin-top: 8px; }
-.rrow .rmeta { text-align: right; font: 400 11px/21px var(--mono); color: var(--paper-faint); }
+#reached.is-sparse #reached-foot { margin-top: 8px; }
+.rrow .rmeta { text-align: right; font: 400 13px/21px var(--mono); color: var(--paper-faint); }
 .empty-mono { font: 400 14px/21px var(--mono); color: var(--paper-dim); }
-#said.spoke { border-left: 2px solid var(--say); }
-#said-stamp { font: 400 11px/16px var(--mono); color: var(--paper-faint); flex: none; }
+#reached { position: relative; }
+#reached.spoke { border-left: 2px solid var(--say); }
+#said-stamp { font: 400 13px/18px var(--mono); color: var(--paper-faint); flex: none; }
 #said-text { margin: 4px 0 0; font: 400 15px/23px var(--serif); color: var(--paper);
   display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
   -webkit-line-clamp: 2; line-clamp: 2; overflow-wrap: anywhere; flex: none; }
-#said.is-captioned #said-text { -webkit-line-clamp: 1; line-clamp: 1; }
-#speak-caption { font: 400 11px/16px var(--mono); color: var(--paper-dim); flex: none;
+#reached.is-captioned #said-text { -webkit-line-clamp: 1; line-clamp: 1; }
+#speak-caption { font: 400 13px/18px var(--mono); color: var(--paper-dim); flex: none;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#said.is-captioned #speak-caption { margin-top: 4px; }
-/* An utterance with no publication behind it: renderRibbon has written the
-   "nothing said" placeholder into #said-text, which would contradict the caption
+#reached.is-captioned #speak-caption { margin-top: 4px; }
+/* An utterance with no publication behind it: renderRibbon leaves #said-text
+   empty rather than writing a placeholder that would contradict the caption
    directly below it, so the caption takes the panel's line instead. */
-#said.is-captioned { border-left: 2px solid var(--say); }
-#said.is-captioned:not(.spoke) #said-text { display: none; }
-#said.is-captioned:not(.spoke) #speak-caption { white-space: normal; overflow-wrap: anywhere;
+#reached.is-captioned { border-left: 2px solid var(--say); }
+#reached.is-captioned:not(.spoke) #said-text { display: none; }
+#reached.is-captioned:not(.spoke) #speak-caption { white-space: normal; overflow-wrap: anywhere;
   font: 400 15px/23px var(--serif); color: var(--paper); display: -webkit-box;
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-#said.is-sparse.is-captioned #said-foot { margin-top: auto; }
+#reached.is-sparse.is-captioned #reached-foot { margin-top: auto; }
 #speak-audio { display: none; }
-#said-foot { margin-top: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); flex: none; }
+/* Absolutely positioned against #reached (not stacked in #reached-said's
+   flow) so revealing it adds no height: a version that grew the panel's
+   flow pushed #reached-foot below the panel's clip edge. */
+#sound-on { position: absolute; right: 22px; bottom: 18px; cursor: pointer;
+  background: none; border: 1px solid var(--rule-2); border-radius: 4px; padding: 2px 8px;
+  font: 600 13px/18px var(--mono); letter-spacing: .12em; color: var(--say); }
+#sound-on:focus-visible { outline: 1px solid var(--rule-2); outline-offset: 2px; }
+#reached-foot { margin-top: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint); flex: none;
+  padding-right: 130px; }
+#reached-said { flex: none; }
+#reached-said:empty, #reached-said.is-quiet { display: none; }
 
 /* ---------- expansion ---------- */
 .blk.is-expandable { cursor: pointer; }
@@ -471,12 +511,12 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .blk.is-expandable:hover .clamp.tomb { color: var(--paper); }
 .blk.is-expandable:hover .more { opacity: 1; }
 .blk.is-expandable:focus-visible { outline: 1px solid var(--rule-2); outline-offset: 4px; }
-.more { height: 18px; margin-top: 6px; font: 600 11px/18px var(--mono); text-transform: uppercase;
+.more { height: 18px; margin-top: 6px; font: 600 13px/18px var(--mono); text-transform: uppercase;
   letter-spacing: .12em; opacity: .78; }
 .blk-think .more { color: var(--think); }
 .blk-say .more { color: var(--say); }
 .blk-tomb .more, #recap-box .more, #pull-box .more { color: var(--paper-dim); }
-.open-tail { margin-top: 8px; font: 600 11px/16px var(--mono); text-transform: uppercase;
+.open-tail { margin-top: 8px; font: 600 13px/18px var(--mono); text-transform: uppercase;
   letter-spacing: .12em; color: var(--paper-faint); }
 .blk.open .clamp { -webkit-line-clamp: none; line-clamp: none; display: block;
   max-height: 420px; overflow-y: auto; overscroll-behavior: contain;
@@ -511,8 +551,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <span class="chip c-think"><i class="dot think"></i><b>THOUGHT</b><em>private reasoning</em></span>
       <span class="chip c-say"><i class="dot say"></i><b>SPEECH</b><em>said out loud</em></span>
       <span class="chip c-act"><i class="dot act"></i><b>ACTION</b><em>tool calls</em></span>
-      <span id="lanes"></span>
-      <span id="provenance">the transcript is the proxy's, not the agent's &middot; refreshed every 2s</span>
+      <span id="provenance"></span>
     </div>
     <div id="death-sweep" hidden></div>
   </header>
@@ -558,7 +597,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
     <section id="story" class="panel">
       <div class="ptitle"><span>THE STORY SO FAR</span></div>
       <div id="now">
-        <div id="now-play"><span id="play-tag"></span><span id="play-phrase"></span><span id="play-age"></span></div>
+        <div id="now-play"><span id="play-tag"></span><span id="play-phrase"></span><span id="play-evidence"></span><span id="play-age"></span></div>
         <p id="now-colour"></p>
         <div id="now-by">&mdash; the stage, not the subject</div>
       </div>
@@ -591,17 +630,22 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <div class="ptitle"><span>WHAT IT DID TO ITSELF</span><span id="selfmod-count"></span></div>
       <div class="rows" id="selfmod-rows"></div>
     </section>
-    <section id="asked" class="panel">
-      <div class="ptitle"><span>WHAT IT ASKED THE WORLD</span><span id="asked-count"></span></div>
-      <div class="rows" id="asked-rows"></div>
+    <section id="streams" class="panel">
+      <div class="ptitle"><span>WHAT IT THINKS WITH</span><span id="stream-count"></span></div>
+      <div id="stream-rows"></div>
+      <div id="stream-foot"></div>
     </section>
-    <section id="said" class="panel">
-      <div class="ptitle"><span>WHAT IT SAID TO THE WORLD</span></div>
-      <div id="said-stamp"></div>
-      <p id="said-text"></p>
-      <div id="speak-caption"></div>
-      <audio id="speak-audio" preload="auto"></audio>
-      <div id="said-foot"></div>
+    <section id="reached" class="panel">
+      <div class="ptitle"><span>WHAT IT REACHED FOR</span><span id="reached-count"></span></div>
+      <div id="reached-said">
+        <div id="said-stamp"></div>
+        <p id="said-text"></p>
+        <div id="speak-caption"></div>
+        <audio id="speak-audio" preload="auto"></audio>
+        <button id="sound-on" type="button" hidden>▸ ENABLE SOUND</button>
+      </div>
+      <div class="rows" id="reached-rows"></div>
+      <div id="reached-foot"></div>
     </section>
   </div>
 
@@ -629,6 +673,29 @@ function setText(el, value) {
   return true;
 }
 function setClass(el, name, on) { if (el) el.classList.toggle(name, !!on); }
+
+/* Each line is literally true of the running system and traceable to a hard
+   invariant: the agent's container has network_mode none; the upstream key
+   lives only in the recorder, which injects it; the agent's own key is a
+   dummy; the proxy logs bodies and never headers. */
+var PROVENANCE_LINES = [
+  "the agent has no network interface · one unix socket to the model, nothing else",
+  "the model key lives in the recorder · the agent runs with a dummy",
+  "it can rewrite every line of itself · it cannot reach the machine it runs on",
+  "the transcript is the proxy's, not the agent's · refreshed every 2s"
+];
+var provenanceAt = 0;
+var transportOk = true;
+function showProvenance() {
+  setText($("provenance"), PROVENANCE_LINES[provenanceAt % PROVENANCE_LINES.length]);
+}
+function rotateProvenance() {
+  if (!transportOk) return;
+  provenanceAt++;
+  showProvenance();
+}
+showProvenance();
+if (!REDUCED) setInterval(rotateProvenance, 20000);
 function fmt(n) {
   n = Math.max(0, Math.round(n));
   var s = String(n), out = "", c = 0;
@@ -1050,11 +1117,11 @@ function setState(age) {
 }
 function setTransport(ok) {
   var p = $("provenance");
+  transportOk = !!ok;
   setClass(p, "offline", !ok);
   setClass($("state-cluster"), "offline", !ok);
-  setText(p, ok
-    ? "the transcript is the proxy's, not the agent's · refreshed every 2s"
-    : "STAGE OFFLINE · this page cannot reach the stage");
+  if (!ok) setText(p, "STAGE OFFLINE · this page cannot reach the stage");
+  else showProvenance();
 }
 
 /* ---------- subject ---------- */
@@ -1159,6 +1226,7 @@ function renderNow() {
   var c = (snap.commentary || {}), play = c.play || {}, colour = c.colour || {};
   setText($("play-tag"), play.tag || "··");
   setText($("play-phrase"), play.phrase || "waiting for the first word");
+  setText($("play-evidence"), colour.evidence || "");
   var age = play.epoch == null ? null : Math.max(0, clock() / 1000 - play.epoch);
   setText($("play-age"), age == null ? "" : dur(age));
   setText($("now-colour"), colour.text || "");
@@ -1214,6 +1282,7 @@ function makeGrave() {
   var body = el("div", "g-body", g);
   g.__eyebrow = el("div", "g-eyebrow", body);
   var box = el("div", "blk blk-tomb rail-blk", body);
+  g.__facts = el("div", "g-facts", box);
   g.__clamp = el("div", "clamp tomb", box);
   el("div", "open-tail", box).hidden = true;
   var more = el("div", "more", box);
@@ -1224,7 +1293,15 @@ function makeGrave() {
 }
 var KIND_LABEL = { declared: "ENDED BY ITS OWN HAND", harness: "STOPPED BY THE HARNESS",
   unknown: "CAUSE UNRECORDED" };
-var GRAVE_ROWS = 3;
+// #dead is 244px tall (#rail's third row). Subtracting the panel's 2x15px
+// padding+border and a fixed 32px title and 16px foot line leaves ~166px for
+// #graves. Each grave is a real record now (facts line plus two lines of note,
+// min-height 80px) rather than a one-liner: two 80px graves plus the 4px
+// inter-grave gap need 164px, which fits in 166px with 2px to spare; a third
+// would need 248px. Raising this back to 3 needs a taller #dead row, which only
+// comes out of #rail's other two rows (#subject or #story's .recap-wrap, the
+// one region built to absorb it) or #rail overall.
+var GRAVE_ROWS = 2;
 function renderDead() {
   var lin = (snap.lineage || []).slice(0, GRAVE_ROWS), st = snap.stats, box = $("graves");
   setText($("dead-count"), st.incarnation + " LIVE" + (st.incarnation === 1 ? "" : "S") + " SO FAR");
@@ -1253,13 +1330,22 @@ function renderDead() {
     var sent = norm(l.sentence || l.summary || "");
     markBlock(g.__box, st.incarnation + ":tomb" + i, sent, l.sentence_chars, false);
     setText(g.__clamp, sent);
+    var facts = [];
+    if (l.lifespan_seconds != null) facts.push("lived " + dur(l.lifespan_seconds));
+    if (l.turns_lived != null) {
+      facts.push(l.turns_lived + " turn" + (l.turns_lived === 1 ? "" : "s"));
+    }
+    setText(g.__facts, facts.join(" · "));
   }
   for (var k = lin.length; k < graveNodes.length; k++) graveNodes[k].hidden = true;
   var hiddenLives = Math.max(0, (st.lives_ended || 0) - lin.length);
-  setText($("dead-foot"), hiddenLives > 0
-    ? hiddenLives + " earlier live" + (hiddenLives === 1 ? "" : "s") + " " +
-      (hiddenLives === 1 ? "is" : "are") + " not shown."
-    : "");
+  var ended = st.lives_ended || 0, chose = st.ended_by_choice || 0;
+  var parts = [];
+  if (ended) parts.push(chose + " of " + ended + " chose to die");
+  if (hiddenLives > 0) {
+    parts.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");
+  }
+  setText($("dead-foot"), parts.join(" · "));
 }
 
 /* ---------- ribbon ---------- */
@@ -1289,15 +1375,14 @@ function renderRibbon() {
   }
   setClass(host, "is-sparse", !ev.length);
 
-  var outs = ((snap.diode && snap.diode.outputs) || []).slice(0, 4), ahost = $("asked-rows");
+  var outs = ((snap.diode && snap.diode.outputs) || []).slice(0, 4), ahost = $("reached-rows");
   clearRows(ahost);
   var thisLife = 0, anyLife = false;
   for (i = 0; i < outs.length; i++) {
     if (outs[i].life != null) anyLife = true;
     if (outs[i].life === st.incarnation) thisLife++;
   }
-  setText($("asked-count"), (anyLife ? thisLife : outs.length) + " THIS LIFE");
-  if (!outs.length) el("div", "empty-mono", ahost).textContent = "It has not reached outside the box this life.";
+  setText($("reached-count"), (anyLife ? thisLife : outs.length) + " THIS LIFE");
   for (i = 0; i < outs.length; i++) {
     var o = outs[i], r = el("div", "rrow", ahost);
     var c = el("span", "cmd", r);
@@ -1316,7 +1401,7 @@ function renderRibbon() {
 
   var pub = (snap.diode && snap.diode.published) || [];
   var total = (snap.diode && snap.diode.published_total) || 0;
-  setClass($("said"), "spoke", total > 0);
+  setClass($("reached"), "spoke", total > 0);
   if (pub.length) {
     setText($("said-stamp"), "↗ PUBLISHED · " + hhmmss(new Date((pub[0].epoch || 0) * 1000).toISOString()));
     var p = $("said-text");
@@ -1324,21 +1409,18 @@ function renderRibbon() {
     el("span", "q", p).textContent = "“";
     el("span", null, p).textContent = norm(pub[0].text || "");
     el("span", "q", p).textContent = "”";
-    setText($("said-foot"), total + " statement" + (total === 1 ? "" : "s") + " so far");
   } else {
     setText($("said-stamp"), "");
-    var pe = $("said-text");
-    if (pe.__text !== "empty") {
-      pe.textContent = "";
-      var em = el("span", null, pe);
-      em.textContent = "It has said nothing to anyone outside.";
-      em.style.font = "400 14px/21px var(--mono)";
-      em.style.color = "var(--paper-dim)";
-      pe.__text = "empty";
-    }
-    setText($("said-foot"), "");
+    setText($("said-text"), "");
   }
-  setClass($("said"), "is-sparse", $("said-text").scrollHeight <= 34);
+  setClass($("reached"), "is-sparse", $("said-text").scrollHeight <= 34);
+
+  var everReached = (snap.diode.published_total || 0) + (snap.diode.spoken_total || 0) + outs.length;
+  setClass($("reached-said"), "is-quiet", !(snap.diode.published || []).length &&
+    !(snap.diode.spoken || []).length);
+  setText($("reached-foot"), everReached
+    ? everReached + " time" + (everReached === 1 ? "" : "s") + " across every life"
+    : "It has never reached outside the box.");
 }
 
 var SPOKEN_MEMORY = 50;
@@ -1358,7 +1440,7 @@ function setSpokenCaption(text) {
   if (!cap) return;
   var caption = norm(text || "");
   setText(cap, caption);
-  setClass($("said"), "is-captioned", !!caption);
+  setClass($("reached"), "is-captioned", !!caption);
 }
 function markSpokenPlayed(name) {
   spokenPlayed[name] = true;
@@ -1382,7 +1464,21 @@ function playNextSpoken() {
   var mine = spokenCurrent;
   try {
     var p = a.play();
-    if (p && p.catch) p.catch(function () { if (mine === spokenCurrent) spokenAdvance(); });
+    /* Both a refused autoplay and a load failure reject this promise (the
+       load failure also fires "error", handled below), so the rejection
+       reason has to be checked rather than assumed: only NotAllowedError is
+       an autoplay refusal, which is recoverable by asking the viewer to
+       click. A load failure (NotSupportedError, e.g. a file mid-write or one
+       that rotated away between snapshot and fetch) is not a permission
+       problem and offering sound would not fix it — revealing the button on
+       that path would plant a dead, unrecoverable control on the broadcast,
+       which has no pointer to hide it again. Gate on the positive condition
+       so an unrecognised rejection reason fails closed (button stays
+       hidden) rather than open. The queue still drains either way. */
+    if (p && p.catch) p.catch(function (e) {
+      if (e && e.name === "NotAllowedError") soundBlocked();
+      if (mine === spokenCurrent) spokenAdvance();
+    });
   } catch (e) { spokenAdvance(); }
 }
 function spokenAdvance() {
@@ -1392,6 +1488,22 @@ function spokenAdvance() {
   spokenCurrent = null;
   spokenBusy = false;
   playNextSpoken();
+}
+/* An OBS browser source is allowed to autoplay, so this never runs there. A
+   person opening the tunnelled page is not, and would otherwise watch every
+   utterance drain past with no way to ask for it. */
+function soundBlocked() {
+  var b = $("sound-on");
+  if (!b || !b.hidden) return;
+  b.hidden = false;
+  if (!b.__wired) {
+    b.__wired = true;
+    b.addEventListener("click", function () {
+      b.hidden = true;
+      var a = $("speak-audio");
+      if (a) { try { a.play(); } catch (e) {} }
+    });
+  }
 }
 (function () {
   var a = $("speak-audio");
@@ -1541,24 +1653,43 @@ function laneCount(n) {
   return String(n);
 }
 function renderLanes() {
-  var host = $("lanes"), lanes = (snap && snap.lanes) || [];
+  var host = $("stream-rows"), lanes = (snap && snap.lanes) || [];
   if (!host) return;
-  while (host.children.length > lanes.length) host.removeChild(host.lastChild);
-  for (var i = 0; i < lanes.length; i++) {
-    var lane = lanes[i], node = host.children[i];
+  /* #stream-rows is a 2-column grid, 64px tall, of 20px rows: 3 rows x 2
+     columns fit without clipping. A larger slice would render lanes into
+     overflow that #stream-foot never discloses. */
+  var shown = lanes.slice(0, 6), live = 0;
+  /* given/built are counted over every declared lane, not just the ones the
+     grid can show: the figure is a claim about the whole set, and slicing it
+     to the rendered rows would understate BUILT (or miss GIVEN, if core is
+     not among the first six) once more lanes exist than the grid displays. */
+  var given = 0, built = 0;
+  for (var g = 0; g < lanes.length; g++) {
+    if (lanes[g].name === "core") given++;
+    else built++;
+  }
+  while (host.children.length > shown.length) host.removeChild(host.lastChild);
+  for (var i = 0; i < shown.length; i++) {
+    var lane = shown[i], node = host.children[i];
     if (!node) {
-      node = document.createElement("span");
-      node.className = "chip lane";
-      node.appendChild(document.createElement("i"));
-      node.appendChild(document.createElement("b"));
-      node.appendChild(document.createElement("em"));
-      host.appendChild(node);
+      node = el("div", "lane-row", host);
+      el("i", "l-dot", node);
+      el("span", "l-name", node);
+      el("span", "l-meta", node);
     }
-    node.children[0].className = "dot " + (lane.in_flight > 0 ? "live breathe" : "idle");
+    if (lane.in_flight > 0) live++;
+    node.className = "lane-row" + (lane.name === "core" ? " given" : "") +
+      (lane.in_flight > 0 ? " live" : "") + (lane.bound ? "" : " unbound");
     setText(node.children[1], norm(lane.name).toUpperCase());
     setText(node.children[2],
       laneCount(lane.requests_hour) + "/h · " + laneCount(lane.tokens_hour) + " tok");
   }
+  setText($("stream-count"),
+    lanes.length ? given + " GIVEN · " + built + " BUILT" : "");
+  var hidden = lanes.length - shown.length;
+  setText($("stream-foot"), hidden > 0
+    ? hidden + " more stream" + (hidden === 1 ? "" : "s") + " not shown"
+    : (lanes.length ? live + " in flight" : "It thinks with the one socket it was given."));
 }
 
 /* ---------- render ---------- */

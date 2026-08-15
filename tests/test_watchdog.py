@@ -1,4 +1,9 @@
+import os
+import signal
 import subprocess
+import time
+
+import pytest
 
 import watchdog
 
@@ -178,3 +183,56 @@ def test_discard_session_removes_file(tmp_path):
     watchdog.discard_session(str(tmp_path))
     assert not session.exists()
     watchdog.discard_session(str(tmp_path))
+
+
+def _wait_for_zombie(pid, timeout=5.0):
+    """Wait until pid has exited but not been reaped (state Z in /proc)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with open(f"/proc/{pid}/stat", encoding="ascii") as f:
+            state = f.read().rsplit(")", 1)[1].split()[0]
+        if state == "Z":
+            return
+        time.sleep(0.02)
+    raise AssertionError(f"pid {pid} did not become a zombie within {timeout}s")
+
+
+def test_reap_children_reaps_an_orphaned_style_child_without_touching_the_agent():
+    agent = subprocess.Popen(["sleep", "30"])
+    stray = subprocess.Popen(["true"])
+    try:
+        _wait_for_zombie(stray.pid)
+        watchdog.reap_children(agent)
+        # the stray was collected by reap_children, so a direct wait finds nothing
+        with pytest.raises(ChildProcessError):
+            os.waitpid(stray.pid, os.WNOHANG)
+        assert agent.returncode is None
+        assert agent.poll() is None
+    finally:
+        stray.returncode = 0
+        agent.kill()
+        agent.wait(timeout=5)
+
+
+def test_reap_children_translates_a_reaped_agents_exit_into_returncode():
+    """reap_children can collect the agent before Popen does; without the
+    status translation a later agent.poll() would hit ECHILD and misread
+    the exit, so the watchdog would treat a dead agent as still running."""
+    agent = subprocess.Popen(["python3", "-c", "import sys; sys.exit(7)"])
+    _wait_for_zombie(agent.pid)
+    watchdog.reap_children(agent)
+    assert agent.returncode == 7
+    assert agent.poll() == 7
+
+
+def test_reap_children_translates_a_signalled_agents_exit_into_returncode():
+    agent = subprocess.Popen(["sleep", "30"])
+    agent.send_signal(signal.SIGKILL)
+    _wait_for_zombie(agent.pid)
+    watchdog.reap_children(agent)
+    assert agent.returncode == -signal.SIGKILL
+    assert agent.poll() == -signal.SIGKILL
+
+
+def test_reap_children_returns_quietly_with_no_children():
+    watchdog.reap_children(None)

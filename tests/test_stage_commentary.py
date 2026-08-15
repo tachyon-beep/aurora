@@ -473,3 +473,24 @@ def test_source_never_names_the_recorder_credentials():
         source = f.read()
     assert "OPENROUTER_API_KEY" not in source
     assert "LLM_API_KEY" not in source
+
+
+def test_beat_evidence_states_the_counted_fact():
+    beat = commentary._beat("tool_fixation", tool="run", count=4)
+    assert commentary.beat_evidence(beat) == "run x4 in a row"
+
+
+def test_beat_evidence_states_a_span_as_a_duration():
+    beat = commentary._beat("silence", span=134)
+    assert commentary.beat_evidence(beat) == "quiet for 2m"
+
+
+def test_beat_evidence_is_empty_when_the_beat_counts_nothing():
+    assert commentary.beat_evidence(commentary._beat("working")) == ""
+    assert commentary.beat_evidence(None) == ""
+    assert commentary.beat_evidence({}) == ""
+
+
+def test_beat_evidence_never_raises_on_garbage_fields():
+    assert commentary.beat_evidence({"kind": "silence", "span_seconds": "soon"}) == ""
+    assert commentary.beat_evidence({"kind": "tool_fixation", "count": None}) == ""

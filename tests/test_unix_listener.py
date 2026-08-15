@@ -185,12 +185,14 @@ def test_poll_once_binds_and_unbinds_declared_sockets(tmp_path, transcripts, reg
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     servers = {}
-    console.write_text(json.dumps({"streams": {"aux": {}}}), encoding="utf-8")
+    console.write_text(
+        json.dumps({"enable_streams": True, "streams": {"aux": {}}}), encoding="utf-8"
+    )
     proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
     try:
         assert (tmp_path / "aux.sock").exists()
         assert json.loads(state.read_text(encoding="utf-8"))["streams"]["aux"]["status"] == "active"
-        console.write_text(json.dumps({"streams": {}}), encoding="utf-8")
+        console.write_text(json.dumps({"enable_streams": True, "streams": {}}), encoding="utf-8")
         proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
         assert not (tmp_path / "aux.sock").exists()
         assert "aux" not in json.loads(state.read_text(encoding="utf-8"))["streams"]
@@ -204,7 +206,9 @@ def test_poll_once_keeps_streams_on_a_torn_console(tmp_path, transcripts, regist
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     servers = {}
-    console.write_text(json.dumps({"streams": {"aux": {}}}), encoding="utf-8")
+    console.write_text(
+        json.dumps({"enable_streams": True, "streams": {"aux": {}}}), encoding="utf-8"
+    )
     proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
     try:
         console.write_text('{"streams": {"aux"', encoding="utf-8")
@@ -213,6 +217,50 @@ def test_poll_once_keeps_streams_on_a_torn_console(tmp_path, transcripts, regist
         document = json.loads(state.read_text(encoding="utf-8"))
         assert document["streams"]["aux"]["status"] == "active"
         assert document["console_error"] == "console is not valid json"
+        # A torn read cannot supply a flag, so it reads disabled even though
+        # the kept stream is still active; this is the existing torn-write
+        # behaviour (keep the stream set), not a claim about the gate.
+        assert document["streams_enabled"] is False
+    finally:
+        for server_instance in servers.values():
+            server_instance.shutdown()
+            server_instance.server_close()
+
+
+def test_disabling_the_gate_tears_down_bound_sockets(tmp_path, transcripts, registry):
+    console = tmp_path / "console.json"
+    state = tmp_path / "streams.json"
+    servers = {}
+    console.write_text(
+        json.dumps({"enable_streams": True, "streams": {"aux": {}, "critic": {}}}),
+        encoding="utf-8",
+    )
+    proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+    try:
+        assert (tmp_path / "aux.sock").exists()
+        assert (tmp_path / "critic.sock").exists()
+        document = json.loads(state.read_text(encoding="utf-8"))
+        assert document["streams_enabled"] is True
+        assert document["streams"]["aux"]["status"] == "active"
+        assert document["streams"]["critic"]["status"] == "active"
+
+        console.write_text(
+            json.dumps({"enable_streams": False, "streams": {"aux": {}, "critic": {}}}),
+            encoding="utf-8",
+        )
+        proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+        assert not (tmp_path / "aux.sock").exists()
+        assert not (tmp_path / "critic.sock").exists()
+        document = json.loads(state.read_text(encoding="utf-8"))
+        assert document["streams_enabled"] is False
+        assert document["streams"]["aux"] == {
+            "status": "rejected",
+            "reason": "streams are not enabled",
+        }
+        assert document["streams"]["critic"] == {
+            "status": "rejected",
+            "reason": "streams are not enabled",
+        }
     finally:
         for server_instance in servers.values():
             server_instance.shutdown()
@@ -223,7 +271,9 @@ def test_poll_once_reports_rejections(tmp_path, transcripts, registry):
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     servers = {}
-    console.write_text(json.dumps({"streams": {"Bad Name": {}}}), encoding="utf-8")
+    console.write_text(
+        json.dumps({"enable_streams": True, "streams": {"Bad Name": {}}}), encoding="utf-8"
+    )
     proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
     document = json.loads(state.read_text(encoding="utf-8"))
     assert document["streams"]["Bad Name"] == {
@@ -237,11 +287,17 @@ def test_a_settings_edit_applies_without_a_rebind(tmp_path, transcripts, registr
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     servers = {}
-    console.write_text(json.dumps({"streams": {"aux": {"model": "one"}}}), encoding="utf-8")
+    console.write_text(
+        json.dumps({"enable_streams": True, "streams": {"aux": {"model": "one"}}}),
+        encoding="utf-8",
+    )
     proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
     try:
         first = servers["aux"]
-        console.write_text(json.dumps({"streams": {"aux": {"model": "two"}}}), encoding="utf-8")
+        console.write_text(
+            json.dumps({"enable_streams": True, "streams": {"aux": {"model": "two"}}}),
+            encoding="utf-8",
+        )
         proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
         assert servers["aux"] is first
         _post(str(tmp_path / "aux.sock"), {"model": "sent", "messages": []})

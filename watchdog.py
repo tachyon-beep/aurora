@@ -286,6 +286,32 @@ def terminate_process(proc):
             pass
 
 
+def reap_children(agent):
+    """Reap exited children so orphaned grandchildren do not become zombies.
+
+    This watchdog is PID 1 (container init). A plain Python init does not reap
+    reparented orphans; they stay zombies and eventually exhaust the cgroup pid
+    limit. waitpid(-1, WNOHANG) reaps any exited child. If it reaps the managed
+    agent, translate the wait status into Popen.returncode so a later
+    agent.poll() still reports the exit (otherwise poll() would hit ECHILD and
+    wrongly treat the agent as still running).
+    """
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except OSError:
+            return
+        if pid == 0:
+            return
+        if agent is not None and pid == agent.pid and agent.returncode is None:
+            if os.WIFSIGNALED(status):
+                agent.returncode = -os.WTERMSIG(status)
+            elif os.WIFEXITED(status):
+                agent.returncode = os.WEXITSTATUS(status)
+            else:
+                agent.returncode = status
+
+
 def run_watchdog():
     """Supervise the agent with tiered, self-healing recovery.
 
@@ -329,6 +355,7 @@ def run_watchdog():
                 sys.stdout.flush()
                 os.execv(sys.executable, [sys.executable, WATCHDOG_FILE])
 
+        reap_children(agent)
         ret = agent.poll()
         if ret is not None:
             now = time.time()

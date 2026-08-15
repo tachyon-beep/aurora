@@ -158,10 +158,12 @@ def test_poll_once_emits_bind_and_unbind(tmp_path, transcripts):
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     servers = {}
-    console.write_text(json.dumps({"streams": {"aux": {}}}), encoding="utf-8")
+    console.write_text(
+        json.dumps({"enable_streams": True, "streams": {"aux": {}}}), encoding="utf-8"
+    )
     proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
     try:
-        console.write_text(json.dumps({"streams": {}}), encoding="utf-8")
+        console.write_text(json.dumps({"enable_streams": True, "streams": {}}), encoding="utf-8")
         proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
     finally:
         for instance in servers.values():

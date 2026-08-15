@@ -461,9 +461,9 @@ def bind_stream(registry, servers, sock_dir, name):
 
 def poll_once(registry, servers, sock_dir, console_path, state_path):
     """Read the console, apply the diff to the sockets, and write the state file."""
-    declarations, error = recorder_streams.load_console(console_path)
+    declarations, enabled, error = recorder_streams.load_console(console_path)
     if declarations is not None:
-        accepted, rejected = recorder_streams.evaluate_console(declarations)
+        accepted, rejected = recorder_streams.evaluate_console(declarations, enabled)
         added, removed = registry.apply(accepted, rejected)
         for name in removed:
             server = servers.pop(name, None)
@@ -479,7 +479,9 @@ def poll_once(registry, servers, sock_dir, console_path, state_path):
             bind_stream(registry, servers, sock_dir, name)
             if name in servers:
                 log_event("bind", name)
-    recorder_streams.write_state(state_path, registry.state(console_error=error))
+    recorder_streams.write_state(
+        state_path, registry.state(streams_enabled=enabled, console_error=error)
+    )
 
 
 def main():

@@ -65,7 +65,9 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      command in that vocabulary returns a key — each diode credential lives only in the diode's own
      environment. The **`/llm/console` volume** is written by the agent and read only by the
      recorder, which validates it against a closed field vocabulary. A declaration can create model
-     sockets under `/llm/sock` and set pacing and hyperparameters for the agent's own model calls;
+     sockets under `/llm/sock` and set pacing and hyperparameters for the agent's own model calls,
+     but only once the console also sets `enable_streams` to the JSON boolean `true` — without it,
+     declarations are validated and reported but never served;
      no field names a URL, a filesystem path, a credential, or an upstream, and the stream-name
      pattern admits no path separator. The upstream target and key remain facts of the recorder's
      environment that no console value can reach or change; each stream's allowance is clamped by

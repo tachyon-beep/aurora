@@ -436,3 +436,38 @@ def test_cached_story_shape_and_isolation(tmp_path, monkeypatch):
     assert story["model"] == "vendor/narrator-1"
     story["text"] = "mutated"
     assert summary.cached_story()["text"] == "A recap."
+
+
+def test_prompt_carries_no_number_the_subject_panel_also_renders(tmp_path):
+    """THE SUBJECT owns turns, uptime and source status, and updates every two
+    seconds. A recap that states them competes with a panel it cannot win against."""
+    telemetry, transcript = _fixture_tree(tmp_path)
+    prompt = summary._collect(telemetry, transcript)["prompt"]
+    for forbidden in ("minutes alive", "turns this life", "transcript rows in total"):
+        assert forbidden not in prompt, forbidden
+
+
+def test_prompt_still_carries_the_durable_facts(tmp_path):
+    telemetry, transcript = _fixture_tree(tmp_path)
+    prompt = summary._collect(telemetry, transcript)["prompt"]
+    assert "current incarnation:" in prompt
+    assert "endings on record:" in prompt
+    assert "model in use:" in prompt
+    assert "1 line added and 0 removed" in prompt
+    assert "saved session file:" in prompt
+
+
+def test_the_instruction_forbids_elapsed_time_and_turn_counts(tmp_path):
+    telemetry, transcript = _fixture_tree(tmp_path)
+    prompt = summary._collect(telemetry, transcript)["prompt"]
+    assert prompt.endswith(summary.CLOSING_INSTRUCTION)
+    assert "how long" in summary.CLOSING_INSTRUCTION
+    assert "how many turns" in summary.CLOSING_INSTRUCTION
+
+
+def test_the_digest_no_longer_moves_with_the_turn_count(tmp_path):
+    """The recap should regenerate when history changes, not every turn."""
+    telemetry, transcript = _fixture_tree(tmp_path)
+    before = summary._collect(telemetry, transcript)["digest_material"]
+    assert "turns this life" not in before
+    assert "minutes alive" not in before

@@ -430,6 +430,7 @@ def _empty_snapshot(now):
                 "text": commentary.BEAT_TEMPLATES["working"],
                 "generated": False,
                 "beat": commentary.working_beat_id(),
+                "evidence": "",
             },
         },
     }
@@ -481,7 +482,7 @@ def _assemble_snapshot(now):
         "story": _public_story(),
         "commentary": {
             "play": commentary.play_by_play(data.loop_turns(turns), diode, stats),
-            "colour": commentary.colour_line(beat),
+            "colour": dict(commentary.colour_line(beat), evidence=commentary.beat_evidence(beat)),
         },
     }
 

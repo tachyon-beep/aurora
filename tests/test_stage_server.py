@@ -220,6 +220,8 @@ def test_stream_snapshot_shape(stream):
     assert snap["events"][-1]["name"] == "write_file"
     assert snap["lineage"][0]["summary"] == "ended early."
     assert "diode" in snap
+    assert "evidence" in snap["commentary"]["colour"]
+    assert isinstance(snap["commentary"]["colour"]["evidence"], str)
 
 
 def test_stream_snapshot_caps_and_slims_public_data(tmp_path, monkeypatch):
@@ -483,7 +485,7 @@ def test_snapshot_carries_a_commentary_block(tmp_path, monkeypatch):
     snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
     assert set(snap["commentary"]) == {"play", "colour"}
     assert set(snap["commentary"]["play"]) == {"tag", "phrase", "epoch"}
-    assert set(snap["commentary"]["colour"]) == {"text", "generated", "beat"}
+    assert set(snap["commentary"]["colour"]) == {"text", "generated", "beat", "evidence"}
     assert snap["commentary"]["colour"]["text"].strip()
 
 

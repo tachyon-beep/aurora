@@ -314,6 +314,25 @@ def play_by_play(turns, diode, stats):
     return {"tag": _tool_tag(name), "phrase": _tool_phrase(name), "epoch": epoch}
 
 
+def beat_evidence(beat):
+    """The counted fact behind a beat, or "" when it counts nothing.
+
+    Pure and deterministic, like detect_beat. The colour line beside this is a
+    model's reading of the same beat; this is the measurement it is reading.
+    """
+    if not isinstance(beat, dict):
+        return ""
+    count = beat.get("count")
+    tool = beat.get("tool")
+    if beat.get("kind") == "tool_fixation" and isinstance(count, int) and isinstance(tool, str):
+        return f"{tool} x{count} in a row"
+    span = beat.get("span_seconds")
+    if beat.get("kind") == "silence" and isinstance(span, (int, float)) and span > 0:
+        minutes = int(span // 60)
+        return f"quiet for {minutes}m" if minutes else f"quiet for {int(span)}s"
+    return ""
+
+
 MIN_REGEN_SECONDS = 60
 DEFAULT_INTERVAL_SECONDS = 30
 POLL_SECONDS = 5

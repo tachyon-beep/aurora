@@ -221,7 +221,7 @@ print(r.status_code)
 docker compose exec -T recorder sh -c 'grep -q ping /transcripts/agent_life_transcript.jsonl'
 
 echo "==> agent declares a stream in the llm console; the recorder binds it"
-docker compose exec -T agent sh -c 'printf "{\"streams\":{\"aux\":{\"budget\":1,\"model\":\"stream-model\"}}}" > /llm/console/console.json'
+docker compose exec -T agent sh -c 'printf "{\"enable_streams\":true,\"streams\":{\"aux\":{\"budget\":1,\"model\":\"stream-model\"}}}" > /llm/console/console.json'
 i=0
 until docker compose exec -T agent sh -c 'test -S /llm/sock/aux.sock' 2>/dev/null; do
   i=$((i + 1))
