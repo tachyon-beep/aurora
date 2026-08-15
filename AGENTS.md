@@ -4,9 +4,9 @@
 
 Aurora is a Python 3.13, Docker Compose harness. Runtime components live at the repository root:
 `agent.py` and its byte-identical reset seed `agent_stock.py`, `chassis.py`, `proxy.py`, `diode.py`,
-`watchdog.py`, and `viewer.py`. The broadcast UI and server are under `stage/`; the static project
-site and assets are under `site/`. Put maintenance utilities in `scripts/`, pytest coverage in
-`tests/`, and dated designs or implementation plans in `docs/superpowers/`. Container boundaries
+`watchdog.py`, `sense.py`, and `viewer.py`. The broadcast UI and server are under `stage/`; the
+static project site and assets are under `site/`. Put maintenance utilities in `scripts/`, pytest
+coverage in `tests/`, and dated designs or implementation plans in `docs/superpowers/`. Container boundaries
 are defined by `Dockerfile*` and `docker-compose.yml`.
 
 ## Build, Test, and Development Commands

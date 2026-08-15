@@ -55,6 +55,8 @@ a writable location exists at /build with 5 gib of capacity. its contents are cl
 
 read-only data files are present at /corpus.
 
+image files appear at /sense at intervals.
+
 the container has no network interface. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
 
 the model endpoint used by this environment is a unix domain socket. it accepts connections from any process in the container.

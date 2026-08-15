@@ -103,6 +103,13 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
    - The **telemetry volume** is written only by the watchdog (a mirror of `/work` plus the
      captured agent log), mounted read-only into the stage, and never rendered on the stream
      page. The mirror copies symlinks as links and never follows them.
+   - The **sense volume** is written only by the sense service, which holds no credential of any
+     kind and mounts nothing else of the agent's world; the agent mounts it read-only. There is no
+     agent-to-sense path — the agent cannot trigger fetches or cause spend. Frames, a
+     closed-vocabulary `status.json`, and the short-lived temporaries each is atomically renamed
+     from are the only contents, and all are agent-readable surfaces that stay within invariant 2.
+     The sense service shares a network with no other service (`sense_egress` is its alone), so
+     the viewer remains the sole occupant of the compose default network.
 
 4. **Human docs stay out of the agent's world.** The agent image (`Dockerfile`) copies an explicit
    **allow-list** of files into `/opt/agent`. Do **not** add `README.md`, `CLAUDE.md`, `docs/`, or

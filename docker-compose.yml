@@ -55,6 +55,9 @@ services:
       # scripts/fetch_corpus.sh; read-only here; mounted nowhere else.
       - ./volumes/vendor:/vendor:ro
       - ./volumes/corpus:/corpus:ro
+      # Image frames captured on a ring of fixed slots by the sense service.
+      # Written only by sense; read-only here.
+      - ./volumes/sense:/sense:ro
     # No network interface at all: one loopback device and an empty routing
     # table. hostname/extra_hosts/dns keep the loopback development surface
     # usable - without them the container's own name does not resolve and
@@ -102,6 +105,44 @@ services:
     volumes:
       - diode:/diode
     networks: [egress]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 512m
+    restart: unless-stopped
+
+  sense:
+    build:
+      context: .
+      dockerfile: Dockerfile.sense
+    image: aurora-sense
+    # docker-init as PID 1: python installs no SIGTERM handler, and without
+    # an init a stop would wait out the kill grace period mid-capture.
+    init: true
+    environment:
+      SENSE_DIR: /sense
+      SENSE_INTERVAL_MINUTES: ${SENSE_INTERVAL_MINUTES:-10}
+      SENSE_RING_SLOTS: ${SENSE_RING_SLOTS:-288}
+      SENSE_STATIC_THRESHOLD: ${SENSE_STATIC_THRESHOLD:-2.0}
+      # Public video feeds; "3" is the reference feed. No credential of any
+      # kind is present in this service's environment.
+      # Feed 3 scales to a fixed width before delogo so the logo box stays
+      # inside the frame whatever resolution the stream resolves to.
+      SENSE_FEEDS: '[{"dir":"0","id":"53ILEi6FMaA"},{"dir":"1","id":"eFcNsQASSO8"},{"dir":"2","id":"Kl_L2zZ4xj8","vf":"crop=in_w:in_h-64:0:0"},{"dir":"3","id":"abbR-Ttd-cA","vf":"scale=1280:-2,delogo=x=910:y=40:w=330:h=80"}]'
+      # yt-dlp cache lands on the tmpfs rather than the read-only rootfs.
+      XDG_CACHE_HOME: /tmp
+    volumes:
+      # Host directory created by scripts/create_sense_volume.sh so it is
+      # owned by uid 1000 (senseuser); a missing bind source would be
+      # auto-created root-owned and the cap-dropped service could not write.
+      - ./volumes/sense:/sense
+    # Egress for public feed capture, on a network of its own: sense shares
+    # a network with no other service, and the viewer stays alone on the
+    # default network.
+    networks: [sense_egress]
     read_only: true
     tmpfs:
       - /tmp
@@ -178,6 +219,7 @@ services:
 networks:
   egress: {}
   stream: {}
+  sense_egress: {}
 
 volumes:
   transcripts: {}

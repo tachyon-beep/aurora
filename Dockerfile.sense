@@ -1,0 +1,21 @@
+FROM python:3.13-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir yt-dlp pillow
+
+RUN useradd --create-home --uid 1000 senseuser
+
+COPY --chown=senseuser:senseuser sense.py /opt/sense/
+
+# Pre-create the /sense mountpoint. The bind-mounted host directory supplies
+# runtime ownership; senseuser (uid 1000) matches the host owner so the
+# service can write frames with cap_drop:[ALL] and no-new-privileges.
+RUN mkdir -p /sense && chown senseuser:senseuser /sense
+
+USER senseuser
+WORKDIR /opt/sense
+
+CMD ["python", "/opt/sense/sense.py"]

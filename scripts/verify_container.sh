@@ -45,6 +45,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "==> sense volume host directory"
+sh scripts/create_sense_volume.sh >/dev/null
+
 echo "==> build garden export"
 .venv/bin/python scripts/build_garden.py >/dev/null 2>&1 || python3 scripts/build_garden.py >/dev/null
 
@@ -124,6 +127,32 @@ if docker compose exec -T agent sh -c 'echo x > /vendor/_probe' 2>/dev/null; the
 fi
 if docker compose exec -T agent sh -c 'echo x > /corpus/_probe' 2>/dev/null; then
   echo "FAIL: /corpus is writable"; exit 1
+fi
+
+echo "==> /sense is present in the agent and read-only"
+docker compose exec -T agent test -d /sense
+if docker compose exec -T agent sh -c 'echo x > /sense/_probe' 2>/dev/null; then
+  echo "FAIL: /sense is writable"; exit 1
+fi
+
+echo "==> sense shares no network with the viewer and is writing status.json"
+sense_nets=$(docker inspect "$(docker compose ps -q sense)" \
+  --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')
+case "$sense_nets" in
+  *_default*) echo "FAIL: sense is attached to the default network"; exit 1 ;;
+esac
+# status.json appears once the first capture cycle completes, minutes at
+# worst even with every feed unreachable; an absent file past that points at
+# an unwritable volume or a crashed service.
+sense_status_ok=0
+for _ in $(seq 1 60); do
+  if docker compose exec -T agent test -f /sense/status.json 2>/dev/null; then
+    sense_status_ok=1; break
+  fi
+  sleep 5
+done
+if [ "$sense_status_ok" -ne 1 ]; then
+  echo "FAIL: /sense/status.json has not appeared"; exit 1
 fi
 
 echo "==> cargo builds a new project offline against /vendor"

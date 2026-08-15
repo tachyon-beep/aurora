@@ -131,6 +131,71 @@ def test_the_socket_volumes_are_declared():
     assert "  llm_console: {}" in text
 
 
+def _sense_block(text):
+    return text.split("\n  sense:\n")[1].split("\n  viewer:\n")[0]
+
+
+def test_the_agent_mounts_sense_read_only():
+    text = _read("docker-compose.yml")
+    assert "./volumes/sense:/sense:ro" in _agent_block(text)
+    assert "/sense" in _read("Dockerfile")
+
+
+def test_sense_mounts_only_its_own_volume():
+    sense = _sense_block(_read("docker-compose.yml"))
+    volume_lines = [
+        line.strip()
+        for line in sense.split("volumes:\n")[1].splitlines()
+        if line.strip().startswith("- ")
+    ]
+    mounts = []
+    for line in volume_lines:
+        if line == "- /tmp":
+            break
+        mounts.append(line)
+    assert mounts == ["- ./volumes/sense:/sense"]
+    for name in ("diode", "state", "llm", "transcripts", "telemetry"):
+        assert f"{name}:" not in sense.split("volumes:\n")[1]
+
+
+def test_sense_environment_holds_no_credential():
+    sense = _sense_block(_read("docker-compose.yml"))
+    for marker in ("_KEY", "_TOKEN", "_SECRET"):
+        assert marker not in sense
+
+
+def test_sense_capture_tools_stay_out_of_the_agent_manifest():
+    assert "yt-dlp" not in _read("requirements-agent.txt")
+
+
+def test_sense_shares_no_network_with_the_viewer():
+    # Without an explicit networks key, sense would join the implicit compose
+    # default network alongside the viewer; the viewer must stay its default
+    # network's sole occupant.
+    text = _read("docker-compose.yml")
+    sense = _sense_block(text)
+    assert "networks: [sense_egress]" in sense
+    assert "network_mode" not in sense
+    assert "sense_egress: {}" in text
+    viewer = text.split("\n  viewer:\n")[1].split("\n  stage:\n")[0]
+    assert "networks" not in viewer
+    assert "sense_egress" not in viewer
+    # The only mentions of the sense network are its declaration and the
+    # sense service's own attachment: no other service joins it.
+    assert text.count("sense_egress") == 2
+
+
+def test_sense_runs_under_an_init_process():
+    assert "init: true" in _sense_block(_read("docker-compose.yml"))
+
+
+def test_verify_script_covers_sense_volume_network_and_liveness():
+    text = _read("scripts/verify_container.sh")
+    assert "create_sense_volume.sh" in text
+    assert "status.json" in text
+    assert "_default" in text
+
+
 def test_the_agent_image_precreates_the_socket_mountpoints():
     # Docker copies image-mountpoint ownership into each newly created empty
     # volume, so both paths must appear on the chown as well as the mkdir. A
