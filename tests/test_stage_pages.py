@@ -100,6 +100,34 @@ def test_the_caption_sits_above_the_foot_so_the_panel_does_not_clip_it():
     assert HTML.index('id="speak-caption"') < HTML.index('id="reached-foot"')
 
 
+def test_the_sound_button_adds_no_height_to_the_panels_flow():
+    """Measured in a real browser at 1920x1080, in the `.spoke.is-captioned`
+    state: with `#sound-on` stacked in `#reached-said`'s block flow (margin-top:
+    6px), revealing it grew `#reached-said` from 67px to 97px and pushed
+    `#reached-foot` from 1030-1048 to 1060-1078 -- entirely past the panel's
+    padding-box bottom (1055, itself 7px below the foot's own resting bottom
+    edge of 1048), where `overflow: hidden` clips it. Anchoring the button
+    with `position: absolute` against `#reached` instead costs zero flow
+    height: the foot measured at 1030-1048 in both button states, with the
+    button (left 1723.9, right 1873) never reaching as far left as the
+    foot's rendered text (right edge 1695.8-1711.4 across the panel's actual
+    foot strings), so nothing overlaps."""
+    sound_on = HTML[HTML.index("\n#sound-on {") :]
+    sound_on = sound_on[: sound_on.index("}")]
+    assert "position: absolute" in sound_on
+    assert "margin-top" not in sound_on
+    assert "align-self" not in sound_on
+    assert "flex: none" not in sound_on
+
+    reached = HTML[HTML.index("\n#reached {") :]
+    reached = reached[: reached.index("}")]
+    assert "position: relative" in reached
+
+    reached_foot = HTML[HTML.index("\n#reached-foot {") :]
+    reached_foot = reached_foot[: reached_foot.index("}")]
+    assert "padding-right" in reached_foot
+
+
 def test_the_caption_clamps_the_published_line_to_make_room():
     assert "#reached.is-captioned #said-text" in HTML
     assert 'setClass($("reached"), "is-captioned"' in HTML

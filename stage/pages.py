@@ -472,6 +472,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 #reached.is-sparse #reached-foot { margin-top: 8px; }
 .rrow .rmeta { text-align: right; font: 400 13px/21px var(--mono); color: var(--paper-faint); }
 .empty-mono { font: 400 14px/21px var(--mono); color: var(--paper-dim); }
+#reached { position: relative; }
 #reached.spoke { border-left: 2px solid var(--say); }
 #said-stamp { font: 400 13px/18px var(--mono); color: var(--paper-faint); flex: none; }
 #said-text { margin: 4px 0 0; font: 400 15px/23px var(--serif); color: var(--paper);
@@ -491,11 +492,15 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
   -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 #reached.is-sparse.is-captioned #reached-foot { margin-top: auto; }
 #speak-audio { display: none; }
-#sound-on { align-self: flex-start; margin-top: 6px; flex: none; cursor: pointer;
+/* Absolutely positioned against #reached (not stacked in #reached-said's
+   flow) so revealing it adds no height: a version that grew the panel's
+   flow pushed #reached-foot below the panel's clip edge. */
+#sound-on { position: absolute; right: 22px; bottom: 18px; cursor: pointer;
   background: none; border: 1px solid var(--rule-2); border-radius: 4px; padding: 2px 8px;
   font: 600 13px/18px var(--mono); letter-spacing: .12em; color: var(--say); }
 #sound-on:focus-visible { outline: 1px solid var(--rule-2); outline-offset: 2px; }
-#reached-foot { margin-top: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint); flex: none; }
+#reached-foot { margin-top: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint); flex: none;
+  padding-right: 130px; }
 #reached-said { flex: none; }
 #reached-said:empty, #reached-said.is-quiet { display: none; }
 
