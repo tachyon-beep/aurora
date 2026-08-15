@@ -180,7 +180,7 @@ class EnvironmentFailure(Exception):
 
 def default_model():
     """The model named by the environment, matching build_client's selection."""
-    return os.getenv("LLM_MODEL") or os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-v4-pro")
+    return os.getenv("LLM_MODEL") or "deepseek/deepseek-v4-pro"
 
 
 def strip_reasoning(messages):

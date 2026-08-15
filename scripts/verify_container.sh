@@ -14,10 +14,14 @@ VERIFY_STUB_PORT="${VERIFY_STUB_PORT:-8199}"
 # container traffic is unaffected and portable across hosts either way.
 export LLM_BASE_URL="http://verify-stub:${VERIFY_STUB_PORT}/v1"
 export LLM_API_KEY=""
+# Declared streams do not follow LLM_BASE_URL: they forward to a fixed
+# stream upstream (OpenRouter in operation). Aim that at the stub too, so
+# the stream round-trip below stays offline.
+export STREAM_UPSTREAM_URL="http://verify-stub:${VERIFY_STUB_PORT}/v1"
 # The stream-console check below declares a stream that names "stream-model";
-# the recorder rejects any declared model not on its allow-list, so this run's
-# recorder must permit that identifier.
-export STREAM_MODEL_ALLOW="stream-model"
+# the recorder rejects any declared model not on its allow-lists, so this
+# run's recorder must permit that identifier.
+export STREAM_MODEL_ALLOW_TEXT="stream-model"
 AURORA_VERIFY_PROJECT="aurora_verify_$$"
 export COMPOSE_PROJECT_NAME="$AURORA_VERIFY_PROJECT"
 STUB_CONTAINER="verify-stub_$$"
@@ -28,10 +32,11 @@ STUB_CONTAINER="verify-stub_$$"
 VERIFY_BUILD_DIR="$(mktemp -d)"
 export AURORA_BUILD_DIR="$VERIFY_BUILD_DIR"
 
-# Host ports for this run's stage, so verification can run beside a live
-# stack that already holds 8091/8092.
+# Host ports for this run's stage and viewer, so verification can run
+# beside a live stack that already holds 8090/8091/8092.
 export STAGE_STREAM_PORT="${VERIFY_STAGE_STREAM_PORT:-8191}"
 export STAGE_CONSOLE_PORT="${VERIFY_STAGE_CONSOLE_PORT:-8192}"
+export VIEWER_HOST_PORT="${VERIFY_VIEWER_PORT:-8190}"
 
 cleanup() {
   # The stub container must be detached before the network it sits on can be

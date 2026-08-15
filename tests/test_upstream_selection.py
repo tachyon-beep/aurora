@@ -12,8 +12,8 @@ def clean_env(monkeypatch):
         "LLM_API_KEY",
         "LLM_MODEL",
         "OPENROUTER_API_KEY",
-        "OPENROUTER_MODEL",
         "OPENROUTER_BASE_URL",
+        "STREAM_UPSTREAM_URL",
     ):
         monkeypatch.delenv(var, raising=False)
     # An empty value selects the direct upstream, which is what the existing
@@ -54,6 +54,42 @@ def test_proxy_key_empty_for_no_auth_local_server(clean_env):
     assert proxy.upstream_api_key() == ""
 
 
+def test_stream_upstream_defaults_to_openrouter(clean_env):
+    assert proxy.stream_upstream_url() == "https://openrouter.ai/api/v1/chat/completions"
+
+
+def test_stream_upstream_ignores_llm_base_url(clean_env):
+    clean_env.setenv("LLM_BASE_URL", "http://host.docker.internal:5000/v1")
+    assert proxy.stream_upstream_url() == "https://openrouter.ai/api/v1/chat/completions"
+
+
+def test_stream_upstream_override_reaims_declared_streams(clean_env):
+    # The verify harness aims declared streams at its stub with this variable;
+    # it is not an operator-facing knob.
+    clean_env.setenv("STREAM_UPSTREAM_URL", "http://verify-stub:8199/v1/")
+    assert proxy.stream_upstream_url() == "http://verify-stub:8199/v1/chat/completions"
+
+
+def test_upstream_for_core_follows_the_configured_upstream(clean_env):
+    clean_env.setenv("LLM_BASE_URL", "http://host.docker.internal:5000/v1")
+    clean_env.setenv("LLM_API_KEY", "sk-local-key")
+    clean_env.setenv("OPENROUTER_API_KEY", "sk-or")
+    assert proxy.upstream_for("core") == (
+        "http://host.docker.internal:5000/v1/chat/completions",
+        "sk-local-key",
+    )
+
+
+def test_upstream_for_streams_pins_openrouter_and_its_key(clean_env):
+    clean_env.setenv("LLM_BASE_URL", "http://host.docker.internal:5000/v1")
+    clean_env.setenv("LLM_API_KEY", "sk-local-key")
+    clean_env.setenv("OPENROUTER_API_KEY", "sk-or")
+    assert proxy.upstream_for("aux") == (
+        "https://openrouter.ai/api/v1/chat/completions",
+        "sk-or",
+    )
+
+
 def test_chassis_requires_a_key_without_llm_base_url(clean_env):
     with pytest.raises(SystemExit):
         chassis.build_client()
@@ -61,7 +97,7 @@ def test_chassis_requires_a_key_without_llm_base_url(clean_env):
 
 def test_chassis_openrouter_mode(clean_env):
     clean_env.setenv("OPENROUTER_API_KEY", "sk-real")
-    clean_env.setenv("OPENROUTER_MODEL", "some/model")
+    clean_env.setenv("LLM_MODEL", "some/model")
     client, model = chassis.build_client()
     assert model == "some/model"
     assert str(client.base_url).rstrip("/") == "https://openrouter.ai/api/v1"
@@ -75,12 +111,10 @@ def test_chassis_llm_mode_without_key(clean_env):
     assert str(client.base_url).rstrip("/") == "http://localhost:5000/v1"
 
 
-def test_chassis_llm_model_takes_precedence(clean_env):
+def test_chassis_model_defaults_when_llm_model_is_unset(clean_env):
     clean_env.setenv("LLM_BASE_URL", "http://localhost:5000/v1")
-    clean_env.setenv("LLM_MODEL", "local-model")
-    clean_env.setenv("OPENROUTER_MODEL", "some/model")
     _, model = chassis.build_client()
-    assert model == "local-model"
+    assert model == "deepseek/deepseek-v4-pro"
 
 
 def test_unset_socket_path_selects_socket_mode(clean_env, tmp_path, monkeypatch):
@@ -98,7 +132,7 @@ def test_present_socket_builds_a_uds_client(clean_env, tmp_path):
     path = tmp_path / "core.sock"
     path.write_bytes(b"")
     clean_env.setenv("OPENROUTER_API_KEY", "sk-real")
-    clean_env.setenv("OPENROUTER_MODEL", "some/model")
+    clean_env.setenv("LLM_MODEL", "some/model")
     clean_env.setenv("LLM_SOCKET_PATH", str(path))
 
     client, model = chassis.build_client()

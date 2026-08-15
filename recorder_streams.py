@@ -18,7 +18,7 @@ REPORTED_NAME_CAP = 80
 NAME_PATTERN = re.compile(r"\A[a-z0-9][a-z0-9_-]{0,31}\Z")
 RESERVED_NAMES = ("core",)
 COMPOSED_FIELDS = ("model", "reasoning_effort", "temperature", "top_p", "max_tokens")
-REASONING_EFFORT_LEVELS = ("none", "low", "medium", "high")
+REASONING_EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high")
 DEFAULT_REASONING_ALLOWANCE = 8192
 
 
@@ -91,7 +91,7 @@ def validate_declaration(name, declaration):
         settings["model"] = model
     if "reasoning_effort" in declaration:
         if declaration["reasoning_effort"] not in REASONING_EFFORT_LEVELS:
-            return None, "reasoning_effort must be one of none, low, medium, high"
+            return None, "reasoning_effort must be one of none, minimal, low, medium, high"
         settings["reasoning_effort"] = declaration["reasoning_effort"]
     if "temperature" in declaration:
         if not _number(declaration["temperature"], 0, 2):
@@ -113,10 +113,12 @@ def evaluate_console(declarations, enabled):
     """Split raw declarations into accepted settings and rejection reasons.
 
     When enabled is False every declaration is rejected with
-    "streams are not enabled", ahead of any other check. Otherwise
-    declarations are considered in file order; those past MAX_STREAMS are
-    rejected. Reported names are capped so a junk key cannot bloat the state
-    file.
+    "streams are not enabled", ahead of any other check. When the stream
+    upstream's key is absent every declaration is rejected with "streams are
+    not available": a served socket would only relay authentication failures.
+    Otherwise declarations are considered in file order; those past
+    MAX_STREAMS are rejected. Reported names are capped so a junk key cannot
+    bloat the state file.
     """
     accepted = {}
     rejected = {}
@@ -124,6 +126,9 @@ def evaluate_console(declarations, enabled):
         reported = (name if isinstance(name, str) else str(name))[:REPORTED_NAME_CAP]
         if not enabled:
             rejected[reported] = "streams are not enabled"
+            continue
+        if not stream_credential_present():
+            rejected[reported] = "streams are not available"
             continue
         if len(accepted) >= MAX_STREAMS:
             rejected[reported] = "stream limit reached"
@@ -136,17 +141,49 @@ def evaluate_console(declarations, enabled):
     return accepted, rejected
 
 
+def _split_models(name):
+    raw = os.environ.get(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def stream_credential_present():
+    """True when the recorder holds the key its stream upstream requires.
+
+    Declared streams forward to a fixed upstream with its own key, separate
+    from core.sock's configured upstream. Without that key no stream can be
+    served, so declarations are rejected and the permitted-model list is
+    empty rather than published as usable.
+    """
+    return bool(os.environ.get("OPENROUTER_API_KEY", "").strip())
+
+
 def permitted_models():
     """The models a declaration may set, from the environment.
 
-    STREAM_MODEL_ALLOW is a comma-separated list of model identifiers.
-    Unset or empty permits none: a declaration that sets model is rejected,
-    and requests on every socket keep the model field they were sent with.
-    The recorder holds no default-model knowledge of its own, so there is
-    nothing to fall back to.
+    STREAM_MODEL_ALLOW_TEXT and STREAM_MODEL_ALLOW_VISION are comma-separated
+    lists of model identifiers; their union is the permitted set. Both unset
+    or empty permits none: a declaration that sets model is rejected, and
+    requests on every socket keep the model field they were sent with. The
+    recorder holds no default-model knowledge of its own, so there is nothing
+    to fall back to. Without the stream upstream's key the permitted set is
+    empty regardless of the lists.
     """
-    raw = os.environ.get("STREAM_MODEL_ALLOW", "")
-    return [item.strip() for item in raw.split(",") if item.strip()]
+    if not stream_credential_present():
+        return []
+    merged = []
+    for item in _split_models("STREAM_MODEL_ALLOW_TEXT") + _split_models(
+        "STREAM_MODEL_ALLOW_VISION"
+    ):
+        if item not in merged:
+            merged.append(item)
+    return merged
+
+
+def model_catalog():
+    """The models.json entries: each permitted model, marked with whether it
+    accepts image content in messages (membership in the vision list)."""
+    vision = _split_models("STREAM_MODEL_ALLOW_VISION")
+    return [{"id": item, "image_input": item in vision} for item in permitted_models()]
 
 
 def stream_limit_max():
@@ -256,6 +293,10 @@ README_TEXT = """the sockets in this directory are model endpoints. each accepts
 
 core.sock is always present and forwards requests unmodified.
 
+core.sock and the declared sockets are served by different upstream
+endpoints: a model identifier accepted on one may not be accepted on the
+other.
+
 additional sockets appear when a declaration in /llm/console/console.json is
 accepted. that file has two fields:
   enable_streams: boolean
@@ -266,7 +307,7 @@ a declaration is not served unless enable_streams is true.
 each accepted declaration is served at <name>.sock. configuration fields:
   budget: integer, requests allowed per hour on that socket
   model: string
-  reasoning_effort: one of none, low, medium, high
+  reasoning_effort: one of none, minimal, low, medium, high
   temperature: number from 0 to 2
   top_p: number from 0 to 1
   max_tokens: positive integer. it bounds the response; reasoning does not
@@ -275,7 +316,8 @@ each accepted declaration is served at <name>.sock. configuration fields:
 declared values replace the corresponding fields of each request on that
 socket. the current sockets, their settings, and their use are in
 streams.json. the model identifiers a declaration may set are listed in
-models.json.
+models.json; each entry states whether that model accepts image content
+in messages.
 """
 
 
@@ -317,7 +359,8 @@ def write_readme(sock_dir):
 def write_models(sock_dir):
     """Write the permitted-model list beside streams.json.
 
-    The document carries only the identifiers a declaration may set. It is
+    The document carries the identifiers a declaration may set, each marked
+    with whether the model accepts image content in messages. It is
     replaced via a rename, and only when its content differs, so the poll
     loop can call this every cycle: the file exists from startup and changes
     only when the permitted list does. The unchanged path also removes any
@@ -326,7 +369,7 @@ def write_models(sock_dir):
     """
     path = os.path.join(sock_dir, "models.json")
     tmp = path + ".tmp"
-    document = {"models": permitted_models()}
+    document = {"models": model_catalog()}
     try:
         with open(path, "r", encoding="utf-8") as f:
             if json.load(f) == document:

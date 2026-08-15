@@ -51,21 +51,29 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
    - The **agent** has no network interface at all (`network_mode: none`): one loopback device and
      an empty routing table. It reaches the model only through the recorder, over a unix domain
      socket whose directory it mounts read-only, so it can connect but cannot unlink or shadow it.
-   - **No real credential is ever reachable by the agent.** The upstream API key lives only in the
-     recorder, which injects it; the agent runs with a dummy key. This is the invariant — not the
+   - **No real credential is ever reachable by the agent.** Both upstream API keys live only in the
+     recorder, which injects them; the agent runs with a dummy key. This is the invariant — not the
      number of keys in the system. Every channel the agent has to a credentialed service is closed
      by its own guarantee, not by the absence of a channel — so when you add a channel, state which
      guarantee closes it. Today: every **recorder socket** exposes exactly one route
-     (`POST /api/v1/chat/completions`); `core.sock` forwards its body upstream verbatim, and an
-     agent-declared stream socket replaces a closed set of body fields (model, reasoning_effort,
-     temperature, top_p, max_tokens) with the agent's own declared values before forwarding — a
-     declared model must be an exact member of the operator-side `STREAM_MODEL_ALLOW` list (unset
-     or empty permits none: declarations may not set model at all, since the recorder holds no
-     default-model knowledge, and requests keep the model field they were sent with), and the
-     permitted list is published as `/llm/sock/models.json`; a composed max_tokens additionally
+     (`POST /api/v1/chat/completions`), but the two socket kinds forward to different upstreams:
+     `core.sock` (the main pump) forwards its body verbatim to the operator-configured upstream
+     (`LLM_BASE_URL` + `LLM_API_KEY`, else OpenRouter), while every **agent-declared stream
+     socket** forwards to OpenRouter with the recorder's `OPENROUTER_API_KEY`, never to
+     `LLM_BASE_URL` (`STREAM_UPSTREAM_URL` re-aims that solely for the offline verify harness).
+     Without the OpenRouter key, declarations are rejected ("streams are not available") and
+     `models.json` publishes an empty list, so no socket exists whose requests could only relay
+     authentication failures. A declared stream replaces a closed set of body fields (model,
+     reasoning_effort, temperature, top_p, max_tokens) with the agent's own declared values
+     before forwarding — a declared model must be an exact member of the union of the
+     operator-side `STREAM_MODEL_ALLOW_TEXT` and `STREAM_MODEL_ALLOW_VISION` lists (OpenRouter
+     identifiers; both unset or empty permits none: declarations may not set model at all, since
+     the recorder holds no default-model knowledge, and requests keep the model field they were
+     sent with), and the permitted set is published as `/llm/sock/models.json`, each entry marked
+     `image_input` by membership in the vision list; a composed max_tokens additionally
      gains the operator's `STREAM_REASONING_ALLOWANCE` when reasoning is on, so the declared
      value bounds the response rather than being consumed by reasoning (the upstream counts
-     reasoning inside max_tokens). The
+     reasoning inside max_tokens). Each
      key is protected by injection at the recorder and by the header-free logging described next,
      not by any socket's shape. The shared **`/diode` volume** carries a closed command vocabulary;
      the agent can cause spend through a gated command (e.g. the diode's speech credential) but no
@@ -83,7 +91,7 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      invariant 2.
      Any further credential must be reachable through none of these, and must never be mounted,
      copied, or named into the agent image.
-   - The **proxy logs request/response bodies, never headers**, so the key never enters the transcript.
+   - The **proxy logs request/response bodies, never headers**, so no key ever enters the transcript.
      The recorder also appends per-request `open`/`close`/usage events and socket lifecycle events
      (no message content, no headers) to `events.jsonl` on the transcripts volume; the stage reads
      them for its stream lanes.

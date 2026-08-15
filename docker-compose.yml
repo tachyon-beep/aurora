@@ -12,11 +12,19 @@ services:
       # so a declared cap bounds the response rather than being consumed by
       # reasoning. Empty keeps the default; 0 disables the addition.
       STREAM_REASONING_ALLOWANCE: ${STREAM_REASONING_ALLOWANCE:-}
-      # Comma-separated model identifiers a declared stream may set. Empty
-      # permits none: a declaration that names a model is rejected, and
-      # requests keep the model they were sent with. The permitted list is
-      # published to the agent as /llm/sock/models.json.
-      STREAM_MODEL_ALLOW: ${STREAM_MODEL_ALLOW:-}
+      # Comma-separated OpenRouter model identifiers a declared stream may
+      # set, split by modality; the union is the permitted set, published to
+      # the agent as /llm/sock/models.json with a per-entry image_input flag.
+      # Both empty permits none: a declaration that names a model is
+      # rejected, and requests keep the model they were sent with. Declared
+      # streams always forward to OpenRouter with OPENROUTER_API_KEY; only
+      # core.sock follows LLM_BASE_URL.
+      STREAM_MODEL_ALLOW_TEXT: ${STREAM_MODEL_ALLOW_TEXT:-}
+      STREAM_MODEL_ALLOW_VISION: ${STREAM_MODEL_ALLOW_VISION:-}
+      # Re-aims the declared streams' upstream; only the verification
+      # harness sets this, to point them at its stub. Leave unset in
+      # normal operation.
+      STREAM_UPSTREAM_URL: ${STREAM_UPSTREAM_URL:-}
       TRANSCRIPT_DIR: /transcripts
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -38,7 +46,6 @@ services:
     depends_on: [recorder]
     environment:
       OPENROUTER_API_KEY: "sk-dummy"
-      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-deepseek/deepseek-v4-pro}
       LLM_MODEL: ${LLM_MODEL:-}
       CONTEXT_WINDOW_TOKENS: ${CONTEXT_WINDOW_TOKENS:-120000}
       REASONING_EFFORT: ${REASONING_EFFORT:-}
@@ -173,7 +180,9 @@ services:
     volumes:
       - transcripts:/transcripts:ro
     ports:
-      - "127.0.0.1:8090:8090"
+      # Host port only; in-container the viewer always serves 8090. The
+      # verify harness overrides this so its stack can run beside a live one.
+      - "127.0.0.1:${VIEWER_HOST_PORT:-8090}:8090"
     read_only: true
     tmpfs:
       - /tmp

@@ -132,21 +132,31 @@ def test_env_example_documents_the_stream_ceiling():
     assert "STREAM_HOURLY_MAX" in text
 
 
-def test_env_example_documents_the_model_allow_list_and_diode_ceiling():
+def test_env_example_documents_the_model_allow_lists_and_diode_ceiling():
     text = Path(".env.example").read_text(encoding="utf-8")
-    assert "STREAM_MODEL_ALLOW" in text
+    assert "STREAM_MODEL_ALLOW_TEXT" in text
+    assert "STREAM_MODEL_ALLOW_VISION" in text
     assert "DIODE_HOURLY_MAX" in text
 
 
 def test_verifier_permits_the_stream_model_it_declares():
     # The verifier's console declaration names "stream-model"; without this
-    # export the recorder's allow-list (empty by default) would reject the
+    # export the recorder's allow-lists (empty by default) would reject the
     # declaration and the aux.sock wait would time out.
     text = _script()
-    assert 'export STREAM_MODEL_ALLOW="stream-model"' in text
-    assert text.index('export STREAM_MODEL_ALLOW="stream-model"') < text.index(
+    assert 'export STREAM_MODEL_ALLOW_TEXT="stream-model"' in text
+    assert text.index('export STREAM_MODEL_ALLOW_TEXT="stream-model"') < text.index(
         "docker compose create"
     )
+
+
+def test_verifier_aims_declared_streams_at_the_stub():
+    # Declared streams do not follow LLM_BASE_URL, so the verifier must
+    # re-aim their fixed upstream at its stub or the stream round-trip
+    # would leave the machine.
+    text = _script()
+    assert 'export STREAM_UPSTREAM_URL="http://verify-stub:${VERIFY_STUB_PORT}/v1"' in text
+    assert text.index("export STREAM_UPSTREAM_URL=") < text.index("docker compose create")
 
 
 def test_verifier_checks_the_event_log_and_lanes():

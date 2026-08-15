@@ -9,6 +9,13 @@ import recorder_streams
 from stage import data as stage_data
 
 
+@pytest.fixture(autouse=True)
+def stream_env(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-stream-test")
+    monkeypatch.delenv("STREAM_UPSTREAM_URL", raising=False)
+    return monkeypatch
+
+
 @pytest.fixture
 def transcripts(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "TRANSCRIPT_DIR", str(tmp_path))

@@ -10,6 +10,24 @@ import proxy
 import recorder_streams
 
 
+@pytest.fixture(autouse=True)
+def stream_env(monkeypatch):
+    """A recorder with its stream credential present and no models permitted.
+
+    Tests that exercise the credential gate delete the key again themselves.
+    """
+    for var in (
+        "STREAM_MODEL_ALLOW_TEXT",
+        "STREAM_MODEL_ALLOW_VISION",
+        "STREAM_UPSTREAM_URL",
+        "LLM_BASE_URL",
+        "LLM_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-stream-test")
+    return monkeypatch
+
+
 @pytest.fixture
 def transcripts(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "TRANSCRIPT_DIR", str(tmp_path))
@@ -287,7 +305,7 @@ def test_poll_once_reports_rejections(tmp_path, transcripts, registry):
 def test_a_settings_edit_applies_without_a_rebind(
     tmp_path, transcripts, registry, fake_upstream, monkeypatch
 ):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "one,two")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "one,two")
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     servers = {}
@@ -314,18 +332,24 @@ def test_a_settings_edit_applies_without_a_rebind(
 
 
 def test_poll_once_publishes_the_permitted_model_list(tmp_path, transcripts, registry, monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a/b")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a/b")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_VISION", "v/x")
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     proxy.poll_once(registry, {}, str(tmp_path), str(console), str(state))
     document = json.loads((tmp_path / "models.json").read_text(encoding="utf-8"))
-    assert document == {"models": ["a/b"]}
+    assert document == {
+        "models": [
+            {"id": "a/b", "image_input": False},
+            {"id": "v/x", "image_input": True},
+        ]
+    }
 
 
 def test_poll_once_rejects_a_model_outside_the_allow_list(
     tmp_path, transcripts, registry, monkeypatch
 ):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "permitted")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "permitted")
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     servers = {}
@@ -341,7 +365,7 @@ def test_poll_once_rejects_a_model_outside_the_allow_list(
 
 
 def test_core_forwards_any_model_regardless_of_the_allow_list(server, transcripts, monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "only-this")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "only-this")
     seen = {}
     real_request = proxy.urllib.request.Request
 
@@ -354,6 +378,69 @@ def test_core_forwards_any_model_regardless_of_the_allow_list(server, transcript
     response = _post(server, payload)
     assert response.status_code == 200
     assert json.loads(seen["data"].decode("utf-8")) == payload
+
+
+def test_stream_requests_forward_to_the_stream_upstream(stream_server, transcripts, monkeypatch):
+    # The pump's upstream must not attract declared-stream traffic: streams
+    # forward to the stream upstream with the recorder's own key even when
+    # LLM_BASE_URL points the core socket elsewhere.
+    monkeypatch.setenv("LLM_BASE_URL", "http://pump.local/v1")
+    monkeypatch.setenv("LLM_API_KEY", "sk-pump")
+    monkeypatch.setenv("STREAM_UPSTREAM_URL", "http://streams.local/v1")
+    seen = {}
+    real_request = proxy.urllib.request.Request
+
+    def capture(url, data=None, headers=None, method=None):
+        seen["url"] = url
+        seen["headers"] = headers
+        return real_request(url, data=data, headers=headers, method=method)
+
+    monkeypatch.setattr(proxy.urllib.request, "Request", capture)
+    response = _post(stream_server, {"model": "sent", "messages": []})
+    assert response.status_code == 200
+    assert seen["url"] == "http://streams.local/v1/chat/completions"
+    assert seen["headers"]["Authorization"] == "Bearer sk-stream-test"
+
+
+def test_core_requests_keep_the_configured_upstream(server, transcripts, monkeypatch):
+    monkeypatch.setenv("LLM_BASE_URL", "http://pump.local/v1")
+    monkeypatch.setenv("LLM_API_KEY", "sk-pump")
+    monkeypatch.setenv("STREAM_UPSTREAM_URL", "http://streams.local/v1")
+    seen = {}
+    real_request = proxy.urllib.request.Request
+
+    def capture(url, data=None, headers=None, method=None):
+        seen["url"] = url
+        seen["headers"] = headers
+        return real_request(url, data=data, headers=headers, method=method)
+
+    monkeypatch.setattr(proxy.urllib.request, "Request", capture)
+    response = _post(server, {"model": "m", "messages": []})
+    assert response.status_code == 200
+    assert seen["url"] == "http://pump.local/v1/chat/completions"
+    assert seen["headers"]["Authorization"] == "Bearer sk-pump"
+
+
+def test_poll_once_rejects_declarations_without_the_stream_credential(
+    tmp_path, transcripts, registry, monkeypatch
+):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    console = tmp_path / "console.json"
+    state = tmp_path / "streams.json"
+    servers = {}
+    console.write_text(
+        json.dumps({"enable_streams": True, "streams": {"aux": {}}}), encoding="utf-8"
+    )
+    proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+    assert servers == {}
+    assert not (tmp_path / "aux.sock").exists()
+    document = json.loads(state.read_text(encoding="utf-8"))
+    assert document["streams"]["aux"] == {
+        "status": "rejected",
+        "reason": "streams are not available",
+    }
+    models = json.loads((tmp_path / "models.json").read_text(encoding="utf-8"))
+    assert models == {"models": []}
 
 
 def test_sweep_removes_only_unserved_sockets(tmp_path):

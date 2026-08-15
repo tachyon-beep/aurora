@@ -80,6 +80,15 @@ the conversation. The INC10 transcript becomes a regression fixture.
 | Model error | 400/404 whose message names the model | Retry once with the environment-default model (`LLM_MODEL`/`OPENROUTER_MODEL`); if that also fails, headshot protocol |
 | Invalid request | other 400 | One aggressive repair pass (rebuild send view, drop `reasoning_content` fields, re-run orphan repair), retry once; still failing, headshot protocol |
 
+> **Amended 2026-08-16.** `OPENROUTER_MODEL` is retired; the environment default is `LLM_MODEL`
+> (falling back to `deepseek/deepseek-v4-pro`). The same change split the recorder's upstreams:
+> `core.sock` follows `LLM_BASE_URL` as before, while declared stream sockets always forward to
+> OpenRouter with the recorder's `OPENROUTER_API_KEY` (`STREAM_UPSTREAM_URL` re-aims them solely
+> for the offline verify harness), and the allow list became `STREAM_MODEL_ALLOW_TEXT` /
+> `STREAM_MODEL_ALLOW_VISION` — union permitted, vision entries marked `image_input` in
+> `models.json`, empty-permits-none unchanged, and no declarations served at all without the
+> OpenRouter key. Declared `reasoning_effort` gained `minimal`.
+
 ### Headshot protocol (dying loudly)
 
 When a fault is unrecoverable, the chassis:

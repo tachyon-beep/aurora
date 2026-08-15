@@ -12,6 +12,18 @@ def _write_console(tmp_path, data):
     return str(path)
 
 
+@pytest.fixture(autouse=True)
+def stream_env(monkeypatch):
+    """A recorder with its stream credential present and no models permitted.
+
+    Tests that exercise the credential gate delete the key again themselves.
+    """
+    for var in ("STREAM_MODEL_ALLOW_TEXT", "STREAM_MODEL_ALLOW_VISION", "STREAM_UPSTREAM_URL"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-stream-test")
+    return monkeypatch
+
+
 def test_missing_console_is_empty_not_an_error(tmp_path):
     declarations, enabled, error = rs.load_console(str(tmp_path / "absent.json"))
     assert declarations == {}
@@ -104,7 +116,7 @@ def test_a_minimal_declaration_is_accepted_with_no_settings():
 
 
 def test_every_field_is_accepted_at_its_boundaries(monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "m")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
     settings, reason = rs.validate_declaration(
         "aux",
         {
@@ -156,54 +168,87 @@ def test_non_object_declaration_is_rejected():
 
 
 def test_permitted_models_parses_the_environment(monkeypatch):
-    monkeypatch.delenv("STREAM_MODEL_ALLOW", raising=False)
     assert rs.permitted_models() == []
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "")
     assert rs.permitted_models() == []
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a/b")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a/b")
     assert rs.permitted_models() == ["a/b"]
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", " a/b , c-d ,, ")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", " a/b , c-d ,, ")
     assert rs.permitted_models() == ["a/b", "c-d"]
 
 
-def test_a_declared_model_is_rejected_when_none_are_permitted(monkeypatch):
-    monkeypatch.delenv("STREAM_MODEL_ALLOW", raising=False)
+def test_permitted_models_unions_the_text_and_vision_lists(monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a/b,c")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_VISION", "v/x, a/b")
+    assert rs.permitted_models() == ["a/b", "c", "v/x"]
+
+
+def test_permitted_models_is_empty_without_the_stream_credential(monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a/b")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_VISION", "v/x")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert rs.permitted_models() == []
+    assert rs.model_catalog() == []
+
+
+def test_model_catalog_marks_vision_entries(monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a/b")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_VISION", "v/x")
+    assert rs.model_catalog() == [
+        {"id": "a/b", "image_input": False},
+        {"id": "v/x", "image_input": True},
+    ]
+
+
+def test_a_declared_model_is_rejected_when_none_are_permitted():
     settings, reason = rs.validate_declaration("aux", {"model": "any"})
     assert settings is None
     assert reason == "model not permitted"
 
 
-def test_a_declaration_without_a_model_needs_no_allow_list(monkeypatch):
-    monkeypatch.delenv("STREAM_MODEL_ALLOW", raising=False)
+def test_a_declaration_without_a_model_needs_no_allow_list():
     settings, reason = rs.validate_declaration("aux", {"budget": 2, "temperature": 1})
     assert reason is None
     assert settings == {"budget": 2, "temperature": 1}
 
 
 def test_a_permitted_model_is_accepted(monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a/b,c")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a/b,c")
     settings, reason = rs.validate_declaration("aux", {"model": "a/b", "budget": 1})
     assert reason is None
     assert settings == {"model": "a/b", "budget": 1}
 
 
+def test_a_vision_model_is_accepted_like_any_other(monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_VISION", "v/x")
+    settings, reason = rs.validate_declaration("aux", {"model": "v/x"})
+    assert reason is None
+    assert settings == {"model": "v/x"}
+
+
 @pytest.mark.parametrize("model", ["a/B", " a/b", "a/b ", "d"])
 def test_a_model_outside_the_list_rejects_the_whole_declaration(monkeypatch, model):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a/b,c")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a/b,c")
     settings, reason = rs.validate_declaration("aux", {"model": model, "budget": 1})
     assert settings is None
     assert reason == "model not permitted"
 
 
 def test_model_shape_errors_precede_the_allow_list(monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a")
     settings, reason = rs.validate_declaration("aux", {"model": ""})
     assert settings is None
     assert "model must be a non-empty string" in reason
 
 
+def test_minimal_reasoning_effort_is_declarable():
+    settings, reason = rs.validate_declaration("aux", {"reasoning_effort": "minimal"})
+    assert reason is None
+    assert settings == {"reasoning_effort": "minimal"}
+
+
 def test_a_model_rejection_is_reported_like_other_validation_errors(monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a")
     accepted, rejected = rs.evaluate_console({"aux": {"model": "b"}, "ok": {"model": "a"}}, True)
     assert list(accepted) == ["ok"]
     assert rejected == {"aux": "model not permitted"}
@@ -216,6 +261,23 @@ def test_evaluate_console_splits_in_file_order():
     accepted, rejected = rs.evaluate_console({"aux": {}, "Bad": {}, "second": {"budget": 3}}, True)
     assert list(accepted) == ["aux", "second"]
     assert rejected == {"Bad": "invalid stream name"}
+
+
+def test_every_declaration_is_rejected_without_the_stream_credential(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    accepted, rejected = rs.evaluate_console({"aux": {}, "other": {"budget": 1}}, True)
+    assert accepted == {}
+    assert rejected == {
+        "aux": "streams are not available",
+        "other": "streams are not available",
+    }
+
+
+def test_the_disabled_gate_reports_ahead_of_the_missing_credential(monkeypatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    accepted, rejected = rs.evaluate_console({"aux": {}}, False)
+    assert accepted == {}
+    assert rejected == {"aux": "streams are not enabled"}
 
 
 def test_evaluate_console_enforces_the_stream_cap():
@@ -389,32 +451,51 @@ def test_write_state_is_atomic_and_readable(tmp_path):
 
 
 def test_write_models_lists_the_permitted_identifiers(tmp_path, monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a/b, c")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a/b, c")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_VISION", "v/x")
     assert rs.write_models(str(tmp_path)) is True
     document = json.loads((tmp_path / "models.json").read_text(encoding="utf-8"))
-    assert document == {"models": ["a/b", "c"]}
+    assert document == {
+        "models": [
+            {"id": "a/b", "image_input": False},
+            {"id": "c", "image_input": False},
+            {"id": "v/x", "image_input": True},
+        ]
+    }
     assert list(tmp_path.iterdir()) == [tmp_path / "models.json"]
 
 
-def test_write_models_is_empty_when_none_are_permitted(tmp_path, monkeypatch):
-    monkeypatch.delenv("STREAM_MODEL_ALLOW", raising=False)
+def test_write_models_is_empty_when_none_are_permitted(tmp_path):
+    assert rs.write_models(str(tmp_path)) is True
+    document = json.loads((tmp_path / "models.json").read_text(encoding="utf-8"))
+    assert document == {"models": []}
+
+
+def test_write_models_is_empty_without_the_stream_credential(tmp_path, monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a")
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     assert rs.write_models(str(tmp_path)) is True
     document = json.loads((tmp_path / "models.json").read_text(encoding="utf-8"))
     assert document == {"models": []}
 
 
 def test_write_models_rewrites_only_on_change(tmp_path, monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a")
     assert rs.write_models(str(tmp_path)) is True
     assert rs.write_models(str(tmp_path)) is False
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a,b")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a,b")
     assert rs.write_models(str(tmp_path)) is True
     document = json.loads((tmp_path / "models.json").read_text(encoding="utf-8"))
-    assert document == {"models": ["a", "b"]}
+    assert document == {
+        "models": [
+            {"id": "a", "image_input": False},
+            {"id": "b", "image_input": False},
+        ]
+    }
 
 
 def test_write_models_removes_a_stray_temporary_on_the_unchanged_path(tmp_path, monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a")
     assert rs.write_models(str(tmp_path)) is True
     (tmp_path / "models.json.tmp").write_text("{}", encoding="utf-8")
     assert rs.write_models(str(tmp_path)) is False
@@ -422,10 +503,12 @@ def test_write_models_removes_a_stray_temporary_on_the_unchanged_path(tmp_path, 
 
 
 def test_write_models_replaces_a_file_it_cannot_read(tmp_path, monkeypatch):
-    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a")
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "a")
     (tmp_path / "models.json").write_text("not json", encoding="utf-8")
     assert rs.write_models(str(tmp_path)) is True
-    assert json.loads((tmp_path / "models.json").read_text(encoding="utf-8")) == {"models": ["a"]}
+    assert json.loads((tmp_path / "models.json").read_text(encoding="utf-8")) == {
+        "models": [{"id": "a", "image_input": False}]
+    }
 
 
 def test_readme_names_the_protocol_and_stays_affectless(tmp_path):

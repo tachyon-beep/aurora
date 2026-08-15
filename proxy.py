@@ -52,6 +52,31 @@ def upstream_api_key():
     return os.environ.get("OPENROUTER_API_KEY", "")
 
 
+def stream_upstream_url():
+    """Return the chat-completions URL serving declared stream sockets.
+
+    Declared streams always forward to OpenRouter, independent of
+    LLM_BASE_URL, which governs only core.sock. STREAM_UPSTREAM_URL
+    overrides the target for the verification harness and tests; leave it
+    unset in normal operation.
+    """
+    base = os.environ.get("STREAM_UPSTREAM_URL", "").strip()
+    if base:
+        return base.rstrip("/") + "/chat/completions"
+    return OPENROUTER_URL
+
+
+def upstream_for(stream):
+    """Return the (url, api_key) pair a stream's requests forward to.
+
+    core.sock follows the configured upstream; every declared stream
+    forwards to the stream upstream with the recorder's OpenRouter key.
+    """
+    if stream == "core":
+        return upstream_url(), upstream_api_key()
+    return stream_upstream_url(), os.environ.get("OPENROUTER_API_KEY", "")
+
+
 def build_forward_headers(headers, api_key):
     """Build the headers forwarded upstream.
 
@@ -196,10 +221,11 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self._finish_local(stream, req_data, status_code, message)
             return
 
-        headers_to_forward = build_forward_headers(self.headers, upstream_api_key())
+        target_url, target_key = upstream_for(stream)
+        headers_to_forward = build_forward_headers(self.headers, target_key)
 
         req = urllib.request.Request(
-            upstream_url(),
+            target_url,
             data=req_body,
             headers=headers_to_forward,
             method="POST",
@@ -512,6 +538,7 @@ def main():
     print("=" * 60)
     print(f"Listening on:  {socket_path}")
     print(f"Forwarding to: {upstream_url()}")
+    print(f"Streams to:    {stream_upstream_url()}")
     print(f"Logging to:    {TRANSCRIPT_FILE}")
     print("-" * 60)
 

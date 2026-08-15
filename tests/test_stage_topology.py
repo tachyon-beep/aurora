@@ -125,12 +125,15 @@ def test_the_recorder_receives_the_operator_stream_ceiling():
     assert "STREAM_HOURLY_MAX: ${STREAM_HOURLY_MAX:-}" in recorder
 
 
-def test_the_recorder_receives_the_operator_model_allow_list():
+def test_the_recorder_receives_the_operator_model_allow_lists():
     text = _read("docker-compose.yml")
     recorder = _recorder_block(text)
-    assert "STREAM_MODEL_ALLOW: ${STREAM_MODEL_ALLOW:-}" in recorder
+    assert "STREAM_MODEL_ALLOW_TEXT: ${STREAM_MODEL_ALLOW_TEXT:-}" in recorder
+    assert "STREAM_MODEL_ALLOW_VISION: ${STREAM_MODEL_ALLOW_VISION:-}" in recorder
+    assert "STREAM_UPSTREAM_URL: ${STREAM_UPSTREAM_URL:-}" in recorder
     agent = _agent_block(text)
     assert "STREAM_MODEL_ALLOW" not in agent
+    assert "STREAM_UPSTREAM_URL" not in agent
 
 
 def test_the_diode_receives_the_operator_budget_ceiling():
