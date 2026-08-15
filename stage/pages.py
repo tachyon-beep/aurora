@@ -1464,8 +1464,19 @@ function playNextSpoken() {
   var mine = spokenCurrent;
   try {
     var p = a.play();
-    if (p && p.catch) p.catch(function () {
-      soundBlocked();
+    /* Both a refused autoplay and a load failure reject this promise (the
+       load failure also fires "error", handled below), so the rejection
+       reason has to be checked rather than assumed: only NotAllowedError is
+       an autoplay refusal, which is recoverable by asking the viewer to
+       click. A load failure (NotSupportedError, e.g. a file mid-write or one
+       that rotated away between snapshot and fetch) is not a permission
+       problem and offering sound would not fix it — revealing the button on
+       that path would plant a dead, unrecoverable control on the broadcast,
+       which has no pointer to hide it again. Gate on the positive condition
+       so an unrecognised rejection reason fails closed (button stays
+       hidden) rather than open. The queue still drains either way. */
+    if (p && p.catch) p.catch(function (e) {
+      if (e && e.name === "NotAllowedError") soundBlocked();
       if (mine === spokenCurrent) spokenAdvance();
     });
   } catch (e) { spokenAdvance(); }
@@ -1485,11 +1496,14 @@ function soundBlocked() {
   var b = $("sound-on");
   if (!b || !b.hidden) return;
   b.hidden = false;
-  b.addEventListener("click", function () {
-    b.hidden = true;
-    var a = $("speak-audio");
-    if (a) { try { a.play(); } catch (e) {} }
-  });
+  if (!b.__wired) {
+    b.__wired = true;
+    b.addEventListener("click", function () {
+      b.hidden = true;
+      var a = $("speak-audio");
+      if (a) { try { a.play(); } catch (e) {} }
+    });
+  }
 }
 (function () {
   var a = $("speak-audio");

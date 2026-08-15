@@ -261,6 +261,118 @@ def test_playback_queue_behaviour(tmp_path):
     assert out["future_played"] == 0
 
 
+SOUND_HARNESS = """
+var store = {};
+global.window = { localStorage: {
+  getItem: function (k) { return k in store ? store[k] : null; },
+  setItem: function (k, v) { store[k] = String(v); }
+}};
+var audio = {
+  src: "", listeners: {}, played: [], pending: null,
+  addEventListener: function (e, f) { (this.listeners[e] = this.listeners[e] || []).push(f); },
+  fire: function (e) { (this.listeners[e] || []).forEach(function (f) { f({ type: e }); }); },
+  play: function () {
+    audio.played.push(audio.src);
+    return { catch: function (fn) { audio.pending = fn; } };
+  }
+};
+var soundBtn = { hidden: true, __wired: false, clicks: [] };
+soundBtn.addEventListener = function (e, f) { if (e === "click") this.clicks.push(f); };
+var caption = { textContent: "", classList: { toggle: function () {} } };
+var other = { textContent: "", classList: { toggle: function () {} } };
+var NOW = 1000000;
+global.$ = function (id) {
+  if (id === "speak-audio") return audio;
+  if (id === "speak-caption") return caption;
+  if (id === "sound-on") return soundBtn;
+  return other;
+};
+global.clock = function () { return NOW; };
+global.norm = function (t) { return String(t == null ? "" : t).trim(); };
+global.setText = function (node, value) { node.textContent = value; };
+global.setClass = function () {};
+global.snap = null;
+function stamp(n) { return "2026081" + n + "_120000_000000.mp3"; }
+function entry(n, ageSeconds) {
+  return { name: stamp(n), epoch: NOW / 1000 - ageSeconds, text: "u" + n };
+}
+function reset() {
+  audio.played = []; audio.src = ""; audio.pending = null;
+  spokenQueue = []; spokenBusy = false; spokenCurrent = null;
+  soundBtn.hidden = true; soundBtn.__wired = false; soundBtn.clicks = [];
+}
+
+__BLOCK__
+
+var out = {};
+
+/* NotAllowedError is a refused autoplay: the recovery button is revealed,
+   and the queue still advances to the second utterance. */
+global.snap = { diode: { spoken: [entry(2, 1), entry(1, 2)] } };
+renderSpoken();
+audio.pending({ name: "NotAllowedError" });
+out.allowed_button_hidden = soundBtn.hidden;
+out.allowed_advanced_to = spokenCurrent && spokenCurrent.name;
+
+/* NotSupportedError is a load failure (a missing or mid-write file), not a
+   permission problem sound would fix. Revealing the button here would plant
+   a dead control on a broadcast with no pointer to hide it again, so it
+   must stay hidden -- but the queue must still drain either way. */
+reset();
+global.snap = { diode: { spoken: [entry(4, 1), entry(3, 2)] } };
+renderSpoken();
+audio.pending({ name: "NotSupportedError" });
+out.unsupported_button_hidden = soundBtn.hidden;
+out.unsupported_advanced_to = spokenCurrent && spokenCurrent.name;
+
+/* An unrecognised rejection reason fails closed: hidden stays hidden, and
+   the queue still drains. */
+reset();
+global.snap = { diode: { spoken: [entry(6, 1), entry(5, 2)] } };
+renderSpoken();
+audio.pending({});
+out.unrecognised_button_hidden = soundBtn.hidden;
+out.unrecognised_advanced_to = spokenCurrent && spokenCurrent.name;
+
+/* The click listener is wired once, not on every hidden->shown transition:
+   simulate two separate reveals (a click in between would set hidden back
+   to true, which is all soundBlocked's guard looks at) and confirm the
+   listener count does not grow past one. */
+soundBtn.hidden = true; soundBtn.clicks = []; soundBtn.__wired = false;
+soundBlocked();
+out.clicks_after_first_reveal = soundBtn.clicks.length;
+soundBtn.hidden = true;
+soundBlocked();
+out.clicks_after_second_reveal = soundBtn.clicks.length;
+
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_a_load_failure_never_reveals_sound_on_but_still_drains_the_queue(tmp_path):
+    """The .catch on a.play() runs for two different rejection reasons: a
+    refused autoplay (NotAllowedError) and a load failure (NotSupportedError,
+    e.g. a diode audio file mid-write or one that rotated away between
+    snapshot and fetch). A string-presence test cannot see which reasons the
+    handler discriminates between -- "soundBlocked" appears in the source
+    either way -- only running the rejection through the real handler with a
+    real reason object does. A version that called soundBlocked()
+    unconditionally would reveal the button on an OBS broadcast (no pointer,
+    no way to hide it again) whenever a spoken file failed to load; this
+    proves it does not, while still proving the queue drains on every
+    rejection reason, recognised or not."""
+    out = _run(SOUND_HARNESS.replace("__BLOCK__", _spoken_block()), tmp_path)
+    assert out["allowed_button_hidden"] is False
+    assert out["allowed_advanced_to"] == "20260812_120000_000000.mp3"
+    assert out["unsupported_button_hidden"] is True
+    assert out["unsupported_advanced_to"] == "20260814_120000_000000.mp3"
+    assert out["unrecognised_button_hidden"] is True
+    assert out["unrecognised_advanced_to"] == "20260816_120000_000000.mp3"
+    assert out["clicks_after_first_reveal"] == 1
+    assert out["clicks_after_second_reveal"] == 1
+
+
 LANES_HARNESS = """
 function makeNode(tag) {
   var n = {
