@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 import diode
 from stage import data
@@ -1157,3 +1158,81 @@ def test_later_refuses_to_defer_a_credentialed_command(tmp_path, monkeypatch):
     )
     assert text == "cannot defer: speak"
     assert not (tmp_path / "pending.json").exists()
+
+
+def test_parse_clone_arg_accepts_slug_and_optional_ref():
+    assert diode.parse_clone_arg("torvalds/linux") == ("torvalds", "linux", "HEAD")
+    assert diode.parse_clone_arg("rust-lang/rust v1.85.0") == ("rust-lang", "rust", "v1.85.0")
+    assert diode.parse_clone_arg("a/b feature/branch") == ("a", "b", "feature/branch")
+
+
+def test_parse_clone_arg_rejects_urls_traversal_and_flags():
+    for bad in (
+        "",
+        "linux",
+        "a/b/c",
+        "https://github.com/a/b",
+        "../etc/passwd",
+        "a/..",
+        "a/b ../ref",
+        "a/b ref..name",
+        "-flag/repo",
+        "a/-flag",
+        "a/b " + "r" * 300,
+    ):
+        assert diode.parse_clone_arg(bad) is None, bad
+
+
+def test_clone_command_is_gated():
+    assert "clone" not in diode.available_commands({})
+    assert "clone" in diode.available_commands({"enable_clone": True})
+
+
+def test_handle_clone_writes_inert_archive(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "_clone_request", lambda o, r, ref: (True, b"\x1f\x8b tarbytes"))
+    text, _ = diode.handle_command("clone alpha/beta", {"enable_clone": True}, [])
+    assert text.startswith("recorded as ")
+    assert text.endswith("(11 bytes)")
+    (name,) = [n for n in os.listdir(tmp_path / "output")]
+    assert name.endswith("_clone_alpha_beta.tar.gz")
+    assert (tmp_path / "output" / name).read_bytes() == b"\x1f\x8b tarbytes"
+
+
+def test_handle_clone_counts_against_fetch_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "_clone_request", lambda o, r, ref: (True, b"x"))
+    history = [time.time()]
+    text, history = diode.handle_command(
+        "clone alpha/beta", {"enable_clone": True, "fetch_budget": 1}, history
+    )
+    assert "rate" in text.lower() or "budget" in text.lower() or "allowed" in text.lower()
+    assert not (tmp_path / "output").exists() or not os.listdir(tmp_path / "output")
+
+
+def test_clone_request_refuses_oversized_archive(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, n):
+            return b"x" * n
+
+    class FakeOpener:
+        def open(self, req, timeout=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(diode, "_make_opener", lambda: FakeOpener())
+    monkeypatch.setattr(diode, "clone_max_bytes", lambda: 10)
+    ok, reason = diode._clone_request("a", "b", "HEAD")
+    assert ok is False
+    assert "exceeds 10 bytes" in reason
+
+
+def test_clone_refuses_to_be_deferred_only_if_credentialed():
+    # clone is not credentialed: it carries no key, so later may defer it and
+    # the gate, budget, and ceiling are re-evaluated at delivery.
+    assert not diode.COMMANDS["clone"].get("credentialed")
