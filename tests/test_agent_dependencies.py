@@ -36,6 +36,12 @@ EXPECTED_PACKAGES = [
     "more-itertools",
     "python-dateutil",
     "msgpack",
+    "z3-solver",
+    "tenacity",
+    "hy",
+    "jplephem",
+    "filigree",
+    "loomweave",
 ]
 
 
@@ -73,8 +79,9 @@ def test_dockerfile_installs_agent_dependency_manifest() -> None:
     instructions = _dockerfile_instructions()
     manifest_copy = "COPY requirements-agent.txt /tmp/requirements-agent.txt"
     manifest_install_run = (
-        "RUN pip install --no-cache-dir -r /tmp/requirements-agent.txt "
-        "&& rm /tmp/requirements-agent.txt"
+        "RUN pip install --no-cache-dir /tmp/wheels/*.whl "
+        "&& pip install --no-cache-dir -r /tmp/requirements-agent.txt "
+        "&& rm -rf /tmp/wheels /tmp/requirements-agent.txt"
     )
 
     manifest_copies = [

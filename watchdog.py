@@ -29,6 +29,7 @@ TERMINATED_FLAP_WINDOW_SECONDS = 600
 ENVIRONMENT_PAUSE_SECONDS = 60
 
 TELEMETRY_DIR = os.environ.get("TELEMETRY_DIR", "/telemetry")
+BUILD_DIR = os.environ.get("BUILD_DIR", "/build")
 MIRROR_INTERVAL_SECONDS = 5
 MIRROR_EXCLUDE = ("__pycache__", ".git")
 
@@ -105,6 +106,26 @@ def plan_recovery(ret, zero_exit_times, terminated_exit_times, failure_times, no
     failure_times = failure_times + [now]
     tier = decide_tier(failure_times, now)
     return f"tier{tier}", zero_exit_times, terminated_exit_times, failure_times
+
+
+def clear_build_dir(build_dir=BUILD_DIR):
+    """Remove the contents of the build directory, keeping the directory.
+
+    Called at the archive-and-reset boundary alongside archive_transcript and
+    git_reset_all. Does nothing when the directory does not exist. Symbolic
+    links are removed as links and never followed.
+    """
+    if not os.path.isdir(build_dir):
+        return
+    for name in os.listdir(build_dir):
+        path = os.path.join(build_dir, name)
+        try:
+            if os.path.isdir(path) and not os.path.islink(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.remove(path)
+        except OSError:
+            pass
 
 
 def discard_session(work_dir=WORK_DIR):
@@ -318,6 +339,7 @@ def run_watchdog():
             if action == "archive_reset":
                 archive_transcript()
                 git_reset_all()
+                clear_build_dir()
                 own_hash = file_hash(WATCHDOG_FILE)
                 time.sleep(60 if ret == EXIT_DONE else 10)
             elif action == "pause":

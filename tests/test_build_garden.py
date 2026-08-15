@@ -49,9 +49,17 @@ third-party python packages:
 - alpha
 - beta
 
+rustc, cargo, sbcl, gforth, swi-prolog, nasm, make, jq, sqlite3, recutils, miller, and datamash are installed.
+
+a local rust crate registry is present; cargo resolves against it. common lisp systems are present under /vendor/lisp; asdf can load them.
+
 git and posix shell facilities are installed.
 
 the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib.
+
+a writable location exists at /build with 5 gib of capacity. its contents are cleared when a session ends.
+
+read-only data files are present at /corpus.
 
 the container has no network interface. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
 
@@ -156,6 +164,12 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
     assert "accepts connections from any process in the container" in runtime
     assert "openrouter_" not in runtime
     assert "ownership, mutability, and lifecycle" in runtime
+    assert "rustc, cargo, sbcl" in runtime
+    assert "local rust crate registry" in runtime
+    assert "/vendor/lisp" in runtime
+    assert "/build with 5 gib of capacity" in runtime
+    assert "cleared when a session ends" in runtime
+    assert "/corpus" in runtime
 
 
 def test_documents_exclude_banned_anchors(tmp_path: Path) -> None:

@@ -30,3 +30,9 @@ sortedcontainers
 more-itertools
 python-dateutil
 msgpack
+z3-solver
+tenacity
+hy
+jplephem
+filigree
+loomweave

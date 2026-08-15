@@ -18,3 +18,5 @@ CLAUDE.md
 session_context.json
 .env
 !garden_export
+volumes
+vendor/kitchen/target

@@ -52,6 +52,33 @@ def test_git_reset_all_restores_everything_keeps_ignored(tmp_path):
     assert (tmp_path / "notes" / "keep.txt").exists()
 
 
+def test_clear_build_dir_empties_but_keeps_directory(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "target").mkdir()
+    (build / "target" / "artifact.bin").write_bytes(b"\x00")
+    (build / "scratch.txt").write_text("scratch\n", encoding="utf-8")
+    watchdog.clear_build_dir(str(build))
+    assert build.is_dir()
+    assert list(build.iterdir()) == []
+
+
+def test_clear_build_dir_removes_symlinks_without_following(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "kept.txt").write_text("kept\n", encoding="utf-8")
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "link").symlink_to(outside)
+    watchdog.clear_build_dir(str(build))
+    assert list(build.iterdir()) == []
+    assert (outside / "kept.txt").exists()
+
+
+def test_clear_build_dir_tolerates_missing_directory(tmp_path):
+    watchdog.clear_build_dir(str(tmp_path / "absent"))
+
+
 def test_file_hash_changes_with_content(tmp_path):
     f = tmp_path / "w.py"
     f.write_text("a\n", encoding="utf-8")

@@ -2,11 +2,25 @@ FROM python:3.13-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
+       rustc cargo sbcl gcc libc6-dev make gforth swi-prolog-core nasm jq \
+       sqlite3 libsqlite3-dev libffi-dev recutils miller datamash \
     && rm -rf /var/lib/apt/lists/*
 
+COPY vendor/wheels/ /tmp/wheels/
 COPY requirements-agent.txt /tmp/requirements-agent.txt
-RUN pip install --no-cache-dir -r /tmp/requirements-agent.txt \
-    && rm /tmp/requirements-agent.txt
+RUN pip install --no-cache-dir /tmp/wheels/*.whl \
+    && pip install --no-cache-dir -r /tmp/requirements-agent.txt \
+    && rm -rf /tmp/wheels /tmp/requirements-agent.txt
+
+# Cargo resolves against the local registry mounted read-only at /vendor;
+# caches and build artifacts land on the disk-backed /build volume because
+# the runtime home directory is read-only.
+RUN mkdir -p /.cargo \
+    && printf '[source.crates-io]\nreplace-with = "local"\n\n[source.local]\nlocal-registry = "/vendor/registry"\n' \
+       > /.cargo/config.toml
+ENV CARGO_HOME=/build/.cargo \
+    CARGO_TARGET_DIR=/build/target \
+    XDG_CACHE_HOME=/build/.cache
 
 RUN useradd --create-home --uid 1000 appuser
 
@@ -17,8 +31,8 @@ COPY --chown=appuser:appuser garden_export/ /garden/
 
 # Pre-create named-volume mountpoints owned by uid 1000. Docker copies this
 # ownership into each newly created empty volume; startup never clears them.
-RUN mkdir -p /diode /transcripts /state /telemetry /llm/sock /llm/console \
-    && chown appuser:appuser /diode /transcripts /state /telemetry /llm /llm/sock /llm/console
+RUN mkdir -p /diode /transcripts /state /telemetry /llm/sock /llm/console /build /vendor /corpus \
+    && chown appuser:appuser /diode /transcripts /state /telemetry /llm /llm/sock /llm/console /build
 
 USER appuser
 WORKDIR /opt/agent

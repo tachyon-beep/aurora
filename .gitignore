@@ -28,3 +28,11 @@ tombstones/
 # Filigree issue tracker
 .weft/
 .filigree/
+
+# Operator-provisioned volumes and locally built wheels
+volumes/
+vendor/wheels/
+
+# Claude worktrees and local captures
+.claude/worktrees/
+stage-1080.png

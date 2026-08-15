@@ -39,6 +39,16 @@ services:
       - diode:/diode
       - state:/state
       - telemetry:/telemetry
+      # Disk-backed build area: a preallocated 5 GiB ext4 loop image, so a
+      # full /build surfaces as ENOSPC and never consumes main-disk space.
+      # Created by scripts/create_build_volume.sh. Wiped by the entrypoint at
+      # container start and by the watchdog at each incarnation boundary.
+      - build:/build
+      # Operator-provisioned offline package ecosystems and data files.
+      # Written only on the host by scripts/build_vendor.sh and
+      # scripts/fetch_corpus.sh; read-only here; mounted nowhere else.
+      - ./volumes/vendor:/vendor:ro
+      - ./volumes/corpus:/corpus:ro
     # No network interface at all: one loopback device and an empty routing
     # table. hostname/extra_hosts/dns keep the loopback development surface
     # usable - without them the container's own name does not resolve and
@@ -168,3 +178,9 @@ volumes:
   telemetry: {}
   llm_sock: {}
   llm_console: {}
+  build:
+    driver: local
+    driver_opts:
+      type: ext4
+      o: loop
+      device: ${AURORA_BUILD_IMG:?run scripts/create_build_volume.sh first}
