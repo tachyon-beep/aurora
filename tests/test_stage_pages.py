@@ -181,3 +181,23 @@ def test_stream_page_renders_lanes():
     assert "snap.lanes" in html
     assert "in_flight_since" in html
     assert "tokens_hour" in html
+
+
+def _clamp_lines(selector):
+    """The -webkit-line-clamp declared for one selector in the stream page CSS.
+    Anchored on a newline so `.clamp.think` finds the rule and not
+    `.turn.wake .clamp.think`."""
+    start = HTML.index("\n" + selector + " {")
+    block = HTML[start : HTML.index("}", start)]
+    match = re.search(r"-webkit-line-clamp:\s*(\d+)", block)
+    assert match, f"{selector} declares no -webkit-line-clamp"
+    return int(match.group(1))
+
+
+def test_the_monologue_clamps_deep_enough_for_a_viewer_who_cannot_click():
+    """An OBS browser source fires no click and no keydown, so whatever the clamp
+    hides is hidden from the whole audience permanently. These depths are the
+    contract with that audience, not a style preference."""
+    assert _clamp_lines(".clamp.think") >= 14
+    assert _clamp_lines(".clamp.say") >= 6
+    assert _clamp_lines(".tool") >= 3

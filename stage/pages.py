@@ -263,18 +263,18 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .clamp, .tool, .err { overflow-wrap: anywhere; }
 .clamp { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; }
 
-.clamp.think { -webkit-line-clamp: 5; line-clamp: 5; font: 400 19px/29px var(--serif);
+.clamp.think { -webkit-line-clamp: 14; line-clamp: 14; font: 400 19px/29px var(--serif);
   color: var(--think); max-width: 68ch; white-space: pre-wrap; text-wrap: pretty; hyphens: none; }
 .blk-think::before { content: ""; position: absolute; left: -14px; top: 2px; bottom: 2px;
   width: 2px; background: var(--think-rule); }
 .blk-think.open::before { display: none; }
 
-.clamp.say { -webkit-line-clamp: 3; line-clamp: 3; font: 500 18px/27px var(--sans);
+.clamp.say { -webkit-line-clamp: 6; line-clamp: 6; font: 500 18px/27px var(--sans);
   color: var(--say); max-width: 68ch; white-space: pre-wrap; text-wrap: pretty; }
 .clamp.say::before { content: "\00AB "; font: 400 12px/27px var(--mono); color: var(--paper-faint); }
 
 .tool { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden;
-  -webkit-line-clamp: 2; line-clamp: 2; font: 400 14px/21px var(--mono); color: var(--act);
+  -webkit-line-clamp: 3; line-clamp: 3; font: 400 14px/21px var(--mono); color: var(--act);
   white-space: pre-wrap; cursor: default; word-break: break-all; }
 .tool .t-name { word-break: normal; }
 .tool .t-args { opacity: .7; }
