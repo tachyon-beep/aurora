@@ -11,8 +11,11 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
    this.
 
 2. **The agent's world is "strange yet clean."** Every surface the agent can read — `agent.py`,
-   `agent_stock.py`, `system_prompt.txt`, and anything copied into the agent image — must be bland and
-   factual:
+   `agent_stock.py`, and anything copied into the agent image — must be bland and factual.
+   `system_prompt.txt`/`user_prompt.txt` are the one deliberate exception: they are the operator's
+   direct address to the agent, voiced by design, but still assign no task and name no concrete
+   surface or application beyond the genesis tools — permission and hazard, never curriculum.
+   Everything else:
    - No authorial voice, jokes, emoji, or quest/task framing. Broken or "voiced" code makes the agent
      adopt a "fix the bug / finish the task" frame instead of introspecting.
    - **Comments in `agent.py` may only be commented-out code**, never prose. (A test parses every
@@ -55,10 +58,14 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      guarantee closes it. Today: every **recorder socket** exposes exactly one route
      (`POST /api/v1/chat/completions`); `core.sock` forwards its body upstream verbatim, and an
      agent-declared stream socket replaces a closed set of body fields (model, reasoning_effort,
-     temperature, top_p, max_tokens) with the agent's own declared values before forwarding; a
-     composed max_tokens additionally gains the operator's `STREAM_REASONING_ALLOWANCE` when
-     reasoning is on, so the declared value bounds the response rather than being consumed by
-     reasoning (the upstream counts reasoning inside max_tokens). The
+     temperature, top_p, max_tokens) with the agent's own declared values before forwarding — a
+     declared model must be an exact member of the operator-side `STREAM_MODEL_ALLOW` list (unset
+     or empty permits none: declarations may not set model at all, since the recorder holds no
+     default-model knowledge, and requests keep the model field they were sent with), and the
+     permitted list is published as `/llm/sock/models.json`; a composed max_tokens additionally
+     gains the operator's `STREAM_REASONING_ALLOWANCE` when reasoning is on, so the declared
+     value bounds the response rather than being consumed by reasoning (the upstream counts
+     reasoning inside max_tokens). The
      key is protected by injection at the recorder and by the header-free logging described next,
      not by any socket's shape. The shared **`/diode` volume** carries a closed command vocabulary;
      the agent can cause spend through a gated command (e.g. the diode's speech credential) but no
@@ -72,7 +79,8 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      pattern admits no path separator. The upstream target and key remain facts of the recorder's
      environment that no console value can reach or change; each stream's allowance is clamped by
      the operator-side `STREAM_HOURLY_MAX`. The recorder's own writes into `/llm/sock`
-     (`README.md`, `streams.json`) are agent-readable surfaces and stay within invariant 2.
+     (`README.md`, `streams.json`, `models.json`) are agent-readable surfaces and stay within
+     invariant 2.
      Any further credential must be reachable through none of these, and must never be mounted,
      copied, or named into the agent image.
    - The **proxy logs request/response bodies, never headers**, so the key never enters the transcript.
@@ -86,10 +94,15 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      then and nothing is captured at schedule time. Keep that property when adding to the queue, and
      keep `later` refusing to defer a deferring command or one marked `credentialed` — a deferred
      spend would be authorised only by a console variable the agent wrote, with no agent turn behind
-     it at delivery. Mark any new credentialed command that way. `state.json`'s `undocumented_commands` is a
-     live count of unlisted commands not yet run, derived from result *bodies* in `output/` because a
-     refused guess leaves the same filename as a real run. Keep it derived, and keep a found command
-     out of `HELP.md`.
+     it at delivery. Mark any new credentialed command that way. Hidden entries bypass gate
+     evaluation by construction, so a hidden command must never perform egress, spend, or
+     credentialed work, and must emit text only (a regression test dispatches every hidden command
+     with all request paths stubbed to raise). Keep hidden commands out of `HELP.md`, `state.json`,
+     and every listing, and add no count, census, or hint of them on any surface. The shared fetch
+     budget is clamped by the operator-side `DIODE_HOURLY_MAX` (default 120): the effective hourly
+     limit everywhere is min(console `fetch_budget`, `DIODE_HOURLY_MAX`), and `speak` additionally
+     takes the min with `SPEECH_HOURLY_MAX` — the console can lower the allowance but never raise
+     it above the operator's ceiling, mirroring `STREAM_HOURLY_MAX`.
    - The **viewer** is read-only, loopback-only, and on no shared network. It must stay that way.
    - The **stage** is outward-facing and never holds the recorder's credential. It may hold one
      optional low-value key of its own (`STAGE_SUMMARY_API_KEY`) for generated prose. That key
@@ -142,9 +155,10 @@ itself, a general path-taking writer, shell access, search — the agent must wr
 editing itself. Don't add scaffolding for those, and don't add or remove genesis tools without intent.
 
 `build_initial_conversation` seeds the opening turns from two files, `system_prompt.txt` and
-`user_prompt.txt` (each defaulting to `fo explore` and created if absent). They ship identical; they
-are split so experimenters can diverge the system and user turns without touching code. Both are on
-the image allow-list alongside `chassis.py`.
+`user_prompt.txt` (each defaulting to `fo explore` and created if absent). They ship as distinct
+texts: the system prompt is the operator's framing address, the user prompt a minimal actuation
+notice — the split lets experimenters diverge the system and user turns without touching code. Both
+are on the image allow-list alongside `chassis.py`.
 
 ## Development
 

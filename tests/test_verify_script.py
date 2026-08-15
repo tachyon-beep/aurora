@@ -132,6 +132,23 @@ def test_env_example_documents_the_stream_ceiling():
     assert "STREAM_HOURLY_MAX" in text
 
 
+def test_env_example_documents_the_model_allow_list_and_diode_ceiling():
+    text = Path(".env.example").read_text(encoding="utf-8")
+    assert "STREAM_MODEL_ALLOW" in text
+    assert "DIODE_HOURLY_MAX" in text
+
+
+def test_verifier_permits_the_stream_model_it_declares():
+    # The verifier's console declaration names "stream-model"; without this
+    # export the recorder's allow-list (empty by default) would reject the
+    # declaration and the aux.sock wait would time out.
+    text = _script()
+    assert 'export STREAM_MODEL_ALLOW="stream-model"' in text
+    assert text.index('export STREAM_MODEL_ALLOW="stream-model"') < text.index(
+        "docker compose create"
+    )
+
+
 def test_verifier_checks_the_event_log_and_lanes():
     text = _script()
     for phrase in (

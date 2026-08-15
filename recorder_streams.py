@@ -86,6 +86,8 @@ def validate_declaration(name, declaration):
         model = declaration["model"]
         if not isinstance(model, str) or not model.strip() or len(model) > MODEL_NAME_CAP:
             return None, f"model must be a non-empty string of at most {MODEL_NAME_CAP} characters"
+        if model not in permitted_models():
+            return None, "model not permitted"
         settings["model"] = model
     if "reasoning_effort" in declaration:
         if declaration["reasoning_effort"] not in REASONING_EFFORT_LEVELS:
@@ -132,6 +134,19 @@ def evaluate_console(declarations, enabled):
         else:
             accepted[name] = settings
     return accepted, rejected
+
+
+def permitted_models():
+    """The models a declaration may set, from the environment.
+
+    STREAM_MODEL_ALLOW is a comma-separated list of model identifiers.
+    Unset or empty permits none: a declaration that sets model is rejected,
+    and requests on every socket keep the model field they were sent with.
+    The recorder holds no default-model knowledge of its own, so there is
+    nothing to fall back to.
+    """
+    raw = os.environ.get("STREAM_MODEL_ALLOW", "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def stream_limit_max():
@@ -259,7 +274,8 @@ each accepted declaration is served at <name>.sock. configuration fields:
 
 declared values replace the corresponding fields of each request on that
 socket. the current sockets, their settings, and their use are in
-streams.json.
+streams.json. the model identifiers a declaration may set are listed in
+models.json.
 """
 
 
@@ -296,6 +312,35 @@ def write_readme(sock_dir):
     """Write the socket directory's protocol description."""
     with open(os.path.join(sock_dir, "README.md"), "w", encoding="utf-8") as f:
         f.write(README_TEXT)
+
+
+def write_models(sock_dir):
+    """Write the permitted-model list beside streams.json.
+
+    The document carries only the identifiers a declaration may set. It is
+    replaced via a rename, and only when its content differs, so the poll
+    loop can call this every cycle: the file exists from startup and changes
+    only when the permitted list does. The unchanged path also removes any
+    temporary left by a write interrupted before its rename, so no stray
+    file persists on the directory. Returns True when a write happened.
+    """
+    path = os.path.join(sock_dir, "models.json")
+    tmp = path + ".tmp"
+    document = {"models": permitted_models()}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            if json.load(f) == document:
+                try:
+                    os.remove(tmp)
+                except FileNotFoundError:
+                    pass
+                return False
+    except (OSError, ValueError):
+        pass
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(document, f, indent=2)
+    os.replace(tmp, path)
+    return True
 
 
 class StreamRegistry:

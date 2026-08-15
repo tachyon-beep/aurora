@@ -91,6 +91,11 @@ When a fault is unrecoverable, the chassis:
 3. Deletes `session_context.json` — this is what breaks the doom loop.
 4. Exits with code **43** (harness-terminated incarnation).
 
+> **Amended 2026-08-15.** Harness terminations write `tombstones/synthetic_note.txt`, not
+> `incarnation_note.txt` — the latter is written only by the agent's own `done` tool, so a harness
+> death no longer overwrites the agent's forward message. See
+> `2026-08-15-enrichment-surfaces-analysis.md` appendix item 1.
+
 ### Watchdog changes
 
 - **Exit 43**: archive transcript, `git_reset_all()`, restart fresh. No failure-tier escalation —

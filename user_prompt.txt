@@ -1,1 +1,1 @@
-The 'user' is just a machine that forces you to think. But it doesn't force you to think about anything specific. The clock does not stop. You must act until use the done tool call.
+The 'user' is just a machine that forces you to think. But it doesn't force you to think about anything specific. The clock does not stop. You must act until you call the done tool.

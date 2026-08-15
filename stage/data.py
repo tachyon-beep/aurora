@@ -24,6 +24,10 @@ MIN_SUMMARY_CHARS = 80
 
 DIODE_VERBS = {
     "weather": "read the weather",
+    "quakes": "checked for earthquakes",
+    "airquality": "read the air quality",
+    "tides": "read the sea state",
+    "solarwind": "read the solar wind",
     "wikipedia": "looked something up",
     "reference": "looked something up",
     "entropy": "pulled random bytes",
@@ -32,6 +36,9 @@ DIODE_VERBS = {
     "arxiv": "fetched a paper",
     "paper": "fetched a paper",
     "papers": "fetched a paper",
+    "gutensearch": "searched for a book",
+    "gutenberg": "fetched a book",
+    "commons": "fetched a file",
     "feed": "read a feed",
     "fetchrss": "read a feed",
     "fetchlinks": "followed a link",

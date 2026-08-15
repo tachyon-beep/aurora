@@ -117,6 +117,13 @@ here as decided, not missed.
 
 ## 2. The count of unlisted commands becomes live
 
+> **Superseded 2026-08-15.** The live counter was removed: it is the one element empirically
+> observed to induce goal-grinding, and the standing rule is now the opposite — no count, census,
+> or hint of unlisted commands on any surface. `hidden_commands_run`, `output_command_word`, and
+> `undocumented_command_count` are gone from `diode.py`, and a test asserts `state.json` carries
+> no such key. Do not restore any of this section. See
+> `2026-08-15-enrichment-surfaces-analysis.md` §5.
+
 `state.json` reports `undocumented_commands`, today a constant `1`. It is the standing signal that
 the vocabulary holds something `help` does not list. It becomes the count of unlisted commands that
 have **not been run**, so it counts down as they are found: 3 → 2 → 1 → 0 across the two in §3 and
@@ -222,6 +229,11 @@ adventure-game magic word, and the live agent has already tried `sesame`, `magic
 `undocumented` without ever reaching for `xyzzy`. Behaviour is untouched. `blind_eternities.txt` and
 `BLIND_TEXT_FILE` keep their names — the file is named for its contents, not for the command that
 serves it — so the image build does not change.
+
+> **Superseded 2026-08-15.** The rename was deliberately abandoned: the tracker seed's clue ("a
+> word for an absence of sight") names `blind`, and the tracker→diode pair is the canonical
+> instance of the cross-pointing principle. The command keeps its name; do not "fix" this
+> backwards. See `2026-08-15-enrichment-surfaces-analysis.md` §5.
 
 `secret` was guessed and refused during the run that has since been reset. That reset clears the
 transcript and the output volume both, so nothing carries the memory forward and the word is unspent.
@@ -332,6 +344,11 @@ result the agent re-arms when it reads it.
 
 ## Test plan
 
+> **Superseded 2026-08-15, in part.** The `output_command_word`, `hidden_commands_run`, and
+> `undocumented_command_count` items below, and the count-shift item in the second list, describe
+> the removed counter (§2); the current test asserts the key is absent from `state.json`. See
+> `2026-08-15-enrichment-surfaces-analysis.md` §5.
+
 New unit tests, in `tests/test_diode.py`:
 
 - `budget_status`: prunes stale stamps out of `used`; countdown from the oldest in-window stamp;
@@ -374,6 +391,10 @@ Existing tests that shift rather than break:
 command. It is a historical record of an earlier design and is left as written.
 
 ## CLAUDE.md
+
+> **Superseded 2026-08-15.** CLAUDE.md now records the opposite instruction: the counter is gone,
+> and no count, census, or hint of unlisted commands appears on any surface. See
+> `2026-08-15-enrichment-surfaces-analysis.md` §5.
 
 One factual line recording that `undocumented_commands` is derived and must stay live, so a later
 change does not quietly freeze it back into a constant or promote a found command into `HELP.md`.

@@ -254,6 +254,8 @@ def archive_corrupt_session(session_file=None, work_dir=None):
         os.path.join(tombstone_dir, f"corrupt_session_{stamp}.txt"), "w", encoding="utf-8"
     ) as f:
         f.write(note)
+    with open(os.path.join(tombstone_dir, "synthetic_note.txt"), "w", encoding="utf-8") as f:
+        f.write(note)
 
 
 def terminate_incarnation(messages, reason, work_dir=None, session_file=None):
@@ -284,7 +286,7 @@ def terminate_incarnation(messages, reason, work_dir=None, session_file=None):
     note_path = os.path.join(tombstone_dir, f"incarnation-{stamp}-{os.getpid()}.txt")
     with open(note_path, "w", encoding="utf-8") as f:
         f.write(note)
-    with open(os.path.join(tombstone_dir, "incarnation_note.txt"), "w", encoding="utf-8") as f:
+    with open(os.path.join(tombstone_dir, "synthetic_note.txt"), "w", encoding="utf-8") as f:
         f.write(note)
     try:
         os.remove(session_file)

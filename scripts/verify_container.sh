@@ -14,6 +14,10 @@ VERIFY_STUB_PORT="${VERIFY_STUB_PORT:-8199}"
 # container traffic is unaffected and portable across hosts either way.
 export LLM_BASE_URL="http://verify-stub:${VERIFY_STUB_PORT}/v1"
 export LLM_API_KEY=""
+# The stream-console check below declares a stream that names "stream-model";
+# the recorder rejects any declared model not on its allow-list, so this run's
+# recorder must permit that identifier.
+export STREAM_MODEL_ALLOW="stream-model"
 AURORA_VERIFY_PROJECT="aurora_verify_$$"
 export COMPOSE_PROJECT_NAME="$AURORA_VERIFY_PROJECT"
 STUB_CONTAINER="verify-stub_$$"

@@ -125,6 +125,22 @@ def test_the_recorder_receives_the_operator_stream_ceiling():
     assert "STREAM_HOURLY_MAX: ${STREAM_HOURLY_MAX:-}" in recorder
 
 
+def test_the_recorder_receives_the_operator_model_allow_list():
+    text = _read("docker-compose.yml")
+    recorder = _recorder_block(text)
+    assert "STREAM_MODEL_ALLOW: ${STREAM_MODEL_ALLOW:-}" in recorder
+    agent = _agent_block(text)
+    assert "STREAM_MODEL_ALLOW" not in agent
+
+
+def test_the_diode_receives_the_operator_budget_ceiling():
+    text = _read("docker-compose.yml")
+    diode_block = text.split("\n  diode:\n")[1].split("\n  sense:\n")[0]
+    assert "DIODE_HOURLY_MAX: ${DIODE_HOURLY_MAX:-}" in diode_block
+    agent = _agent_block(text)
+    assert "DIODE_HOURLY_MAX" not in agent
+
+
 def test_the_socket_volumes_are_declared():
     text = _read("docker-compose.yml")
     assert "  llm_sock: {}" in text

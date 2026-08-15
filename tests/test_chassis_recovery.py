@@ -166,14 +166,33 @@ def test_terminate_incarnation_writes_tombstone_and_removes_session(tmp_path):
     assert excinfo.value.code == 43
     assert not session.exists()
     tombstones = tmp_path / "tombstones"
-    note = (tombstones / "incarnation_note.txt").read_text(encoding="utf-8")
+    note = (tombstones / "synthetic_note.txt").read_text(encoding="utf-8")
     assert "terminated by the harness" in note
     assert "still broken" in note
+    assert not (tombstones / "incarnation_note.txt").exists()
     archives = list(tombstones.glob("session_*.json"))
     assert len(archives) == 1
     assert json.loads(archives[0].read_text(encoding="utf-8")) == history
     stamped = [p for p in tombstones.glob("incarnation-*.txt")]
     assert len(stamped) == 1
+
+
+def test_terminate_incarnation_leaves_the_agents_note_untouched(tmp_path):
+    tombstones = tmp_path / "tombstones"
+    tombstones.mkdir()
+    (tombstones / "incarnation_note.txt").write_text("note from a predecessor", encoding="utf-8")
+    with pytest.raises(SystemExit):
+        chassis.terminate_incarnation(
+            [],
+            "reason",
+            work_dir=str(tmp_path),
+            session_file=str(tmp_path / "absent.json"),
+        )
+    agent_note = (tombstones / "incarnation_note.txt").read_text(encoding="utf-8")
+    assert agent_note == "note from a predecessor"
+    assert "terminated by the harness" in (tombstones / "synthetic_note.txt").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_terminate_incarnation_survives_missing_session_file(tmp_path):
@@ -230,7 +249,7 @@ def test_main_terminates_incarnation_on_unrecoverable_error(tmp_path, monkeypatc
         chassis.main(_agent_module([]))
     assert excinfo.value.code == 43
     assert not session.exists()
-    assert (tmp_path / "tombstones" / "incarnation_note.txt").exists()
+    assert (tmp_path / "tombstones" / "synthetic_note.txt").exists()
 
 
 def test_run_agent_loop_persists_model_fallback(monkeypatch):
@@ -255,6 +274,7 @@ def test_archive_corrupt_session_moves_file_and_notes(tmp_path):
     notes = list(tombstones.glob("corrupt_session_*.txt"))
     assert len(notes) == 1
     assert "could not be read" in notes[0].read_text(encoding="utf-8")
+    assert "could not be read" in (tombstones / "synthetic_note.txt").read_text(encoding="utf-8")
     assert not (tombstones / "incarnation_note.txt").exists()
 
 

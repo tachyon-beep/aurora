@@ -473,7 +473,7 @@ def bind_stream(registry, servers, sock_dir, name):
 
 
 def poll_once(registry, servers, sock_dir, console_path, state_path):
-    """Read the console, apply the diff to the sockets, and write the state file."""
+    """Read the console, apply the diff to the sockets, and write the state files."""
     declarations, enabled, error = recorder_streams.load_console(console_path)
     if declarations is not None:
         accepted, rejected = recorder_streams.evaluate_console(declarations, enabled)
@@ -492,6 +492,7 @@ def poll_once(registry, servers, sock_dir, console_path, state_path):
             bind_stream(registry, servers, sock_dir, name)
             if name in servers:
                 log_event("bind", name)
+    recorder_streams.write_models(sock_dir)
     recorder_streams.write_state(
         state_path, registry.state(streams_enabled=enabled, console_error=error)
     )
@@ -520,6 +521,7 @@ def main():
     core.registry = registry
     sweep_stale_sockets(sock_dir, keep={os.path.basename(socket_path)})
     recorder_streams.write_readme(sock_dir)
+    recorder_streams.write_models(sock_dir)
     threading.Thread(target=core.serve_forever, daemon=True).start()
     log_event("bind", "core")
 

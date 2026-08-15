@@ -1,3 +1,4 @@
+import datetime
 import io
 import json
 import os
@@ -7,6 +8,11 @@ import pytest
 
 import diode
 from stage import data
+
+
+@pytest.fixture(autouse=True)
+def _clear_diode_ceiling(monkeypatch):
+    monkeypatch.delenv("DIODE_HOURLY_MAX", raising=False)
 
 
 def fake_resolver_returning(ip):
@@ -576,6 +582,8 @@ def test_write_help_lists_all_gate_variables(tmp_path, monkeypatch):
         "enable_papers",
         "enable_news",
         "enable_entropy",
+        "enable_instruments",
+        "enable_library",
     ):
         assert gate in text
 
@@ -647,13 +655,14 @@ def test_blind_missing_source_is_factual(tmp_path, monkeypatch):
     assert hist == []
 
 
-def test_state_reports_undocumented_command_count(tmp_path, monkeypatch):
+def test_state_carries_no_count_of_unlisted_commands(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
     monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
     diode.write_state({}, [])
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
-    assert state["undocumented_commands"] == 3
+    assert "undocumented_commands" not in state
     assert "blind" not in state["available_commands"]
+    assert "silence" not in state["available_commands"]
 
 
 def test_speech_helpers_read_the_environment(monkeypatch):
@@ -1118,42 +1127,6 @@ def test_fetch_limit_falls_back_on_an_unusable_console_value():
     assert diode.fetch_limit({"fetch_budget": "many"}) == diode.DEFAULT_FETCH_LIMIT
 
 
-def test_output_command_word_drops_the_stamp_and_the_argument():
-    assert diode.output_command_word("20260814_170233_123456_secret.txt") == "secret"
-    assert diode.output_command_word("20260814_170233_123456_weather_33_8_151_2.txt") == "weather"
-    assert diode.output_command_word("20260814_170233_123456_.txt") == ""
-
-
-def test_hidden_commands_run_ignores_a_refused_guess(tmp_path):
-    output = tmp_path / "output"
-    output.mkdir()
-    (output / "20260814_170233_123456_secret.txt").write_text(
-        "unknown command: secret", encoding="utf-8"
-    )
-    assert diode.hidden_commands_run(str(output)) == set()
-
-
-def test_hidden_commands_run_counts_a_real_result(tmp_path):
-    output = tmp_path / "output"
-    output.mkdir()
-    (output / "20260814_170233_123456_secret.txt").write_text(
-        "this command is not listed in help.", encoding="utf-8"
-    )
-    (output / "20260814_170233_123457_abc.txt").write_text("headlines", encoding="utf-8")
-    assert diode.hidden_commands_run(str(output)) == {"secret"}
-
-
-def test_hidden_commands_run_is_empty_without_a_directory(tmp_path):
-    assert diode.hidden_commands_run(str(tmp_path / "absent")) == set()
-
-
-def test_undocumented_command_count_falls_as_commands_are_found():
-    assert diode.undocumented_command_count() == 3
-    assert diode.undocumented_command_count({"secret"}) == 2
-    assert diode.undocumented_command_count({"secret", "blind"}) == 1
-    assert diode.undocumented_command_count({"secret", "blind", "echo"}) == 0
-
-
 def test_secret_returns_its_text_without_gate_or_budget(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
     text, hist = diode.handle_command("secret", {}, [])
@@ -1337,14 +1310,13 @@ def test_later_refuses_to_defer_a_deferring_command(tmp_path, monkeypatch):
 def test_state_carries_the_budget_block_and_the_pending_count(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
     monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
-    diode.write_state({}, [], diode.budget_status([], 1_000_000.0, 3600), {"secret"}, 2)
+    diode.write_state({}, [], diode.budget_status([], 1_000_000.0, 3600), 2)
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert state["budget"] == {
         "used": 0,
         "window_seconds": 3600,
         "oldest_expires_in_seconds": None,
     }
-    assert state["undocumented_commands"] == 2
     assert state["pending"] == 2
 
 
@@ -1497,3 +1469,577 @@ def test_readme_carries_no_hint_about_unlisted_commands(tmp_path, monkeypatch):
     text = (tmp_path / "README.md").read_text(encoding="utf-8")
     assert "unlisted" not in text
     assert "blind" not in text.lower()
+    assert "silence" not in text.lower()
+    assert "incomplete" not in text.lower()
+
+
+def test_the_diode_ceiling_comes_from_the_environment(monkeypatch):
+    monkeypatch.delenv("DIODE_HOURLY_MAX", raising=False)
+    assert diode.diode_limit_max() == diode.DIODE_LIMIT_MAX
+    monkeypatch.setenv("DIODE_HOURLY_MAX", "3")
+    assert diode.diode_limit_max() == 3
+    monkeypatch.setenv("DIODE_HOURLY_MAX", "not a number")
+    assert diode.diode_limit_max() == diode.DIODE_LIMIT_MAX
+    monkeypatch.setenv("DIODE_HOURLY_MAX", "-5")
+    assert diode.diode_limit_max() == 0
+
+
+def test_an_inflated_console_budget_cannot_raise_the_diode_ceiling(monkeypatch):
+    # fetch_budget comes out of the agent-writable console file, so it may
+    # lower the shared allowance but never raise it above the operator's ceiling.
+    fake, _ = _stub_fetch("https://", RSS_SAMPLE)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    monkeypatch.setenv("DIODE_HOURLY_MAX", "1")
+    variables = {"enable_feeds": True, "fetch_budget": 100000}
+    text, hist = diode.handle_command("fetchrss https://example.com/feed", variables, [])
+    assert "First story" in text
+    text, hist = diode.handle_command("fetchrss https://example.com/feed", variables, hist)
+    assert text.startswith("rate limited: at most 1 network operation(s) per hour")
+    assert len(hist) == 1
+
+
+def test_a_smaller_console_budget_still_lowers_below_the_diode_ceiling(monkeypatch):
+    monkeypatch.setenv("DIODE_HOURLY_MAX", "100")
+    text, _ = diode.handle_command(
+        "fetchhttp http://example.com", {"fetch_budget": 1}, [time.time()]
+    )
+    assert text.startswith("rate limited: at most 1 network operation(s) per hour")
+
+
+def test_the_diode_ceiling_clamps_every_budget_charging_path(monkeypatch):
+    monkeypatch.setenv("DIODE_HOURLY_MAX", "0")
+    variables = {
+        "enable_feeds": True,
+        "enable_clone": True,
+        "enable_instruments": True,
+        "enable_library": True,
+        "fetch_budget": 100000,
+    }
+    for command in (
+        "fetchhttp http://example.com",
+        "fetchrss https://example.com/feed",
+        "clone alpha/beta",
+        "quakes",
+        "solarwind",
+        "airquality -33.9,151.2",
+        "tides -33.9,151.2",
+        "gutensearch whales",
+        "gutenberg 84",
+        "commons Cat.jpg",
+    ):
+        text, hist = diode.handle_command(command, variables, [])
+        assert text == "rate limited: at most 0 network operation(s) per hour", command
+        assert hist == []
+
+
+def test_the_diode_ceiling_clamps_speech_too(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setenv("DIODE_HOURLY_MAX", "0")
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "_speak_request", lambda text: (True, b"ID3audio"))
+    text, hist = diode.handle_command("speak hello", {"enable_speech": True, "fetch_budget": 5}, [])
+    assert text == "rate limited: at most 0 network operation(s) per hour"
+    assert hist == []
+    assert not (tmp_path / "spoken").exists()
+
+
+def test_speak_keeps_the_smaller_of_its_two_ceilings(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setenv("DIODE_HOURLY_MAX", "50")
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "SPEECH_LIMIT_MAX", 1)
+    monkeypatch.setattr(diode, "_speak_request", lambda text: (True, b"ID3audio"))
+    variables = {"enable_speech": True, "fetch_budget": 100000}
+    text, history = diode.handle_command("speak hello", variables, [])
+    assert text.startswith("recorded as ")
+    text, history = diode.handle_command("speak hello", variables, history)
+    assert text.startswith("rate limited: at most 1 network operation(s) per hour")
+
+
+def test_help_never_names_the_operator_ceiling(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({})
+    text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "DIODE_HOURLY_MAX" not in text
+    assert "ceiling" not in text.lower()
+
+
+QUAKES_SAMPLE = json.dumps(
+    {
+        "features": [
+            {"properties": {"mag": 4.5, "place": "10 km N of Somewhere", "time": 1755200000000}},
+            {"properties": {"mag": 2.6, "place": "off the coast", "time": 1755100000000}},
+        ]
+    }
+)
+
+
+def test_instrument_commands_are_gated():
+    for command in ("quakes", "airquality -33.9,151.2", "tides -33.9,151.2", "solarwind"):
+        name = command.split()[0]
+        text, hist = diode.handle_command(command, {}, [])
+        assert text == f"command not available: {name}"
+        assert hist == []
+    names = diode.available_commands({"enable_instruments": True})
+    for name in ("quakes", "airquality", "tides", "solarwind"):
+        assert name in names
+
+
+def test_handle_quakes_returns_magnitude_place_time(monkeypatch):
+    fake, calls = _stub_fetch(
+        "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson", QUAKES_SAMPLE
+    )
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, hist = diode.handle_command("quakes", {"enable_instruments": True, "fetch_budget": 5}, [])
+    when = datetime.datetime.fromtimestamp(1755200000, datetime.timezone.utc).isoformat()
+    assert f"M4.5 — 10 km N of Somewhere — {when}" in text
+    assert "M2.6 — off the coast — " in text
+    assert len(hist) == 1 and len(calls) == 1
+
+
+def test_quake_lines_handle_malformed_bodies():
+    assert diode._quake_lines("not json") == "could not parse response"
+    assert diode._quake_lines("{}") == "(no earthquakes found)"
+    assert diode._quake_lines(json.dumps({"features": []})) == "(no earthquakes found)"
+    assert diode._quake_lines(json.dumps({"features": [{"properties": {}}]})) == "M —  — "
+
+
+def test_quake_lines_cap_the_line_count():
+    body = json.dumps(
+        {
+            "features": [
+                {"properties": {"mag": 1.0, "place": f"p{i}", "time": 1755200000000}}
+                for i in range(30)
+            ]
+        }
+    )
+    assert len(diode._quake_lines(body).splitlines()) == diode.FEED_ITEM_CAP
+
+
+def test_handle_airquality_validates_coordinates_and_reports_current(monkeypatch):
+    text, hist = diode.handle_command(
+        "airquality 999,0", {"enable_instruments": True, "fetch_budget": 5}, []
+    )
+    assert text.startswith("usage: airquality <lat,lon>")
+    assert hist == []
+    body = json.dumps(
+        {"current": {"pm2_5": 3.1, "us_aqi": 21}, "current_units": {"pm2_5": "μg/m³"}}
+    )
+    fake, calls = _stub_fetch("https://air-quality-api.open-meteo.com/v1/air-quality", body)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, hist = diode.handle_command(
+        "airquality -33.9,151.2", {"enable_instruments": True, "fetch_budget": 5}, []
+    )
+    assert "pm2_5: 3.1μg/m³" in text
+    assert "us_aqi: 21" in text
+    assert "latitude=-33.9" in calls[0]
+    assert "current=pm2_5,pm10,ozone,nitrogen_dioxide,us_aqi" in calls[0]
+    assert len(hist) == 1
+
+
+def test_handle_tides_validates_coordinates_and_reports_current(monkeypatch):
+    text, hist = diode.handle_command(
+        "tides 0,181", {"enable_instruments": True, "fetch_budget": 5}, []
+    )
+    assert text.startswith("usage: tides <lat,lon>")
+    assert hist == []
+    body = json.dumps(
+        {
+            "current": {"wave_height": 1.4, "sea_surface_temperature": 19.0},
+            "current_units": {"wave_height": "m"},
+        }
+    )
+    fake, calls = _stub_fetch("https://marine-api.open-meteo.com/v1/marine", body)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, hist = diode.handle_command(
+        "tides -33.9,151.2", {"enable_instruments": True, "fetch_budget": 5}, []
+    )
+    assert "wave_height: 1.4m" in text
+    assert "sea_surface_temperature: 19.0" in text
+    assert "latitude=-33.9" in calls[0]
+    assert "current=wave_height,wave_direction,wave_period,sea_surface_temperature" in calls[0]
+    assert len(hist) == 1
+
+
+def test_handle_solarwind_reports_key_value_lines(monkeypatch):
+    body = json.dumps({"WindSpeed": "389.2", "TimeStamp": "2026-08-15 03:00:00"})
+    fake, calls = _stub_fetch(
+        "https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json", body
+    )
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, hist = diode.handle_command(
+        "solarwind", {"enable_instruments": True, "fetch_budget": 5}, []
+    )
+    assert "WindSpeed: 389.2" in text
+    assert "TimeStamp: 2026-08-15 03:00:00" in text
+    assert len(hist) == 1 and len(calls) == 1
+
+
+def test_solarwind_lines_handle_malformed_bodies():
+    assert diode._solarwind_lines("not json") == "could not parse response"
+    assert diode._solarwind_lines("{}") == "(no current conditions found)"
+    assert diode._solarwind_lines("[1, 2]") == "(no current conditions found)"
+
+
+def test_instrument_commands_share_the_fetch_budget(monkeypatch):
+    fake, _ = _stub_fetch("https://", QUAKES_SAMPLE)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    variables = {"enable_instruments": True, "enable_news": True, "fetch_budget": 1}
+    text, hist = diode.handle_command("quakes", variables, [])
+    assert "M4.5" in text
+    text, hist = diode.handle_command("abc", variables, hist)
+    assert text.startswith("rate limited")
+    assert len(hist) == 1
+
+
+GUTENDEX_SAMPLE = json.dumps(
+    {
+        "results": [
+            {"id": 84, "title": "Frankenstein", "authors": [{"name": "Shelley, Mary"}]},
+            {"id": 2701, "title": "Moby Dick", "authors": []},
+        ]
+    }
+)
+
+
+def test_library_commands_are_gated():
+    for command in ("gutensearch whales", "gutenberg 84", "commons Cat.jpg"):
+        name = command.split()[0]
+        text, hist = diode.handle_command(command, {}, [])
+        assert text == f"command not available: {name}"
+        assert hist == []
+    names = diode.available_commands({"enable_library": True})
+    for name in ("gutensearch", "gutenberg", "commons"):
+        assert name in names
+
+
+def test_handle_gutensearch_lists_ids_titles_authors(monkeypatch):
+    fake, calls = _stub_fetch("https://gutendex.com/books?search=moby%20dick", GUTENDEX_SAMPLE)
+    monkeypatch.setattr(diode, "_fetch", fake)
+    text, hist = diode.handle_command(
+        "gutensearch moby dick", {"enable_library": True, "fetch_budget": 5}, []
+    )
+    assert "84 — Frankenstein — Shelley, Mary" in text
+    assert "2701 — Moby Dick — " in text
+    assert len(hist) == 1 and len(calls) == 1
+
+
+def test_gutensearch_without_a_query_returns_usage():
+    text, hist = diode.handle_command("gutensearch", {"enable_library": True}, [])
+    assert text == "usage: gutensearch <query>"
+    assert hist == []
+
+
+def test_gutensearch_lines_handle_malformed_bodies():
+    assert diode._gutensearch_lines("not json") == "could not parse response"
+    assert diode._gutensearch_lines("{}") == "(no books found)"
+    assert diode._gutensearch_lines(json.dumps({"results": []})) == "(no books found)"
+
+
+def test_handle_gutenberg_validates_the_id():
+    for bad in (
+        "gutenberg",
+        "gutenberg abc",
+        "gutenberg 12a",
+        "gutenberg -5",
+        "gutenberg " + "1" * 11,
+        "gutenberg ../84",
+    ):
+        text, hist = diode.handle_command(bad, {"enable_library": True, "fetch_budget": 5}, [])
+        assert text == "usage: gutenberg <id>", bad
+        assert hist == []
+
+
+def test_handle_gutenberg_records_the_book_and_charges_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "_book_request", lambda book_id: (True, "call me ishmael"))
+    text, hist = diode.handle_command(
+        "gutenberg 2701", {"enable_library": True, "fetch_budget": 5}, []
+    )
+    assert text.startswith("recorded as ")
+    (name,) = os.listdir(tmp_path / "output")
+    assert name.endswith("_gutenberg_2701.txt")
+    assert name in text
+    assert (tmp_path / "output" / name).read_text(encoding="utf-8") == "call me ishmael"
+    assert len(hist) == 1
+
+
+def test_handle_gutenberg_returns_the_refusal_on_failure(monkeypatch):
+    monkeypatch.setattr(
+        diode, "_book_request", lambda book_id: (False, "refused: book exceeds 2000000 bytes")
+    )
+    text, hist = diode.handle_command(
+        "gutenberg 2701", {"enable_library": True, "fetch_budget": 5}, []
+    )
+    assert text == "refused: book exceeds 2000000 bytes"
+    assert len(hist) == 1
+
+
+class _FixedResponse:
+    def __init__(self, seen, body, final_url=""):
+        self._seen = seen
+        self._body = body
+        self._final_url = final_url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def read(self, n):
+        self._seen["cap"] = n
+        return self._body[:n]
+
+    def geturl(self):
+        return self._final_url
+
+
+class _FixedOpener:
+    def __init__(self, seen, body, final_url=""):
+        self._seen = seen
+        self._body = body
+        self._final_url = final_url
+
+    def open(self, req, timeout=None):
+        self._seen["url"] = req.full_url
+        return _FixedResponse(self._seen, self._body, self._final_url)
+
+
+def test_book_request_targets_the_fixed_host_and_classifies_it(monkeypatch):
+    seen = {}
+
+    def _classify(url):
+        seen["classified"] = url
+        return True, ""
+
+    monkeypatch.setattr(diode, "classify_url", _classify)
+    monkeypatch.setattr(diode, "_make_opener", lambda: _FixedOpener(seen, b"book text"))
+    ok, text = diode._book_request("84")
+    assert ok is True
+    assert text == "book text"
+    assert seen["url"] == "https://www.gutenberg.org/ebooks/84.txt.utf-8"
+    assert seen["classified"] == seen["url"]
+    assert seen["cap"] == diode.BOOK_MAX_BYTES + 1
+
+
+def test_book_request_refuses_an_oversized_book_rather_than_truncating(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(diode, "classify_url", lambda url: (True, ""))
+    monkeypatch.setattr(diode, "_make_opener", lambda: _FixedOpener(seen, b"x" * 1_000_000))
+    monkeypatch.setattr(diode, "BOOK_MAX_BYTES", 10)
+    ok, reason = diode._book_request("84")
+    assert ok is False
+    assert reason == "refused: book exceeds 10 bytes"
+
+
+def test_book_request_replaces_undecodable_bytes(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(diode, "classify_url", lambda url: (True, ""))
+    monkeypatch.setattr(diode, "_make_opener", lambda: _FixedOpener(seen, b"a\xffb"))
+    ok, text = diode._book_request("84")
+    assert ok is True
+    assert text == "a�b"
+
+
+def test_book_request_reports_a_status_without_the_body(monkeypatch):
+    class _Opener:
+        def open(self, req, timeout=None):
+            raise diode.urllib.error.HTTPError(
+                "https://www.gutenberg.org/x", 404, "Not Found", {}, None
+            )
+
+    monkeypatch.setattr(diode, "classify_url", lambda url: (True, ""))
+    monkeypatch.setattr(diode, "_make_opener", lambda: _Opener())
+    ok, reason = diode._book_request("84")
+    assert ok is False
+    assert reason == "fetch error: status 404"
+
+
+def test_media_extension_takes_only_a_short_plain_token():
+    assert diode.media_extension("https://upload.wikimedia.org/a/b/Cat.jpg") == "jpg"
+    assert diode.media_extension("https://upload.wikimedia.org/a/b/Cat.JPG") == "jpg"
+    assert diode.media_extension("https://upload.wikimedia.org/a/b/a.tar.gz") == "gz"
+    assert diode.media_extension("https://upload.wikimedia.org/a/b/noext") == "bin"
+    assert diode.media_extension("https://upload.wikimedia.org/a/b/x.toolong1") == "bin"
+    assert diode.media_extension("https://upload.wikimedia.org/a/b/x.we%20ird") == "bin"
+
+
+def test_commons_request_reports_content_and_the_final_url(monkeypatch):
+    seen = {}
+
+    def _classify(url):
+        seen["classified"] = url
+        return True, ""
+
+    monkeypatch.setattr(diode, "classify_url", _classify)
+    monkeypatch.setattr(
+        diode,
+        "_make_opener",
+        lambda: _FixedOpener(seen, b"media", "https://upload.wikimedia.org/a/b/Cat_photo.jpg"),
+    )
+    ok, payload = diode._commons_request("Cat photo.jpg")
+    assert ok is True
+    content, final_url = payload
+    assert content == b"media"
+    assert final_url == "https://upload.wikimedia.org/a/b/Cat_photo.jpg"
+    assert seen["url"] == "https://commons.wikimedia.org/wiki/Special:FilePath/Cat%20photo.jpg"
+    assert seen["classified"] == seen["url"]
+    assert seen["cap"] == diode.IMAGE_MAX_BYTES + 1
+
+
+def test_commons_request_refuses_an_oversized_file(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(diode, "classify_url", lambda url: (True, ""))
+    monkeypatch.setattr(
+        diode, "_make_opener", lambda: _FixedOpener(seen, b"x" * 100, "https://u.example/x.jpg")
+    )
+    monkeypatch.setattr(diode, "IMAGE_MAX_BYTES", 10)
+    ok, reason = diode._commons_request("Cat.jpg")
+    assert ok is False
+    assert reason == "refused: media file exceeds 10 bytes"
+
+
+def test_handle_commons_rejects_empty_and_traversal_titles():
+    for command in (
+        "commons",
+        "commons ../secret",
+        "commons a/b.jpg",
+        "commons a\\b.jpg",
+        "commons x..y",
+    ):
+        text, hist = diode.handle_command(command, {"enable_library": True, "fetch_budget": 5}, [])
+        assert text == "usage: commons <title>", command
+        assert hist == []
+
+
+def test_handle_commons_writes_the_media_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(
+        diode,
+        "_commons_request",
+        lambda title: (True, (b"\x89PNGbytes", "https://upload.wikimedia.org/a/b/Cat_photo.png")),
+    )
+    text, hist = diode.handle_command(
+        "commons Cat photo.png", {"enable_library": True, "fetch_budget": 5}, []
+    )
+    assert text.startswith("recorded as ")
+    assert text.endswith("(9 bytes)")
+    (name,) = os.listdir(tmp_path / "output")
+    assert name.endswith("_commons_Cat_photo_png.png")
+    assert (tmp_path / "output" / name).read_bytes() == b"\x89PNGbytes"
+    assert len(hist) == 1
+
+
+def test_handle_commons_falls_back_to_bin_for_a_strange_extension(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(
+        diode,
+        "_commons_request",
+        lambda title: (True, (b"data", "https://upload.wikimedia.org/a/b/strange.%2e%2e")),
+    )
+    text, hist = diode.handle_command(
+        "commons strange", {"enable_library": True, "fetch_budget": 5}, []
+    )
+    assert text.startswith("recorded as ")
+    (name,) = os.listdir(tmp_path / "output")
+    assert name.endswith("_commons_strange.bin")
+
+
+def test_write_commons_file_never_lets_a_title_escape_the_output_dir(tmp_path, monkeypatch):
+    out = tmp_path / "output"
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(out))
+    path = diode.write_commons_file("x" * 400, b"data", "jpg")
+    assert os.path.dirname(os.path.realpath(path)) == os.path.realpath(str(out))
+    assert len(os.path.basename(path).encode("utf-8")) <= 255
+
+
+def test_library_commands_share_the_fetch_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "_book_request", lambda book_id: (True, "text"))
+    variables = {"enable_library": True, "fetch_budget": 1}
+    text, hist = diode.handle_command("gutenberg 84", variables, [])
+    assert text.startswith("recorded as ")
+    text, hist = diode.handle_command("gutensearch whales", variables, hist)
+    assert text.startswith("rate limited")
+    assert len(hist) == 1
+
+
+def test_write_help_lists_instrument_and_library_commands(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({"enable_instruments": True, "enable_library": True})
+    text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "quakes -> return recent earthquakes: magnitude, place, time" in text
+    assert "airquality <lat,lon> -> return current air quality for coordinates" in text
+    assert "tides <lat,lon> -> return sea state for coordinates" in text
+    assert "solarwind -> return current solar wind conditions" in text
+    assert "gutensearch <query> -> return public domain book titles and ids for a query" in text
+    assert "gutenberg <id> -> fetch a public domain book as text in output/" in text
+    assert "commons <title> -> fetch a wikimedia commons media file in output/" in text
+    assert "enable_instruments: true, makes the instrument commands available" in text
+    assert "enable_library: true, makes the library commands available" in text
+
+
+def test_silence_returns_empty_text_without_gate_or_budget():
+    text, hist = diode.handle_command("silence", {}, [])
+    assert text == ""
+    assert hist == []
+
+
+def test_silence_leaves_an_empty_output_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    diode.run_command("silence", {}, [])
+    (name,) = os.listdir(tmp_path / "output")
+    assert (tmp_path / "output" / name).read_text(encoding="utf-8") == ""
+
+
+def test_silence_is_absent_from_listings_help_and_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    all_gates = {
+        "enable_fetchlinks": True,
+        "enable_clock": True,
+        "enable_feeds": True,
+        "enable_reference": True,
+        "enable_weather": True,
+        "enable_papers": True,
+        "enable_news": True,
+        "enable_entropy": True,
+        "enable_publishing": True,
+        "enable_scheduling": True,
+        "enable_clone": True,
+        "enable_instruments": True,
+        "enable_library": True,
+    }
+    assert "silence" not in diode.available_commands(all_gates)
+    assert diode.COMMANDS["silence"].get("hidden") is True
+    diode.write_help(all_gates)
+    assert "silence" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    diode.write_state(all_gates, [])
+    assert "silence" not in (tmp_path / "state.json").read_text(encoding="utf-8")
+
+
+def test_hidden_commands_emit_text_and_never_touch_the_network(tmp_path, monkeypatch):
+    # Hidden entries bypass gate evaluation, so a hidden command must never
+    # perform egress or spend, and its result must be text.
+    def _refuse(*args, **kwargs):
+        raise AssertionError("hidden commands must not build requests")
+
+    monkeypatch.setattr(diode, "_fetch", _refuse)
+    monkeypatch.setattr(diode, "_clone_request", _refuse)
+    monkeypatch.setattr(diode, "_speak_request", _refuse)
+    monkeypatch.setattr(diode, "_book_request", _refuse)
+    monkeypatch.setattr(diode, "_commons_request", _refuse)
+    monkeypatch.setattr(diode, "_make_opener", _refuse)
+    monkeypatch.setattr(diode.urllib.request, "build_opener", _refuse)
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    hidden = [name for name, spec in diode.COMMANDS.items() if spec.get("hidden")]
+    assert hidden
+    for name in hidden:
+        assert diode.COMMANDS[name]["help"] == ""
+        text, hist = diode.handle_command(name, {}, [])
+        assert isinstance(text, str), name
+        text.encode("utf-8")
+        assert hist == []

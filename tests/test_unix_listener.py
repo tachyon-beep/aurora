@@ -284,7 +284,10 @@ def test_poll_once_reports_rejections(tmp_path, transcripts, registry):
     assert servers == {}
 
 
-def test_a_settings_edit_applies_without_a_rebind(tmp_path, transcripts, registry, fake_upstream):
+def test_a_settings_edit_applies_without_a_rebind(
+    tmp_path, transcripts, registry, fake_upstream, monkeypatch
+):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW", "one,two")
     console = tmp_path / "console.json"
     state = tmp_path / "streams.json"
     servers = {}
@@ -308,6 +311,49 @@ def test_a_settings_edit_applies_without_a_rebind(tmp_path, transcripts, registr
         for server_instance in servers.values():
             server_instance.shutdown()
             server_instance.server_close()
+
+
+def test_poll_once_publishes_the_permitted_model_list(tmp_path, transcripts, registry, monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW", "a/b")
+    console = tmp_path / "console.json"
+    state = tmp_path / "streams.json"
+    proxy.poll_once(registry, {}, str(tmp_path), str(console), str(state))
+    document = json.loads((tmp_path / "models.json").read_text(encoding="utf-8"))
+    assert document == {"models": ["a/b"]}
+
+
+def test_poll_once_rejects_a_model_outside_the_allow_list(
+    tmp_path, transcripts, registry, monkeypatch
+):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW", "permitted")
+    console = tmp_path / "console.json"
+    state = tmp_path / "streams.json"
+    servers = {}
+    console.write_text(
+        json.dumps({"enable_streams": True, "streams": {"aux": {"model": "other"}}}),
+        encoding="utf-8",
+    )
+    proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
+    assert servers == {}
+    assert not (tmp_path / "aux.sock").exists()
+    document = json.loads(state.read_text(encoding="utf-8"))
+    assert document["streams"]["aux"] == {"status": "rejected", "reason": "model not permitted"}
+
+
+def test_core_forwards_any_model_regardless_of_the_allow_list(server, transcripts, monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW", "only-this")
+    seen = {}
+    real_request = proxy.urllib.request.Request
+
+    def capture(url, data=None, headers=None, method=None):
+        seen["data"] = data
+        return real_request(url, data=data, headers=headers, method=method)
+
+    monkeypatch.setattr(proxy.urllib.request, "Request", capture)
+    payload = {"model": "something-else", "messages": []}
+    response = _post(server, payload)
+    assert response.status_code == 200
+    assert json.loads(seen["data"].decode("utf-8")) == payload
 
 
 def test_sweep_removes_only_unserved_sockets(tmp_path):

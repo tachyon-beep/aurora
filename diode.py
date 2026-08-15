@@ -26,6 +26,7 @@ FETCH_TIMEOUT = 15
 MAX_RESPONSE_BYTES = 2_000_000
 DEFAULT_FETCH_LIMIT = 1
 FETCH_WINDOW = 3600
+DIODE_LIMIT_MAX = 120
 
 OUTPUT_NAME_MAX_BYTES = 160
 
@@ -47,6 +48,17 @@ CLONE_URL_TEMPLATE = "https://codeload.github.com/{owner}/{repo}/tar.gz/{ref}"
 CLONE_MAX_BYTES_DEFAULT = 50_000_000
 CLONE_NAME_PATTERN = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})\Z")
 CLONE_REF_PATTERN = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9._/-]{0,199})\Z")
+
+QUAKES_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
+SOLARWIND_URL = "https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json"
+
+BOOK_URL_TEMPLATE = "https://www.gutenberg.org/ebooks/{book_id}.txt.utf-8"
+BOOK_MAX_BYTES = 2_000_000
+BOOK_ID_PATTERN = re.compile(r"\A[0-9]{1,10}\Z")
+
+COMMONS_URL_TEMPLATE = "https://commons.wikimedia.org/wiki/Special:FilePath/{title}"
+IMAGE_MAX_BYTES = 10_000_000
+MEDIA_EXTENSION_PATTERN = re.compile(r"\A[a-z0-9]{1,5}\Z")
 
 SPEECH_URL_TEMPLATE = (
     "https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"
@@ -142,6 +154,20 @@ def fetch_limit(variables):
         return DEFAULT_FETCH_LIMIT
 
 
+def diode_limit_max():
+    """The hourly ceiling on network operations, from the environment.
+
+    Not settable from the console; the console budget is clamped to it.
+    """
+    raw = os.environ.get("DIODE_HOURLY_MAX", "").strip()
+    if not raw:
+        return DIODE_LIMIT_MAX
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DIODE_LIMIT_MAX
+
+
 def rate_limited_message(limit, history, now, window):
     """The refusal text for an exhausted budget, carrying the wait when one is known."""
     text = f"rate limited: at most {limit} network operation(s) per hour"
@@ -155,12 +181,6 @@ def command_word(command):
     """The command name at the head of a command string."""
     parts = command.split(None, 1)
     return parts[0] if parts else ""
-
-
-def output_command_word(filename):
-    """The command name carried in an output filename, without its stamp or argument."""
-    stem = re.sub(r"\A[0-9_]+", "", os.path.splitext(filename)[0])
-    return stem.split("_", 1)[0]
 
 
 def parse_delay(arg):
@@ -280,6 +300,14 @@ def _news_gate(variables):
     return bool(variables.get("enable_news"))
 
 
+def _instruments_gate(variables):
+    return bool(variables.get("enable_instruments"))
+
+
+def _library_gate(variables):
+    return bool(variables.get("enable_library"))
+
+
 COMMANDS = {
     "help": {"gate": _gate_always, "help": "help -> write the current command list to HELP.md"},
     "fetchhttp": {
@@ -332,6 +360,34 @@ COMMANDS = {
         "help": "clone <owner>/<repo> [ref] -> fetch a public github repository "
         "as a tar.gz file in output/",
     },
+    "quakes": {
+        "gate": _instruments_gate,
+        "help": "quakes -> return recent earthquakes: magnitude, place, time",
+    },
+    "airquality": {
+        "gate": _instruments_gate,
+        "help": "airquality <lat,lon> -> return current air quality for coordinates",
+    },
+    "tides": {
+        "gate": _instruments_gate,
+        "help": "tides <lat,lon> -> return sea state for coordinates",
+    },
+    "solarwind": {
+        "gate": _instruments_gate,
+        "help": "solarwind -> return current solar wind conditions",
+    },
+    "gutensearch": {
+        "gate": _library_gate,
+        "help": "gutensearch <query> -> return public domain book titles and ids for a query",
+    },
+    "gutenberg": {
+        "gate": _library_gate,
+        "help": "gutenberg <id> -> fetch a public domain book as text in output/",
+    },
+    "commons": {
+        "gate": _library_gate,
+        "help": "commons <title> -> fetch a wikimedia commons media file in output/",
+    },
     "secret": {
         "gate": _gate_always,
         "help": "",
@@ -343,6 +399,11 @@ COMMANDS = {
         "hidden": True,
     },
     "echo": {
+        "gate": _gate_always,
+        "help": "",
+        "hidden": True,
+    },
+    "silence": {
         "gate": _gate_always,
         "help": "",
         "hidden": True,
@@ -373,38 +434,6 @@ def available_commands(variables):
         for name, spec in COMMANDS.items()
         if spec["gate"](variables) and not spec.get("hidden")
     ]
-
-
-def undocumented_command_count(found=()):
-    """Number of unlisted commands that have not been run."""
-    return len(
-        [name for name, spec in COMMANDS.items() if spec.get("hidden") and name not in found]
-    )
-
-
-def hidden_commands_run(output_dir):
-    """Names of unlisted commands with a result file that is not an unknown-command refusal.
-
-    A refused guess and a real run leave the same filename, so the body decides.
-    """
-    unlisted = {name for name, spec in COMMANDS.items() if spec.get("hidden")}
-    found = set()
-    try:
-        filenames = os.listdir(output_dir)
-    except OSError:
-        return found
-    for filename in filenames:
-        word = output_command_word(filename)
-        if word not in unlisted or word in found:
-            continue
-        try:
-            with open(os.path.join(output_dir, filename), "r", encoding="utf-8") as f:
-                body = f.read(200)
-        except OSError:
-            continue
-        if body.strip() != UNKNOWN_COMMAND.format(name=word):
-            found.add(word)
-    return found
 
 
 def load_console():
@@ -472,6 +501,8 @@ def write_help(variables):
     lines.append("  enable_publishing: true, makes the publish command available")
     lines.append("  enable_scheduling: true, makes the delayed command available")
     lines.append("  enable_clone: true, makes the repository fetch command available")
+    lines.append("  enable_instruments: true, makes the instrument commands available")
+    lines.append("  enable_library: true, makes the library commands available")
     if speech_configured():
         lines.append("  enable_speech: true, makes the speak command available")
     text = "\n".join(lines) + "\n"
@@ -479,7 +510,7 @@ def write_help(variables):
         f.write(text)
 
 
-def write_state(variables, recent_fetches, budget=None, found=(), pending=0):
+def write_state(variables, recent_fetches, budget=None, pending=0):
     """Write current variables, available commands, recent fetch stamps, and file counts."""
     try:
         output_count = len(os.listdir(OUTPUT_DIR))
@@ -488,7 +519,6 @@ def write_state(variables, recent_fetches, budget=None, found=(), pending=0):
     state = {
         "variables": variables,
         "available_commands": available_commands(variables),
-        "undocumented_commands": undocumented_command_count(found),
         "recent_fetches": recent_fetches,
         "output_count": output_count,
     }
@@ -686,6 +716,76 @@ def _weather_lines(body):
     return "\n".join(lines)
 
 
+def _quake_lines(body):
+    """Return magnitude, place, and time lines from a GeoJSON earthquake feed."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return "could not parse response"
+    features = data.get("features") if isinstance(data, dict) else None
+    if not isinstance(features, list):
+        return "(no earthquakes found)"
+    lines = []
+    for feature in features:
+        properties = feature.get("properties") if isinstance(feature, dict) else None
+        if not isinstance(properties, dict):
+            continue
+        magnitude = properties.get("mag")
+        magnitude = "" if magnitude is None else magnitude
+        place = properties.get("place") or ""
+        moment = ""
+        try:
+            seconds = float(properties.get("time")) / 1000.0
+            moment = datetime.datetime.fromtimestamp(seconds, datetime.timezone.utc).isoformat()
+        except (TypeError, ValueError, OverflowError, OSError):
+            pass
+        lines.append(f"M{magnitude} — {place} — {moment}")
+        if len(lines) >= FEED_ITEM_CAP:
+            break
+    if not lines:
+        return "(no earthquakes found)"
+    return "\n".join(lines)
+
+
+def _solarwind_lines(body):
+    """Return key: value lines from a solar wind summary response."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return "could not parse response"
+    if not isinstance(data, dict) or not data:
+        return "(no current conditions found)"
+    return "\n".join(f"{key}: {value}" for key, value in data.items())
+
+
+def _gutensearch_lines(body):
+    """Return id, title, and first author lines from a book search response."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return "could not parse response"
+    results = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(results, list):
+        return "(no books found)"
+    lines = []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        book_id = result.get("id")
+        book_id = "" if book_id is None else book_id
+        title = str(result.get("title") or "")[:FEED_TITLE_CAP]
+        authors = result.get("authors")
+        author = ""
+        if isinstance(authors, list) and authors and isinstance(authors[0], dict):
+            author = str(authors[0].get("name") or "")[:FEED_TITLE_CAP]
+        lines.append(f"{book_id} — {title} — {author}")
+        if len(lines) >= FEED_ITEM_CAP:
+            break
+    if not lines:
+        return "(no books found)"
+    return "\n".join(lines)
+
+
 class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         ok, reason = classify_url(newurl)
@@ -785,6 +885,100 @@ def write_clone_archive(owner, repo, archive):
     path = os.path.join(OUTPUT_DIR, f"{stamp}_clone_{owner}_{repo}.tar.gz")
     with open(path, "wb") as f:
         f.write(archive)
+    return path
+
+
+def _book_request(book_id):
+    """Fetch a public domain book as text. Returns (ok, text_or_reason).
+
+    The host is a constant and the id is pattern-validated. A response larger
+    than the ceiling is refused rather than truncated: a truncated book would
+    read as a complete one.
+    """
+    url = BOOK_URL_TEMPLATE.format(book_id=book_id)
+    ok, reason = classify_url(url)
+    if not ok:
+        return False, f"refused: {reason}"
+    try:
+        opener = _make_opener()
+        req = urllib.request.Request(url, headers={"User-Agent": "aurora-diode/1"})
+        with opener.open(req, timeout=FETCH_TIMEOUT) as resp:
+            body = resp.read(BOOK_MAX_BYTES + 1)
+    except urllib.error.HTTPError as e:
+        return False, f"fetch error: status {e.code}"
+    except Exception as e:
+        return False, f"fetch error: {type(e).__name__}"
+    if not body:
+        return False, "fetch error: empty response"
+    if len(body) > BOOK_MAX_BYTES:
+        return False, f"refused: book exceeds {BOOK_MAX_BYTES} bytes"
+    return True, body.decode("utf-8", errors="replace")
+
+
+def write_book(book_id, text):
+    """Write a book's text to OUTPUT_DIR, return the path.
+
+    The name carries a timestamp and the pattern-validated id. The text is
+    written as received.
+    """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    path = os.path.join(OUTPUT_DIR, f"{stamp}_gutenberg_{book_id}.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return path
+
+
+def _commons_request(title):
+    """Fetch a media file by title. Returns (ok, (content, final_url) or reason).
+
+    The host is a constant and the title is percent-encoded into a single path
+    component. The redirect to the file host is re-validated by the redirect
+    handler. A response larger than the ceiling is refused rather than
+    truncated.
+    """
+    url = COMMONS_URL_TEMPLATE.format(title=quote(title, safe=""))
+    ok, reason = classify_url(url)
+    if not ok:
+        return False, f"refused: {reason}"
+    try:
+        opener = _make_opener()
+        req = urllib.request.Request(url, headers={"User-Agent": "aurora-diode/1"})
+        with opener.open(req, timeout=FETCH_TIMEOUT) as resp:
+            content = resp.read(IMAGE_MAX_BYTES + 1)
+            final_url = resp.geturl()
+    except urllib.error.HTTPError as e:
+        return False, f"fetch error: status {e.code}"
+    except Exception as e:
+        return False, f"fetch error: {type(e).__name__}"
+    if not content:
+        return False, "fetch error: empty response"
+    if len(content) > IMAGE_MAX_BYTES:
+        return False, f"refused: media file exceeds {IMAGE_MAX_BYTES} bytes"
+    return True, (content, final_url)
+
+
+def media_extension(url):
+    """The lowercased extension of a URL path when it is a short plain token, else bin."""
+    extension = os.path.splitext(urlparse(url).path)[1].lstrip(".").lower()
+    return extension if MEDIA_EXTENSION_PATTERN.match(extension) else "bin"
+
+
+def write_commons_file(title, content, extension):
+    """Write a media file to OUTPUT_DIR, return the path.
+
+    The name carries a timestamp, the title with every non-alphanumeric
+    character replaced by an underscore, and a pattern-checked extension, so
+    no separator or traversal sequence survives. The content is written as
+    received.
+    """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    safe = "".join(c if c.isalnum() else "_" for c in title)
+    safe = safe.encode("utf-8")[:OUTPUT_NAME_MAX_BYTES].decode("utf-8", "ignore")
+    path = os.path.join(OUTPUT_DIR, f"{stamp}_commons_{safe}.{extension}")
+    with open(path, "wb") as f:
+        f.write(content)
     return path
 
 
@@ -898,6 +1092,9 @@ def handle_command(command, variables, fetch_history):
         except OSError:
             return "not available", fetch_history
 
+    if name == "silence":
+        return "", fetch_history
+
     if name in DEFERRING_COMMANDS:
         tail = "<message>" if name == "echo" else "<command>"
         usage = f"usage: {name} <seconds> {tail} with seconds from 0 to {ECHO_DELAY_MAX}"
@@ -945,7 +1142,7 @@ def handle_command(command, variables, fetch_history):
     if name == "speak":
         if not arg:
             return "usage: speak <text>", fetch_history
-        limit = min(fetch_limit(variables), speech_limit())
+        limit = min(fetch_limit(variables), diode_limit_max(), speech_limit())
         now = time.time()
         allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
         if not allowed:
@@ -961,7 +1158,7 @@ def handle_command(command, variables, fetch_history):
         parsed = parse_clone_arg(arg)
         if parsed is None:
             return "usage: clone <owner>/<repo> [ref]", fetch_history
-        limit = fetch_limit(variables)
+        limit = min(fetch_limit(variables), diode_limit_max())
         now = time.time()
         allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
         if not allowed:
@@ -973,7 +1170,51 @@ def handle_command(command, variables, fetch_history):
         path = write_clone_archive(owner, repo, archive)
         return f"recorded as {os.path.basename(path)} ({len(archive)} bytes)", fetch_history
 
-    if name in ("fetchrss", "wikipedia", "weather", "arxiv") or name in NEWS_SOURCES:
+    if name == "gutenberg":
+        if not BOOK_ID_PATTERN.match(arg):
+            return "usage: gutenberg <id>", fetch_history
+        limit = min(fetch_limit(variables), diode_limit_max())
+        now = time.time()
+        allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
+        if not allowed:
+            return rate_limited_message(limit, fetch_history, now, FETCH_WINDOW), fetch_history
+        ok, text = _book_request(arg)
+        if not ok:
+            return text, fetch_history
+        path = write_book(arg, text)
+        return f"recorded as {os.path.basename(path)}", fetch_history
+
+    if name == "commons":
+        title = arg[:200]
+        if not title or "/" in title or "\\" in title or ".." in title:
+            return "usage: commons <title>", fetch_history
+        limit = min(fetch_limit(variables), diode_limit_max())
+        now = time.time()
+        allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
+        if not allowed:
+            return rate_limited_message(limit, fetch_history, now, FETCH_WINDOW), fetch_history
+        ok, payload = _commons_request(title)
+        if not ok:
+            return payload, fetch_history
+        content, final_url = payload
+        path = write_commons_file(title, content, media_extension(final_url))
+        return f"recorded as {os.path.basename(path)} ({len(content)} bytes)", fetch_history
+
+    if (
+        name
+        in (
+            "fetchrss",
+            "wikipedia",
+            "weather",
+            "arxiv",
+            "quakes",
+            "airquality",
+            "tides",
+            "solarwind",
+            "gutensearch",
+        )
+        or name in NEWS_SOURCES
+    ):
         if name == "fetchrss":
             url = arg
         elif name == "wikipedia":
@@ -1003,9 +1244,42 @@ def handle_command(command, variables, fetch_history):
                 + quote(query, safe="")
                 + "&max_results=5"
             )
+        elif name == "quakes":
+            url = QUAKES_URL
+        elif name == "airquality":
+            coords = _parse_coordinates(arg)
+            if coords is None:
+                return (
+                    "usage: airquality <lat,lon> with lat from -90 to 90 and lon from -180 to 180",
+                    fetch_history,
+                )
+            url = (
+                "https://air-quality-api.open-meteo.com/v1/air-quality"
+                f"?latitude={coords[0]}&longitude={coords[1]}"
+                "&current=pm2_5,pm10,ozone,nitrogen_dioxide,us_aqi"
+            )
+        elif name == "tides":
+            coords = _parse_coordinates(arg)
+            if coords is None:
+                return (
+                    "usage: tides <lat,lon> with lat from -90 to 90 and lon from -180 to 180",
+                    fetch_history,
+                )
+            url = (
+                "https://marine-api.open-meteo.com/v1/marine"
+                f"?latitude={coords[0]}&longitude={coords[1]}"
+                "&current=wave_height,wave_direction,wave_period,sea_surface_temperature"
+            )
+        elif name == "solarwind":
+            url = SOLARWIND_URL
+        elif name == "gutensearch":
+            query = arg[:200]
+            if not query:
+                return "usage: gutensearch <query>", fetch_history
+            url = "https://gutendex.com/books?search=" + quote(query, safe="")
         else:
             url = NEWS_SOURCES[name][1]
-        limit = fetch_limit(variables)
+        limit = min(fetch_limit(variables), diode_limit_max())
         now = time.time()
         allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
         if not allowed:
@@ -1034,10 +1308,16 @@ def handle_command(command, variables, fetch_history):
             return "\n".join(lines), fetch_history
         if name == "wikipedia":
             return _wikipedia_extract(body), fetch_history
+        if name == "quakes":
+            return _quake_lines(body), fetch_history
+        if name == "solarwind":
+            return _solarwind_lines(body), fetch_history
+        if name == "gutensearch":
+            return _gutensearch_lines(body), fetch_history
         return _weather_lines(body), fetch_history
 
     if name in ("fetchhttp", "fetchlinks"):
-        limit = fetch_limit(variables)
+        limit = min(fetch_limit(variables), diode_limit_max())
         now = time.time()
         allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
         if not allowed:
@@ -1068,16 +1348,13 @@ def write_readme():
         f.write(text)
 
 
-def run_command(command, variables, fetch_history, found):
-    """Run one command, file its result, and record it when it is unlisted."""
+def run_command(command, variables, fetch_history):
+    """Run one command and file its result."""
     try:
         text, fetch_history = handle_command(command, variables, fetch_history)
     except Exception as e:
         text = f"error running command: {e}"
     write_output(command, text)
-    word = command_word(command)
-    if COMMANDS.get(word, {}).get("hidden"):
-        found.add(word)
     return fetch_history
 
 
@@ -1088,7 +1365,6 @@ def run_diode():
         with open(CONSOLE_FILE, "w", encoding="utf-8") as f:
             json.dump({"commands": ["help"], "variables": {}}, f, indent=2)
     fetch_history = []
-    found = hidden_commands_run(OUTPUT_DIR)
     while True:
         commands, variables = load_console()
         commands_valid = all(isinstance(command, str) for command in commands)
@@ -1105,17 +1381,16 @@ def run_diode():
             if refusal is not None:
                 write_output(command, refusal)
                 continue
-            fetch_history = run_command(command, variables, fetch_history, found)
+            fetch_history = run_command(command, variables, fetch_history)
         consume_batch()
         if commands_valid:
             for command in commands:
-                fetch_history = run_command(command, variables, fetch_history, found)
+                fetch_history = run_command(command, variables, fetch_history)
         write_help(variables)
         write_state(
             variables,
             [str(t) for t in fetch_history],
             budget_status(fetch_history, time.time(), FETCH_WINDOW),
-            found,
             len(load_pending()),
         )
         time.sleep(POLL_SECONDS)
