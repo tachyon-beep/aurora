@@ -34,5 +34,6 @@ z3-solver
 tenacity
 hy
 jplephem
+model2vec
 filigree
 loomweave

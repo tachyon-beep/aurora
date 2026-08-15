@@ -53,5 +53,13 @@ docker run --rm -v "$OUT":/out debian:trixie-slim sh -c "
     mv /out/lisp.tmp /out/lisp"
 echo "   bundle: $(ls "$OUT"/lisp | head -4 | tr '\n' ' ')"
 
+echo "== embeddings: static sentence embedding model"
+MODEL_DIR="$OUT/models/potion-base-8m"
+mkdir -p "$MODEL_DIR"
+for f in model.safetensors tokenizer.json config.json; do
+    [ -s "$MODEL_DIR/$f" ] || curl -sSL --retry 3 -o "$MODEL_DIR/$f" \
+        "https://huggingface.co/minishlab/potion-base-8M/resolve/main/$f"
+done
+
 echo "== done: $OUT"
-du -sh "$OUT"/registry "$OUT"/lisp
+du -sh "$OUT"/registry "$OUT"/lisp "$OUT"/models

@@ -96,9 +96,22 @@ client, no network) built by `scripts/build_vendor.sh` in a container, into
 lparallel, cl-ppcre, iterate, esrap, trivia, closer-mop, usocket, yason,
 jsown, fset, local-time, str, fiveam, cffi, hunchentoot, slynk, cl-sqlite.
 
+### Static embeddings (`/vendor/models`)
+
+A Model2Vec static sentence-embedding model (potion-base-8M, ~30 MB:
+model.safetensors, tokenizer.json, config.json) fetched by
+`scripts/build_vendor.sh`. Inference is numpy-only through the `model2vec`
+package (deps: numpy, safetensors, tokenizers — no torch, no onnxruntime),
+so this stays outside the ML-runtime class CLAUDE.md restricts; this section
+is the required design decision and measurement. It gives the agent a bulk
+semantic-similarity faculty for organizing its own artifacts. Verified
+loading and embedding offline from the local directory. A hosted
+high-quality embedder as a gated diode command remains a possible future
+channel spec; it composes with, and does not replace, this local faculty.
+
 ### Python additions (`requirements-agent.txt`)
 
-z3-solver, tenacity, hy, filigree, loomweave. filigree and loomweave install
+z3-solver, tenacity, hy, jplephem, model2vec, filigree, loomweave. filigree and loomweave install
 from wheels built out of the operator's local source trees (`~/filigree`,
 `~/loomweave`) by `scripts/build_local_wheels.sh` into `vendor/wheels/`
 (gitignored); the Dockerfile installs the wheels before the requirements

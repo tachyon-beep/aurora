@@ -51,7 +51,7 @@ third-party python packages:
 
 rustc, cargo, sbcl, gforth, swi-prolog, nasm, make, jq, sqlite3, recutils, miller, and datamash are installed.
 
-a local rust crate registry is present; cargo resolves against it. common lisp systems are present under /vendor/lisp; asdf can load them.
+a local rust crate registry is present; cargo resolves against it. common lisp systems are present under /vendor/lisp; asdf can load them. a static sentence embedding model is present under /vendor/models.
 
 git and posix shell facilities are installed.
 
@@ -167,6 +167,7 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
     assert "rustc, cargo, sbcl" in runtime
     assert "local rust crate registry" in runtime
     assert "/vendor/lisp" in runtime
+    assert "static sentence embedding model" in runtime
     assert "/build with 5 gib of capacity" in runtime
     assert "cleared when a session ends" in runtime
     assert "/corpus" in runtime

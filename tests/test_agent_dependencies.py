@@ -40,6 +40,7 @@ EXPECTED_PACKAGES = [
     "tenacity",
     "hy",
     "jplephem",
+    "model2vec",
     "filigree",
     "loomweave",
 ]
