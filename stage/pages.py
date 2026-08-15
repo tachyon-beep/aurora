@@ -53,8 +53,14 @@ let root = "telemetry";
 let path = "";
 function api(url) {
   return fetch(url, {headers: {"X-Console-Token": token}}).then(r => {
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    return r.json();
+    if (r.ok) return r.json();
+    return r.json().then(function (body) {
+      var msg = (body && body.error) || ("request failed with status " + r.status);
+      if (r.status === 401) msg += " — append ?token=<STAGE_CONSOLE_TOKEN> and reload";
+      throw new Error(msg);
+    }, function () {
+      throw new Error("request failed with status " + r.status);
+    });
   });
 }
 function crumb() {
@@ -99,7 +105,7 @@ function show(p, tail) {
       ev.preventDefault();
       const url = `/download?root=${root}&path=${encodeURIComponent(p)}`;
       fetch(url, {headers: {"X-Console-Token": token}}).then(r => {
-        if (!r.ok) throw new Error("HTTP " + r.status);
+        if (!r.ok) throw new Error("download failed with status " + r.status);
         return r.blob();
       }).then(blob => {
         const objectUrl = URL.createObjectURL(blob);

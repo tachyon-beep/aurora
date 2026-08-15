@@ -423,3 +423,11 @@ def test_console_declares_a_visible_focus_state():
 
 def test_console_root_select_is_labelled():
     assert 'aria-label="browse root"' in CONSOLE
+
+
+def test_console_surfaces_the_servers_own_error_message():
+    """The server distinguishes 'no token configured' from 'invalid token'. Showing
+    the operator 'HTTP 401' throws that distinction away."""
+    assert 'new Error("HTTP ' not in CONSOLE
+    assert "r.json().then" in CONSOLE
+    assert "append ?token=" in CONSOLE
