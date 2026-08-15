@@ -290,9 +290,11 @@ def test_the_provenance_line_states_the_containment():
 
 def test_the_provenance_rotation_still_states_the_containment_when_paused():
     """prefers-reduced-motion stops the rotation, so whichever line is showing must
-    be one that still carries a containment fact — not a bare refresh notice."""
-    rotation = HTML[HTML.index("PROVENANCE_LINES") :]
-    rotation = rotation[: rotation.index("/* ---------- render ----------")]
+    be one that still carries a containment fact — not a bare refresh notice.
+    Scoped to showProvenance/rotateProvenance themselves (not the wider script,
+    which uses REDUCED five more times for unrelated reasons) so deleting the
+    rotation's own `if (!REDUCED)` guard is what makes this fail."""
+    rotation = HTML[HTML.index("function showProvenance()") : HTML.index("function fmt(n)")]
     assert "REDUCED" in rotation
     first = HTML[HTML.index("PROVENANCE_LINES") :]
     first = first[first.index("[") + 1 : first.index("]")].strip().splitlines()[0]
