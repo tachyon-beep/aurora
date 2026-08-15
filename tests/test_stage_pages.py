@@ -431,3 +431,13 @@ def test_console_surfaces_the_servers_own_error_message():
     assert 'new Error("HTTP ' not in CONSOLE
     assert "r.json().then" in CONSOLE
     assert "append ?token=" in CONSOLE
+
+
+def test_console_diff_button_reports_its_own_failure():
+    """The diff button is the one action an operator explicitly triggers. Without a
+    .catch, a failed request leaves the pane showing stale content with no sign the
+    click did anything — a silent wrong answer, not just an ugly one."""
+    start = CONSOLE.index('document.getElementById("diff").onclick')
+    end = CONSOLE.index("};", start)
+    handler = CONSOLE[start:end]
+    assert ".catch(err =>" in handler, handler

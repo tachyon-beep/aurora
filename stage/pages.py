@@ -130,7 +130,7 @@ document.getElementById("diff").onclick = () => {
   api("/api/diff").then(d => {
     document.getElementById("viewbar").textContent = "agent.py vs agent_stock.py";
     document.getElementById("content").textContent = d.diff || "(no differences)";
-  });
+  }).catch(err => { document.getElementById("content").textContent = String(err); });
 };
 const sel = document.getElementById("root");
 api("/api/roots").then(roots => {
