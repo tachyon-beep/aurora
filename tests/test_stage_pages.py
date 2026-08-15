@@ -174,13 +174,34 @@ def test_the_playback_freshness_gate_matches_the_commentary_recency_window():
     assert int(match.group(1)) == commentary.RECENT_SECONDS * 1000
 
 
-def test_stream_page_renders_lanes():
-    html = pages.STREAM_PAGE_HTML
-    assert 'id="lanes"' in html
-    assert "renderLanes" in html
-    assert "snap.lanes" in html
-    assert "in_flight_since" in html
-    assert "tokens_hour" in html
+def test_the_streams_have_their_own_panel_not_a_masthead_row():
+    """#lanes was a flex row of one chip per declared stream in a fixed-width
+    masthead. The stream count is agent-controlled: at six it crushed the legend."""
+    assert 'id="lanes"' not in HTML
+    assert 'id="streams"' in HTML
+    assert 'id="stream-rows"' in HTML
+    assert "renderLanes" in HTML
+    assert "snap.lanes" in HTML
+    assert "tokens_hour" in HTML
+
+
+def test_the_streams_panel_says_which_one_the_harness_gave_it():
+    """core is the socket the agent was born with; every other stream it declared.
+    That distinction is the entire point of the panel."""
+    assert "GIVEN" in HTML
+    assert "BUILT" in HTML
+
+
+def test_the_legend_no_longer_shares_a_row_with_the_streams():
+    mh_b = HTML[HTML.index('id="mh-b"') : HTML.index('id="death-sweep"')]
+    assert "c-think" in mh_b and "c-say" in mh_b and "c-act" in mh_b
+    assert "lane" not in mh_b
+
+
+def test_the_ribbon_gives_the_streams_the_widest_column():
+    block = HTML[HTML.index("#ribbon {") :]
+    block = block[: block.index("}")]
+    assert "grid-template-columns: 1fr 1.6fr 1fr" in block, block
 
 
 def _clamp_lines(selector):

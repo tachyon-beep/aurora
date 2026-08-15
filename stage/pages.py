@@ -218,11 +218,6 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .chip.c-act b { color: var(--act); }
 #provenance { margin-left: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); }
 #provenance.offline { color: var(--fault); }
-#lanes { display: flex; align-items: center; gap: 18px; }
-#lanes .chip b { color: var(--paper-dim); }
-#lanes .chip .dot.live { background: var(--act); }
-#lanes .chip .dot.idle { background: none; border: 1px solid var(--paper-faint); }
-
 #death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 2px;
   background: var(--taken); z-index: 20; transform-origin: left; transform: scaleX(1); }
 #death-sweep.sweeping { animation: sweep 900ms cubic-bezier(.22,.61,.36,1); }
@@ -414,10 +409,26 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
   overflow: hidden; }
 
 /* ---------- ribbon ---------- */
-#ribbon { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: repeat(3, 1fr);
+#ribbon { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: 1fr 1.6fr 1fr;
   gap: 20px; min-height: 0; }
 #ribbon .panel { padding: 10px 18px; }
 #ribbon .ptitle { margin-bottom: 8px; }
+#stream-rows { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr);
+  column-gap: 22px; align-content: start; overflow: hidden; }
+.lane-row { display: grid; grid-template-columns: 12px 74px 1fr; column-gap: 8px;
+  align-items: baseline; height: 20px; font: 400 13px/20px var(--mono);
+  font-variant-numeric: tabular-nums; }
+.lane-row .l-dot { width: 6px; height: 6px; border-radius: 50%; align-self: center;
+  background: none; border: 1px solid var(--paper-faint); }
+.lane-row.live .l-dot { background: var(--act); border-color: var(--act); }
+.lane-row.unbound { color: var(--paper-faint); }
+.lane-row .l-name { color: var(--paper-dim); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.lane-row.given .l-name { color: var(--vital); }
+.lane-row .l-meta { color: var(--paper-faint); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+#stream-foot { margin-top: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint);
+  flex: none; }
 .rows { flex: 1; min-height: 0; overflow: hidden; }
 .rrow { display: grid; align-items: center; height: 21px; font: 400 14px/21px var(--mono); }
 #selfmod-rows .rrow { grid-template-columns: 46px 1fr; }
@@ -511,7 +522,6 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <span class="chip c-think"><i class="dot think"></i><b>THOUGHT</b><em>private reasoning</em></span>
       <span class="chip c-say"><i class="dot say"></i><b>SPEECH</b><em>said out loud</em></span>
       <span class="chip c-act"><i class="dot act"></i><b>ACTION</b><em>tool calls</em></span>
-      <span id="lanes"></span>
       <span id="provenance">the transcript is the proxy's, not the agent's &middot; refreshed every 2s</span>
     </div>
     <div id="death-sweep" hidden></div>
@@ -590,6 +600,11 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
     <section id="selfmod" class="panel">
       <div class="ptitle"><span>WHAT IT DID TO ITSELF</span><span id="selfmod-count"></span></div>
       <div class="rows" id="selfmod-rows"></div>
+    </section>
+    <section id="streams" class="panel">
+      <div class="ptitle"><span>WHAT IT THINKS WITH</span><span id="stream-count"></span></div>
+      <div id="stream-rows"></div>
+      <div id="stream-foot"></div>
     </section>
     <section id="asked" class="panel">
       <div class="ptitle"><span>WHAT IT ASKED THE WORLD</span><span id="asked-count"></span></div>
@@ -1541,24 +1556,33 @@ function laneCount(n) {
   return String(n);
 }
 function renderLanes() {
-  var host = $("lanes"), lanes = (snap && snap.lanes) || [];
+  var host = $("stream-rows"), lanes = (snap && snap.lanes) || [];
   if (!host) return;
-  while (host.children.length > lanes.length) host.removeChild(host.lastChild);
-  for (var i = 0; i < lanes.length; i++) {
-    var lane = lanes[i], node = host.children[i];
+  var shown = lanes.slice(0, 8), built = 0, live = 0;
+  while (host.children.length > shown.length) host.removeChild(host.lastChild);
+  for (var i = 0; i < shown.length; i++) {
+    var lane = shown[i], node = host.children[i];
     if (!node) {
-      node = document.createElement("span");
-      node.className = "chip lane";
-      node.appendChild(document.createElement("i"));
-      node.appendChild(document.createElement("b"));
-      node.appendChild(document.createElement("em"));
-      host.appendChild(node);
+      node = el("div", "lane-row", host);
+      el("i", "l-dot", node);
+      el("span", "l-name", node);
+      el("span", "l-meta", node);
     }
-    node.children[0].className = "dot " + (lane.in_flight > 0 ? "live breathe" : "idle");
+    var given = lane.name === "core";
+    if (!given) built++;
+    if (lane.in_flight > 0) live++;
+    node.className = "lane-row" + (given ? " given" : "") +
+      (lane.in_flight > 0 ? " live" : "") + (lane.bound ? "" : " unbound");
     setText(node.children[1], norm(lane.name).toUpperCase());
     setText(node.children[2],
       laneCount(lane.requests_hour) + "/h · " + laneCount(lane.tokens_hour) + " tok");
   }
+  setText($("stream-count"),
+    lanes.length ? "1 GIVEN · " + built + " BUILT" : "");
+  var hidden = lanes.length - shown.length;
+  setText($("stream-foot"), hidden > 0
+    ? hidden + " more stream" + (hidden === 1 ? "" : "s") + " not shown"
+    : (lanes.length ? live + " in flight" : "It thinks with the one socket it was given."));
 }
 
 /* ---------- render ---------- */
