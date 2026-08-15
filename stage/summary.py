@@ -212,7 +212,8 @@ def _cap_sections(sections, cap):
 
 
 def _collect(telemetry_dir, transcript_path):
-    """Assemble the model prompt plus the digest material that excludes elapsed time."""
+    """Assemble the model prompt, the digest material whose hash gates regeneration,
+    and the current incarnation number."""
     work_dir = os.path.join(telemetry_dir, "work")
     notes, tombstone_count = _tombstone_notes(work_dir)
     facts = _transcript_facts(transcript_path, work_dir)
