@@ -441,3 +441,10 @@ def test_console_diff_button_reports_its_own_failure():
     end = CONSOLE.index("};", start)
     handler = CONSOLE[start:end]
     assert ".catch(err =>" in handler, handler
+
+
+def test_the_grounded_count_sits_beside_the_interpretation():
+    """The colour line is a model's reading of a beat. The beat's own counted fact
+    belongs next to it, in the deterministic row, not behind it."""
+    assert 'id="play-evidence"' in HTML
+    assert HTML.index('id="play-evidence"') < HTML.index('id="now-colour"')

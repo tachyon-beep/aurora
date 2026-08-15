@@ -371,6 +371,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #play-tag { color: var(--world); flex: none; }
 #play-phrase { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; }
+#play-evidence { flex: none; color: var(--paper-faint); font-variant-numeric: tabular-nums; }
 #play-age { flex: none; color: var(--paper-faint); font-variant-numeric: tabular-nums; }
 #now-colour { font-family: var(--sans); font-size: 17px; line-height: 24px;
   color: var(--paper); margin: 6px 0 0 0; display: -webkit-box; -webkit-box-orient: vertical;
@@ -582,7 +583,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
     <section id="story" class="panel">
       <div class="ptitle"><span>THE STORY SO FAR</span></div>
       <div id="now">
-        <div id="now-play"><span id="play-tag"></span><span id="play-phrase"></span><span id="play-age"></span></div>
+        <div id="now-play"><span id="play-tag"></span><span id="play-phrase"></span><span id="play-evidence"></span><span id="play-age"></span></div>
         <p id="now-colour"></p>
         <div id="now-by">&mdash; the stage, not the subject</div>
       </div>
@@ -1211,6 +1212,7 @@ function renderNow() {
   var c = (snap.commentary || {}), play = c.play || {}, colour = c.colour || {};
   setText($("play-tag"), play.tag || "··");
   setText($("play-phrase"), play.phrase || "waiting for the first word");
+  setText($("play-evidence"), colour.evidence || "");
   var age = play.epoch == null ? null : Math.max(0, clock() / 1000 - play.epoch);
   setText($("play-age"), age == null ? "" : dur(age));
   setText($("now-colour"), colour.text || "");
