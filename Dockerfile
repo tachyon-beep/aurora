@@ -2,8 +2,8 @@ FROM python:3.13-slim
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
-       rustc cargo sbcl gcc libc6-dev make gforth swi-prolog-core nasm jq \
-       sqlite3 libsqlite3-dev libffi-dev recutils miller datamash \
+       rustc cargo sbcl gcc libc6-dev make pforth swi-prolog-core nasm jq \
+       sqlite3 libsqlite3-dev libffi-dev miller datamash \
     && rm -rf /var/lib/apt/lists/*
 
 COPY vendor/wheels/ /tmp/wheels/

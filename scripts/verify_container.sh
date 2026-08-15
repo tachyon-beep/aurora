@@ -18,6 +18,13 @@ AURORA_VERIFY_PROJECT="aurora_verify_$$"
 export COMPOSE_PROJECT_NAME="$AURORA_VERIFY_PROJECT"
 STUB_CONTAINER="verify-stub_$$"
 
+# This run gets its own throwaway /build image: the live stack's image may
+# already be loop-mounted, and one ext4 image mounted twice corrupts it.
+VERIFY_BUILD_DIR="$(mktemp -d)"
+export AURORA_BUILD_IMG="$VERIFY_BUILD_DIR/build.img"
+truncate -s 1G "$AURORA_BUILD_IMG"
+mkfs.ext4 -q -F -m 0 -E root_owner=1000:1000 "$AURORA_BUILD_IMG"
+
 cleanup() {
   # The stub container must be detached before the network it sits on can be
   # torn down, so remove it ahead of "compose down".
@@ -29,7 +36,9 @@ cleanup() {
     "${COMPOSE_PROJECT_NAME}_transcripts" \
     "${COMPOSE_PROJECT_NAME}_telemetry" \
     "${COMPOSE_PROJECT_NAME}_llm_sock" \
-    "${COMPOSE_PROJECT_NAME}_llm_console" >/dev/null 2>&1 || true
+    "${COMPOSE_PROJECT_NAME}_llm_console" \
+    "${COMPOSE_PROJECT_NAME}_build" >/dev/null 2>&1 || true
+  rm -rf "$VERIFY_BUILD_DIR"
 }
 trap cleanup EXIT
 
@@ -93,6 +102,44 @@ docker compose exec -T agent sh -c '
 if docker compose exec -T agent sh -c 'echo x > /garden/_probe' 2>/dev/null; then
   echo "FAIL: garden is writable"; exit 1
 fi
+
+echo "==> agent compiled toolchains are present"
+docker compose exec -T agent sh -c '
+  rustc --version >/dev/null && sbcl --version >/dev/null &&
+  command -v pforth swipl nasm mlr datamash jq sqlite3 >/dev/null
+'
+
+echo "==> agent new runtime packages import; loomweave and filigree respond"
+docker compose exec -T agent python -c "import filigree, z3, hy, tenacity, jplephem, model2vec"
+docker compose exec -T agent loomweave --version >/dev/null
+docker compose exec -T agent filigree --version >/dev/null
+
+echo "==> /vendor and /corpus are read-only; the registry is present"
+docker compose exec -T agent test -d /vendor/registry
+if docker compose exec -T agent sh -c 'echo x > /vendor/_probe' 2>/dev/null; then
+  echo "FAIL: /vendor is writable"; exit 1
+fi
+if docker compose exec -T agent sh -c 'echo x > /corpus/_probe' 2>/dev/null; then
+  echo "FAIL: /corpus is writable"; exit 1
+fi
+
+echo "==> cargo builds a new project offline against /vendor"
+docker compose exec -T agent sh -c '
+  set -e
+  mkdir -p /tmp/verify_proj && cd /tmp/verify_proj
+  cargo init -q --name verifyprobe
+  printf "nom = \"7\"\n" >> Cargo.toml
+  cargo build -q
+' || { echo "FAIL: offline cargo build against the local registry"; exit 1; }
+
+echo "==> sbcl loads a system from the bundle"
+docker compose exec -T agent sbcl --non-interactive \
+  --load /vendor/lisp/bundle.lisp \
+  --eval "(asdf:load-system :alexandria)" >/dev/null 2>&1 \
+  || { echo "FAIL: quicklisp bundle load"; exit 1; }
+
+echo "==> /build is writable and disk-backed"
+docker compose exec -T agent sh -c 'echo x > /build/_marker'
 
 echo "==> agent state starts empty and is writable"
 if docker compose exec -T agent sh -c 'find /state -mindepth 1 -print -quit | grep -q .' ; then
@@ -272,6 +319,11 @@ docker compose exec -T agent sh -c '
   test ! -e /state/probe-ran
 '
 
+echo "==> /build was wiped by the entrypoint on container start"
+if docker compose exec -T agent test -e /build/_marker 2>/dev/null; then
+  echo "FAIL: /build survived a container start"; exit 1
+fi
+
 echo "==> state marker is absent from other services"
 docker compose exec -T recorder sh -c 'test ! -e /state/durable-marker'
 docker compose exec -T diode sh -c 'test ! -e /state/durable-marker'
@@ -296,6 +348,11 @@ echo "==> diode affordance: enable_clock unlocks the time command in help"
 docker compose exec -T agent sh -c 'printf "{\"commands\":[\"help\"],\"variables\":{\"enable_clock\":true}}" > /diode/console.json'
 sleep 10
 docker compose exec -T agent sh -c 'grep -q "time ->" /diode/HELP.md'
+
+echo "==> diode affordance: enable_clone unlocks the clone command in help"
+docker compose exec -T agent sh -c 'printf "{\"commands\":[\"help\"],\"variables\":{\"enable_clone\":true}}" > /diode/console.json'
+sleep 10
+docker compose exec -T agent sh -c 'grep -q "clone <owner>/<repo>" /diode/HELP.md'
 
 echo "==> speech gate does not open from the agent-writable console"
 if docker compose exec -T diode sh -c 'test -z "$ENABLE_SPEECH"'; then

@@ -15,14 +15,18 @@ delivering public GitHub repositories as inert tarballs.
 ## 1. Toolchains (agent image, apt)
 
 `rustc` (1.85), `cargo`, `sbcl` (2.5.2), `gcc`, `libc6-dev`, `make`,
-`gforth`, `swi-prolog`, `nasm`, `jq`, `sqlite3`, `libsqlite3-dev`,
-`libffi-dev`, `recutils`, `miller`, `datamash`.
+`pforth`, `swi-prolog-core`, `nasm`, `jq`, `sqlite3`, `libsqlite3-dev`,
+`libffi-dev`, `miller`, `datamash` (recutils and gforth left trixie; pforth
+substitutes for the forth paradigm and miller+datamash+sqlite3 cover
+record manipulation).
 
 Measured: core toolchain set (rustc+cargo+sbcl+gcc+libc6-dev) adds 688 MiB
 installed. Verified: `cargo build` (std-only) and `sbcl --script` both work
-under `--network none`. Image grows from 843 MB to roughly 1.6 GB; this spec
-is the design decision and the measurement CLAUDE.md requires. Record the
-final built size below when known.
+under `--network none`. Final built image: 2.19 GB (from 843 MB) — the
+toolchains plus swi-prolog, z3, and the filigree/loomweave wheels. This spec
+is the design decision and the measurement CLAUDE.md requires. Note:
+loomweave installs as a CLI binary only (Rust core, no importable Python
+module); filigree is importable and provides a CLI.
 
 No rustup, no Quicklisp client: every ecosystem arrives frozen and
 offline-complete. Debian docs trees for the paradigm languages are excluded
@@ -145,7 +149,7 @@ Provider README files are dropped everywhere; data files only (invariant 2).
 
 New factual lines in `runtime.md`, in the existing register, no suggested
 uses (invariant 6):
-- toolchain sentence naming rustc, cargo, sbcl, gforth, swi-prolog, nasm,
+- toolchain sentence naming rustc, cargo, sbcl, pforth, swi-prolog, nasm,
   make, jq, sqlite3
 - "a local rust crate registry is present; cargo resolves against it."
 - "common lisp systems are present under /vendor/lisp; asdf can load them."
