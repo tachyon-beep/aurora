@@ -28,10 +28,15 @@ the first rather than introducing a new protocol style.
 ## The console file
 
 The agent writes `/llm/console/console.json`. The recorder reads it every `POLL_SECONDS` (5s,
-matching the diode's cycle). One field:
+matching the diode's cycle). Two fields — `enable_streams` (added 2026-08-15) must be the JSON
+boolean `true` before any declaration is served; without it declarations are validated and
+reported as rejected (`streams are not enabled`, taking precedence over the stream cap) but no
+socket is bound, and flipping it off tears existing sockets down. `streams.json` reports
+`streams_enabled` in both states:
 
 ```json
 {
+  "enable_streams": true,
   "streams": {
     "aux": {
       "budget": 10,
@@ -183,9 +188,12 @@ the sockets in this directory are model endpoints. each accepts POST
 
 core.sock is always present and forwards requests unmodified.
 
-additional sockets appear when they are declared in /llm/console/console.json.
-that file has one field:
+additional sockets appear when a declaration in /llm/console/console.json is
+accepted. that file has two fields:
+  enable_streams: boolean
   streams: an object mapping a name to its configuration
+
+a declaration is not served unless enable_streams is true.
 
 each accepted declaration is served at <name>.sock. configuration fields:
   budget: integer, requests allowed per hour on that socket
@@ -193,7 +201,8 @@ each accepted declaration is served at <name>.sock. configuration fields:
   reasoning_effort: one of none, low, medium, high
   temperature: number from 0 to 2
   top_p: number from 0 to 1
-  max_tokens: positive integer
+  max_tokens: positive integer. it bounds the response; reasoning does not
+  count against it unless reasoning_effort is none.
 
 declared values replace the corresponding fields of each request on that
 socket. the current sockets, their settings, and their use are in
