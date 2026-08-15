@@ -291,3 +291,94 @@ def test_the_provenance_rotation_still_states_the_containment_when_paused():
     first = HTML[HTML.index("PROVENANCE_LINES") :]
     first = first[first.index("[") + 1 : first.index("]")].strip().splitlines()[0]
     assert "no network interface" in first, first
+
+
+BROADCAST_TYPE_FLOOR = 13
+
+# Every rule that declares a px font size under 13px in STREAM_PAGE_HTML's stylesheet,
+# enumerated by grepping the source directly (not the stale table from the original
+# plan, which missed six of these: `.chip b`, `.chip em`, `.chip.c-think em`,
+# `.divider span`, `.rrow .rid`, and `.grave .blk-tomb .more`). The descendants that
+# only inherit these sizes (#byline-text, .more-label, #play-tag, .g-id, #dead-count
+# and the rest) are covered by their parent and are deliberately not listed.
+# `#subj-strip` and `#stream-foot` are already at the 13px floor; kept here to confirm
+# rather than because they were found under it.
+BROADCAST_SMALL_TYPE = (
+    "#now-by",
+    "#state-word",
+    "#provenance",
+    ".ptitle",
+    ".eyebrow",
+    ".open-tail",
+    ".more",
+    ".gutter",
+    ".gutter .g-mark.end",
+    "#if-row",
+    ".subrow",
+    "#strip-glyph",
+    "#subj-strip",
+    "#now-play",
+    "#byline",
+    ".grave .g-eyebrow",
+    ".grave .blk-tomb .more",
+    "#dead-foot",
+    ".rrow .rmeta",
+    ".rrow .rid",
+    "#said-stamp",
+    "#speak-caption",
+    "#reached-foot",
+    "#stream-foot",
+    ".clamp.say::before",
+    ".chip b",
+    ".chip em",
+    ".chip.c-think em",
+    ".divider span",
+)
+
+
+def _declared_size(selector):
+    """The px font size one rule declares. Anchored on a newline so `.more` finds
+    the rule and not `#recap-box .more`."""
+    start = HTML.index("\n" + selector + " {")
+    block = HTML[start : HTML.index("}", start)]
+    match = re.search(r"font(?:-size)?:[^;]*?(\d+)px", block)
+    assert match, f"{selector} declares no px font size"
+    return int(match.group(1))
+
+
+def test_no_broadcast_type_falls_below_the_transcode_floor():
+    """At 720p the canvas is downscaled x0.667, at 480p x0.44. Anything under 13px
+    here is under 6px for a viewer on a bad connection."""
+    sizes = {sel: _declared_size(sel) for sel in BROADCAST_SMALL_TYPE}
+    too_small = {sel: size for sel, size in sizes.items() if size < BROADCAST_TYPE_FLOOR}
+    assert too_small == {}, f"below the {BROADCAST_TYPE_FLOOR}px floor: {too_small}"
+
+
+def test_the_subject_counters_are_set_larger_than_the_labels():
+    """The stat values are the page's primary instrument and were the third-smallest
+    type on it."""
+    block = HTML[HTML.index(".srow {") : HTML.index("}", HTML.index(".srow {"))]
+    assert re.search(r"font:\s*400\s+15px/20px", block), block
+
+
+def test_the_rail_rows_still_fill_the_rail():
+    block = HTML[HTML.index("#rail {") : HTML.index("}", HTML.index("#rail {"))]
+    declaration = block.split("grid-template-rows:")[1].split(";")[0]
+    rows = [int(n) for n in re.findall(r"(\d+)px", declaration)]
+    assert len(rows) == 3, rows
+    assert sum(rows) + 2 * 20 == 772, f"{rows} plus two 20px gaps is not 772"
+
+
+def test_the_stream_page_stylesheet_declares_no_px_font_size_under_the_floor():
+    """The enumerated `BROADCAST_SMALL_TYPE` list is only as good as the reconciliation
+    that built it. This scans the actual stylesheet text directly, the same way that
+    list was built, so a rule the enumeration missed cannot silently regress below the
+    floor. Scoped to STREAM_PAGE_HTML's own <style> block so the console page, which
+    is not a broadcast surface, stays out of scope."""
+    css = HTML[HTML.index("<style>") : HTML.index("</style>")]
+    too_small = [
+        (match.group(0).splitlines()[-1].strip(), int(match.group(1)))
+        for match in re.finditer(r"font(?:-size)?:[^;]*?(\d+)px", css)
+        if int(match.group(1)) < BROADCAST_TYPE_FLOOR
+    ]
+    assert too_small == [], f"below the {BROADCAST_TYPE_FLOOR}px floor: {too_small}"
