@@ -309,7 +309,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   text-wrap: pretty; }
 
 /* ---------- rail ---------- */
-#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 196px 296px 240px;
+#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 196px 292px 244px;
   row-gap: 20px; min-height: 0; }
 #rail .panel { padding: 14px 20px; }
 #rail .ptitle { margin-bottom: 8px; }
