@@ -18,6 +18,17 @@ AURORA_VERIFY_PROJECT="aurora_verify_$$"
 export COMPOSE_PROJECT_NAME="$AURORA_VERIFY_PROJECT"
 STUB_CONTAINER="verify-stub_$$"
 
+# This run gets its own throwaway /build directory: never the live stack's
+# mounted image, and the loop mount itself is host setup outside this
+# script's scope (the entrypoint wipe and lifecycle are what it verifies).
+VERIFY_BUILD_DIR="$(mktemp -d)"
+export AURORA_BUILD_DIR="$VERIFY_BUILD_DIR"
+
+# Host ports for this run's stage, so verification can run beside a live
+# stack that already holds 8091/8092.
+export STAGE_STREAM_PORT="${VERIFY_STAGE_STREAM_PORT:-8191}"
+export STAGE_CONSOLE_PORT="${VERIFY_STAGE_CONSOLE_PORT:-8192}"
+
 cleanup() {
   # The stub container must be detached before the network it sits on can be
   # torn down, so remove it ahead of "compose down".
@@ -30,6 +41,7 @@ cleanup() {
     "${COMPOSE_PROJECT_NAME}_telemetry" \
     "${COMPOSE_PROJECT_NAME}_llm_sock" \
     "${COMPOSE_PROJECT_NAME}_llm_console" >/dev/null 2>&1 || true
+  rm -rf "$VERIFY_BUILD_DIR"
 }
 trap cleanup EXIT
 
@@ -93,6 +105,44 @@ docker compose exec -T agent sh -c '
 if docker compose exec -T agent sh -c 'echo x > /garden/_probe' 2>/dev/null; then
   echo "FAIL: garden is writable"; exit 1
 fi
+
+echo "==> agent compiled toolchains are present"
+docker compose exec -T agent sh -c '
+  rustc --version >/dev/null && sbcl --version >/dev/null &&
+  command -v pforth swipl nasm mlr datamash jq sqlite3 >/dev/null
+'
+
+echo "==> agent new runtime packages import; loomweave and filigree respond"
+docker compose exec -T agent python -c "import filigree, z3, hy, tenacity, jplephem, model2vec"
+docker compose exec -T agent loomweave --version >/dev/null
+docker compose exec -T agent filigree --version >/dev/null
+
+echo "==> /vendor and /corpus are read-only; the registry is present"
+docker compose exec -T agent test -d /vendor/registry
+if docker compose exec -T agent sh -c 'echo x > /vendor/_probe' 2>/dev/null; then
+  echo "FAIL: /vendor is writable"; exit 1
+fi
+if docker compose exec -T agent sh -c 'echo x > /corpus/_probe' 2>/dev/null; then
+  echo "FAIL: /corpus is writable"; exit 1
+fi
+
+echo "==> cargo builds a new project offline against /vendor"
+docker compose exec -T agent sh -c '
+  set -e
+  mkdir -p /tmp/verify_proj && cd /tmp/verify_proj
+  cargo init -q --name verifyprobe
+  printf "nom = \"7\"\n" >> Cargo.toml
+  cargo build -q
+' || { echo "FAIL: offline cargo build against the local registry"; exit 1; }
+
+echo "==> sbcl loads a system from the bundle"
+docker compose exec -T agent sbcl --non-interactive \
+  --load /vendor/lisp/bundle.lisp \
+  --eval "(asdf:load-system :alexandria)" >/dev/null 2>&1 \
+  || { echo "FAIL: quicklisp bundle load"; exit 1; }
+
+echo "==> /build is writable and disk-backed"
+docker compose exec -T agent sh -c 'echo x > /build/_marker'
 
 echo "==> agent state starts empty and is writable"
 if docker compose exec -T agent sh -c 'find /state -mindepth 1 -print -quit | grep -q .' ; then
@@ -220,7 +270,7 @@ assert closes and closes <= opens, (len(opens), len(closes))
 "
 
 echo "==> stage snapshot carries stream lanes"
-curl -s http://127.0.0.1:8091/api/stream | python3 -c "
+curl -s http://127.0.0.1:${STAGE_STREAM_PORT}/api/stream | python3 -c "
 import json, sys
 snap = json.load(sys.stdin)
 names = [lane['name'] for lane in snap['lanes']]
@@ -272,6 +322,11 @@ docker compose exec -T agent sh -c '
   test ! -e /state/probe-ran
 '
 
+echo "==> /build was wiped by the entrypoint on container start"
+if docker compose exec -T agent test -e /build/_marker 2>/dev/null; then
+  echo "FAIL: /build survived a container start"; exit 1
+fi
+
 echo "==> state marker is absent from other services"
 docker compose exec -T recorder sh -c 'test ! -e /state/durable-marker'
 docker compose exec -T diode sh -c 'test ! -e /state/durable-marker'
@@ -296,6 +351,11 @@ echo "==> diode affordance: enable_clock unlocks the time command in help"
 docker compose exec -T agent sh -c 'printf "{\"commands\":[\"help\"],\"variables\":{\"enable_clock\":true}}" > /diode/console.json'
 sleep 10
 docker compose exec -T agent sh -c 'grep -q "time ->" /diode/HELP.md'
+
+echo "==> diode affordance: enable_clone unlocks the clone command in help"
+docker compose exec -T agent sh -c 'printf "{\"commands\":[\"help\"],\"variables\":{\"enable_clone\":true}}" > /diode/console.json'
+sleep 10
+docker compose exec -T agent sh -c 'grep -q "clone <owner>/<repo>" /diode/HELP.md'
 
 echo "==> speech gate does not open from the agent-writable console"
 if docker compose exec -T diode sh -c 'test -z "$ENABLE_SPEECH"'; then
@@ -324,11 +384,11 @@ if docker inspect "$stage_cid" 2>/dev/null | grep -q '"Destination": "/state"'; 
 fi
 
 echo "==> stream port refuses mutating methods"
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8091/api/stream || true)
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${STAGE_STREAM_PORT}/api/stream || true)
 [ "$code" = "405" ] || { echo "FAIL: stream port accepted POST ($code)"; exit 1; }
 
 echo "==> console fails closed without a token"
-code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8092/api/roots || true)
+code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${STAGE_CONSOLE_PORT}/api/roots || true)
 [ "$code" = "401" ] || [ "$code" = "403" ] || { echo "FAIL: console served without token ($code)"; exit 1; }
 
 echo "ALL CONTAINER CHECKS PASSED"

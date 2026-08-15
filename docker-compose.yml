@@ -8,6 +8,10 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       STREAM_HOURLY_MAX: ${STREAM_HOURLY_MAX:-}
+      # Tokens added to a composed request's max_tokens when reasoning is on,
+      # so a declared cap bounds the response rather than being consumed by
+      # reasoning. Empty keeps the default; 0 disables the addition.
+      STREAM_REASONING_ALLOWANCE: ${STREAM_REASONING_ALLOWANCE:-}
       TRANSCRIPT_DIR: /transcripts
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -39,6 +43,18 @@ services:
       - diode:/diode
       - state:/state
       - telemetry:/telemetry
+      # Disk-backed build area: a preallocated 5 GiB ext4 loop image mounted
+      # on the host by scripts/create_build_volume.sh, so a full /build
+      # surfaces as ENOSPC and never consumes main-disk space. Wiped by the
+      # entrypoint at container start and by the watchdog at each incarnation
+      # boundary. The entrypoint warns when the path is not its own
+      # filesystem (image not mounted: the size boundary would be absent).
+      - ${AURORA_BUILD_DIR:-./volumes/build}:/build
+      # Operator-provisioned offline package ecosystems and data files.
+      # Written only on the host by scripts/build_vendor.sh and
+      # scripts/fetch_corpus.sh; read-only here; mounted nowhere else.
+      - ./volumes/vendor:/vendor:ro
+      - ./volumes/corpus:/corpus:ro
     # No network interface at all: one loopback device and an empty routing
     # table. hostname/extra_hosts/dns keep the loopback development surface
     # usable - without them the container's own name does not resolve and
@@ -81,6 +97,8 @@ services:
       # allowance however large a fetch_budget the agent sets.
       ENABLE_SPEECH: ${ENABLE_SPEECH:-}
       SPEECH_HOURLY_MAX: ${SPEECH_HOURLY_MAX:-}
+      # Ceiling on a clone command's response size; empty keeps the default.
+      CLONE_MAX_BYTES: ${CLONE_MAX_BYTES:-}
     volumes:
       - diode:/diode
     networks: [egress]
@@ -138,8 +156,8 @@ services:
       - diode:/diode:ro
       - telemetry:/telemetry:ro
     ports:
-      - "127.0.0.1:8091:8091"
-      - "127.0.0.1:8092:8092"
+      - "127.0.0.1:${STAGE_STREAM_PORT:-8091}:8091"
+      - "127.0.0.1:${STAGE_CONSOLE_PORT:-8092}:8092"
     networks: [stream]
     read_only: true
     tmpfs:

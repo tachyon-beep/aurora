@@ -55,7 +55,10 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      guarantee closes it. Today: every **recorder socket** exposes exactly one route
      (`POST /api/v1/chat/completions`); `core.sock` forwards its body upstream verbatim, and an
      agent-declared stream socket replaces a closed set of body fields (model, reasoning_effort,
-     temperature, top_p, max_tokens) with the agent's own declared values before forwarding. The
+     temperature, top_p, max_tokens) with the agent's own declared values before forwarding; a
+     composed max_tokens additionally gains the operator's `STREAM_REASONING_ALLOWANCE` when
+     reasoning is on, so the declared value bounds the response rather than being consumed by
+     reasoning (the upstream counts reasoning inside max_tokens). The
      key is protected by injection at the recorder and by the header-free logging described next,
      not by any socket's shape. The shared **`/diode` volume** carries a closed command vocabulary;
      the agent can cause spend through a gated command (e.g. the diode's speech credential) but no

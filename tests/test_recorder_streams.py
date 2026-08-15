@@ -453,3 +453,53 @@ def test_turning_the_gate_off_tears_down_existing_streams():
         "status": "rejected",
         "reason": "streams are not enabled",
     }
+
+
+def _compose(body, settings, allowance):
+    composed, error = rs.compose_body(json.dumps(body).encode("utf-8"), settings, allowance)
+    assert error is None
+    return json.loads(composed.decode("utf-8"))
+
+
+def test_compose_adds_reasoning_allowance_to_a_capped_request():
+    out = _compose({"messages": [], "max_tokens": 400}, {}, 8192)
+    assert out["max_tokens"] == 8592
+
+
+def test_compose_adds_allowance_to_a_declared_cap():
+    out = _compose({"messages": []}, {"max_tokens": 400}, 8192)
+    assert out["max_tokens"] == 8592
+
+
+def test_compose_skips_allowance_when_reasoning_is_none():
+    out = _compose({"messages": [], "max_tokens": 400}, {"reasoning_effort": "none"}, 8192)
+    assert out["max_tokens"] == 400
+    out = _compose({"messages": [], "max_tokens": 400, "reasoning_effort": "none"}, {}, 8192)
+    assert out["max_tokens"] == 400
+
+
+def test_compose_skips_allowance_without_a_cap_or_with_zero_allowance():
+    out = _compose({"messages": []}, {}, 8192)
+    assert "max_tokens" not in out
+    out = _compose({"messages": [], "max_tokens": 400}, {}, 0)
+    assert out["max_tokens"] == 400
+
+
+def test_compose_ignores_a_malformed_body_cap():
+    out = _compose({"messages": [], "max_tokens": "many"}, {}, 8192)
+    assert out["max_tokens"] == "many"
+    out = _compose({"messages": [], "max_tokens": True}, {}, 8192)
+    assert out["max_tokens"] is True
+
+
+def test_reasoning_allowance_reads_the_environment(monkeypatch):
+    monkeypatch.delenv("STREAM_REASONING_ALLOWANCE", raising=False)
+    assert rs.reasoning_allowance() == rs.DEFAULT_REASONING_ALLOWANCE
+    monkeypatch.setenv("STREAM_REASONING_ALLOWANCE", "1000")
+    assert rs.reasoning_allowance() == 1000
+    monkeypatch.setenv("STREAM_REASONING_ALLOWANCE", "0")
+    assert rs.reasoning_allowance() == 0
+    monkeypatch.setenv("STREAM_REASONING_ALLOWANCE", "-5")
+    assert rs.reasoning_allowance() == 0
+    monkeypatch.setenv("STREAM_REASONING_ALLOWANCE", "junk")
+    assert rs.reasoning_allowance() == rs.DEFAULT_REASONING_ALLOWANCE

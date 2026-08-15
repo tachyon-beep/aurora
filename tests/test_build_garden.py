@@ -164,6 +164,13 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
     assert "accepts connections from any process in the container" in runtime
     assert "openrouter_" not in runtime
     assert "ownership, mutability, and lifecycle" in runtime
+    assert "rustc, cargo, sbcl" in runtime
+    assert "local rust crate registry" in runtime
+    assert "/vendor/lisp" in runtime
+    assert "static sentence embedding model" in runtime
+    assert "/build with 5 gib of capacity" in runtime
+    assert "cleared when a session ends" in runtime
+    assert "/corpus" in runtime
 
 
 def test_documents_exclude_banned_anchors(tmp_path: Path) -> None:

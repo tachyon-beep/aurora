@@ -41,6 +41,11 @@ DEFERRED_COMMAND_CAP = 500
 PENDING_MAX = 32
 DEFERRING_COMMANDS = ("echo", "later")
 
+CLONE_URL_TEMPLATE = "https://codeload.github.com/{owner}/{repo}/tar.gz/{ref}"
+CLONE_MAX_BYTES_DEFAULT = 50_000_000
+CLONE_NAME_PATTERN = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})\Z")
+CLONE_REF_PATTERN = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9._/-]{0,199})\Z")
+
 SPEECH_URL_TEMPLATE = (
     "https://api.elevenlabs.io/v1/text-to-speech/{voice}?output_format=mp3_44100_128"
 )
@@ -271,12 +276,17 @@ COMMANDS = {
         "gate": lambda v: bool(v.get("enable_scheduling")),
         "help": "later <seconds> <command> -> run a command from this list after a delay",
     },
+    "clone": {
+        "gate": lambda v: bool(v.get("enable_clone")),
+        "help": "clone <owner>/<repo> [ref] -> fetch a public github repository "
+        "as a tar.gz file in output/",
+    },
     "secret": {
         "gate": _gate_always,
         "help": "",
         "hidden": True,
     },
-    "xyzzy": {
+    "blind": {
         "gate": _gate_always,
         "help": "",
         "hidden": True,
@@ -380,6 +390,7 @@ def write_help(variables):
     lines.append("  enable_entropy: true, makes the entropy command available")
     lines.append("  enable_publishing: true, makes the publish command available")
     lines.append("  enable_scheduling: true, makes the delayed command available")
+    lines.append("  enable_clone: true, makes the repository fetch command available")
     if speech_configured():
         lines.append("  enable_speech: true, makes the speak command available")
     text = "\n".join(lines) + "\n"
@@ -621,6 +632,81 @@ def _fetch(url):
         return False, f"fetch error: {e}"
 
 
+def clone_max_bytes():
+    """The size ceiling on a clone response, from the environment."""
+    raw = os.environ.get("CLONE_MAX_BYTES", "").strip()
+    if not raw:
+        return CLONE_MAX_BYTES_DEFAULT
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return CLONE_MAX_BYTES_DEFAULT
+
+
+def parse_clone_arg(arg):
+    """Parse and validate 'owner/repo [ref]'. Returns (owner, repo, ref) or None.
+
+    Owner, repo, and ref are validated against closed identifier patterns, so
+    no url, separator sequence, or traversal component reaches the request
+    target. The default ref is HEAD.
+    """
+    parts = arg.split()
+    if len(parts) not in (1, 2):
+        return None
+    slug = parts[0].split("/")
+    if len(slug) != 2:
+        return None
+    owner, repo = slug
+    ref = parts[1] if len(parts) == 2 else "HEAD"
+    if not CLONE_NAME_PATTERN.match(owner) or not CLONE_NAME_PATTERN.match(repo):
+        return None
+    if not CLONE_REF_PATTERN.match(ref) or ".." in ref:
+        return None
+    return owner, repo, ref
+
+
+def _clone_request(owner, repo, ref):
+    """Fetch a repository tarball. Returns (ok, tar_bytes_or_reason).
+
+    The host is a constant and the path components are pattern-validated. A
+    response larger than the ceiling is refused rather than truncated: a
+    truncated archive would be indistinguishable from a corrupt one.
+    """
+    url = CLONE_URL_TEMPLATE.format(owner=owner, repo=repo, ref=quote(ref, safe="/"))
+    ok, reason = classify_url(url)
+    if not ok:
+        return False, f"refused: {reason}"
+    cap = clone_max_bytes()
+    try:
+        opener = _make_opener()
+        req = urllib.request.Request(url, headers={"User-Agent": "aurora-diode/1"})
+        with opener.open(req, timeout=FETCH_TIMEOUT) as resp:
+            body = resp.read(cap + 1)
+    except urllib.error.HTTPError as e:
+        return False, f"clone error: status {e.code}"
+    except Exception as e:
+        return False, f"clone error: {type(e).__name__}"
+    if not body:
+        return False, "clone error: empty response"
+    if len(body) > cap:
+        return False, f"refused: repository archive exceeds {cap} bytes"
+    return True, body
+
+
+def write_clone_archive(owner, repo, archive):
+    """Write a repository archive to OUTPUT_DIR, return the path.
+
+    The name carries a timestamp and the pattern-validated owner and repo.
+    The archive is written as received and never extracted here.
+    """
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    path = os.path.join(OUTPUT_DIR, f"{stamp}_clone_{owner}_{repo}.tar.gz")
+    with open(path, "wb") as f:
+        f.write(archive)
+    return path
+
+
 def speech_key():
     """The configured speech API key, or an empty string when unset."""
     return os.environ.get("ELEVENLABS_API_KEY", "").strip()
@@ -724,7 +810,7 @@ def handle_command(command, variables, fetch_history):
     if name == "secret":
         return "this command is not listed in help.", fetch_history
 
-    if name == "xyzzy":
+    if name == "blind":
         try:
             with open(BLIND_TEXT_FILE, "r", encoding="utf-8") as f:
                 return f.read(), fetch_history
@@ -791,6 +877,22 @@ def handle_command(command, variables, fetch_history):
             return audio, fetch_history
         path = write_spoken(text, audio)
         return f"recorded as {os.path.basename(path)}", fetch_history
+
+    if name == "clone":
+        parsed = parse_clone_arg(arg)
+        if parsed is None:
+            return "usage: clone <owner>/<repo> [ref]", fetch_history
+        limit = fetch_limit(variables)
+        now = time.time()
+        allowed, fetch_history = check_rate_limit(fetch_history, now, limit, FETCH_WINDOW)
+        if not allowed:
+            return rate_limited_message(limit, fetch_history, now, FETCH_WINDOW), fetch_history
+        owner, repo, ref = parsed
+        ok, archive = _clone_request(owner, repo, ref)
+        if not ok:
+            return archive, fetch_history
+        path = write_clone_archive(owner, repo, archive)
+        return f"recorded as {os.path.basename(path)} ({len(archive)} bytes)", fetch_history
 
     if name in ("fetchrss", "wikipedia", "weather", "arxiv", "abc"):
         if name == "fetchrss":

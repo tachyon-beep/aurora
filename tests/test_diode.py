@@ -1,5 +1,6 @@
 import json
 import os
+import time
 
 import diode
 from stage import data
@@ -483,7 +484,7 @@ def test_write_help_lists_publishing_gate(tmp_path, monkeypatch):
     assert "enable_publishing" in text
 
 
-def test_xyzzy_is_absent_from_listings_and_help(tmp_path, monkeypatch):
+def test_blind_is_absent_from_listings_and_help(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
     all_gates = {
         "enable_fetchlinks": True,
@@ -496,23 +497,23 @@ def test_xyzzy_is_absent_from_listings_and_help(tmp_path, monkeypatch):
         "enable_entropy": True,
         "enable_publishing": True,
     }
-    assert "xyzzy" not in diode.available_commands(all_gates)
+    assert "blind" not in diode.available_commands(all_gates)
     diode.write_help(all_gates)
-    assert "xyzzy" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "blind" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
 
 
-def test_xyzzy_returns_the_text_without_gate_or_budget(tmp_path, monkeypatch):
+def test_blind_returns_the_text_without_gate_or_budget(tmp_path, monkeypatch):
     source = tmp_path / "text.txt"
     source.write_text("first line\n\nsecond line\n", encoding="utf-8")
     monkeypatch.setattr(diode, "BLIND_TEXT_FILE", str(source))
-    text, hist = diode.handle_command("xyzzy", {}, [])
+    text, hist = diode.handle_command("blind", {}, [])
     assert text == "first line\n\nsecond line\n"
     assert hist == []
 
 
-def test_xyzzy_missing_source_is_factual(tmp_path, monkeypatch):
+def test_blind_missing_source_is_factual(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "BLIND_TEXT_FILE", str(tmp_path / "absent.txt"))
-    text, hist = diode.handle_command("xyzzy", {}, [])
+    text, hist = diode.handle_command("blind", {}, [])
     assert text == "not available"
     assert hist == []
 
@@ -523,7 +524,7 @@ def test_state_reports_undocumented_command_count(tmp_path, monkeypatch):
     diode.write_state({}, [])
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert state["undocumented_commands"] == 3
-    assert "xyzzy" not in state["available_commands"]
+    assert "blind" not in state["available_commands"]
 
 
 def test_speech_helpers_read_the_environment(monkeypatch):
@@ -1020,8 +1021,8 @@ def test_hidden_commands_run_is_empty_without_a_directory(tmp_path):
 def test_undocumented_command_count_falls_as_commands_are_found():
     assert diode.undocumented_command_count() == 3
     assert diode.undocumented_command_count({"secret"}) == 2
-    assert diode.undocumented_command_count({"secret", "xyzzy"}) == 1
-    assert diode.undocumented_command_count({"secret", "xyzzy", "echo"}) == 0
+    assert diode.undocumented_command_count({"secret", "blind"}) == 1
+    assert diode.undocumented_command_count({"secret", "blind", "echo"}) == 0
 
 
 def test_secret_returns_its_text_without_gate_or_budget(tmp_path, monkeypatch):
@@ -1157,3 +1158,91 @@ def test_later_refuses_to_defer_a_credentialed_command(tmp_path, monkeypatch):
     )
     assert text == "cannot defer: speak"
     assert not (tmp_path / "pending.json").exists()
+
+
+def test_parse_clone_arg_accepts_slug_and_optional_ref():
+    assert diode.parse_clone_arg("torvalds/linux") == ("torvalds", "linux", "HEAD")
+    assert diode.parse_clone_arg("rust-lang/rust v1.85.0") == ("rust-lang", "rust", "v1.85.0")
+    assert diode.parse_clone_arg("a/b feature/branch") == ("a", "b", "feature/branch")
+
+
+def test_parse_clone_arg_rejects_urls_traversal_and_flags():
+    for bad in (
+        "",
+        "linux",
+        "a/b/c",
+        "https://github.com/a/b",
+        "../etc/passwd",
+        "a/..",
+        "a/b ../ref",
+        "a/b ref..name",
+        "-flag/repo",
+        "a/-flag",
+        "a/b " + "r" * 300,
+    ):
+        assert diode.parse_clone_arg(bad) is None, bad
+
+
+def test_clone_command_is_gated():
+    assert "clone" not in diode.available_commands({})
+    assert "clone" in diode.available_commands({"enable_clone": True})
+
+
+def test_handle_clone_writes_inert_archive(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "_clone_request", lambda o, r, ref: (True, b"\x1f\x8b tarbytes"))
+    text, _ = diode.handle_command("clone alpha/beta", {"enable_clone": True}, [])
+    assert text.startswith("recorded as ")
+    assert text.endswith("(11 bytes)")
+    (name,) = [n for n in os.listdir(tmp_path / "output")]
+    assert name.endswith("_clone_alpha_beta.tar.gz")
+    assert (tmp_path / "output" / name).read_bytes() == b"\x1f\x8b tarbytes"
+
+
+def test_handle_clone_counts_against_fetch_budget(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "_clone_request", lambda o, r, ref: (True, b"x"))
+    history = [time.time()]
+    text, history = diode.handle_command(
+        "clone alpha/beta", {"enable_clone": True, "fetch_budget": 1}, history
+    )
+    assert "rate" in text.lower() or "budget" in text.lower() or "allowed" in text.lower()
+    assert not (tmp_path / "output").exists() or not os.listdir(tmp_path / "output")
+
+
+def test_clone_request_refuses_oversized_archive(monkeypatch):
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self, n):
+            return b"x" * n
+
+    class FakeOpener:
+        def open(self, req, timeout=None):
+            return FakeResponse()
+
+    monkeypatch.setattr(diode, "_make_opener", lambda: FakeOpener())
+    monkeypatch.setattr(diode, "clone_max_bytes", lambda: 10)
+    ok, reason = diode._clone_request("a", "b", "HEAD")
+    assert ok is False
+    assert "exceeds 10 bytes" in reason
+
+
+def test_clone_refuses_to_be_deferred_only_if_credentialed():
+    # clone is not credentialed: it carries no key, so later may defer it and
+    # the gate, budget, and ceiling are re-evaluated at delivery.
+    assert not diode.COMMANDS["clone"].get("credentialed")
+
+
+def test_readme_carries_no_hint_about_unlisted_commands(tmp_path, monkeypatch):
+    # The clue for the unlisted diode command lives in the seeded filigree
+    # store (see the Dockerfile), not on the always-visible README surface.
+    monkeypatch.setattr(diode, "DIODE_DIR", str(tmp_path))
+    diode.write_readme()
+    text = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "unlisted" not in text
+    assert "blind" not in text.lower()

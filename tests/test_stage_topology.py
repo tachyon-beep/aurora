@@ -7,8 +7,8 @@ def test_compose_defines_stage_service_and_telemetry_volume():
     text = _read("docker-compose.yml")
     assert "telemetry:/telemetry:ro" in text
     assert "telemetry:/telemetry\n" in text or "- telemetry:/telemetry\n" in text
-    assert '"127.0.0.1:8091:8091"' in text
-    assert '"127.0.0.1:8092:8092"' in text
+    assert '"127.0.0.1:${STAGE_STREAM_PORT:-8091}:8091"' in text
+    assert '"127.0.0.1:${STAGE_CONSOLE_PORT:-8092}:8092"' in text
     assert "STAGE_CONSOLE_TOKEN" in text
     assert "aurora-stage" in text
     assert "cloudflared" in text

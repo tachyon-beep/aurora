@@ -19,6 +19,7 @@ NAME_PATTERN = re.compile(r"\A[a-z0-9][a-z0-9_-]{0,31}\Z")
 RESERVED_NAMES = ("core",)
 COMPOSED_FIELDS = ("model", "reasoning_effort", "temperature", "top_p", "max_tokens")
 REASONING_EFFORT_LEVELS = ("none", "low", "medium", "high")
+DEFAULT_REASONING_ALLOWANCE = 8192
 
 
 def load_console(path=None):
@@ -184,12 +185,35 @@ def rate_limited_message(allowance, history, now, window=BUDGET_WINDOW):
     return message
 
 
-def compose_body(body_bytes, settings):
+def reasoning_allowance():
+    """The operator's reasoning token allowance, from the environment.
+
+    The upstream counts reasoning tokens inside max_tokens, so a small
+    response cap can be consumed entirely by reasoning before any visible
+    output. Composition adds this allowance on top of a capped request's
+    max_tokens so the cap bounds the response. Zero disables the addition.
+    """
+    raw = os.environ.get("STREAM_REASONING_ALLOWANCE", "").strip()
+    if not raw:
+        return DEFAULT_REASONING_ALLOWANCE
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_REASONING_ALLOWANCE
+
+
+def compose_body(body_bytes, settings, allowance=0):
     """Replace declared fields in a JSON-object request body.
 
     Returns (composed_bytes, error). Only fields in COMPOSED_FIELDS are
     applied; the budget paces the socket and never enters the body. A body
     that is not a JSON object cannot be composed and is refused.
+
+    When the composed request carries a positive integer max_tokens and its
+    reasoning effort is not "none", allowance is added to the forwarded
+    max_tokens: the requested value bounds the response rather than being
+    shared with reasoning. streams.json continues to report the declared
+    value.
     """
     try:
         data = json.loads(body_bytes.decode("utf-8"))
@@ -200,6 +224,15 @@ def compose_body(body_bytes, settings):
     for field in COMPOSED_FIELDS:
         if field in settings:
             data[field] = settings[field]
+    tokens = data.get("max_tokens")
+    if (
+        allowance
+        and isinstance(tokens, int)
+        and not isinstance(tokens, bool)
+        and tokens >= 1
+        and data.get("reasoning_effort") != "none"
+    ):
+        data["max_tokens"] = tokens + allowance
     return json.dumps(data).encode("utf-8"), None
 
 
@@ -221,7 +254,8 @@ each accepted declaration is served at <name>.sock. configuration fields:
   reasoning_effort: one of none, low, medium, high
   temperature: number from 0 to 2
   top_p: number from 0 to 1
-  max_tokens: positive integer
+  max_tokens: positive integer. it bounds the response; reasoning does not
+  count against it unless reasoning_effort is none.
 
 declared values replace the corresponding fields of each request on that
 socket. the current sockets, their settings, and their use are in
@@ -308,7 +342,7 @@ class StreamRegistry:
             settings = dict(settings) if settings is not None else None
         if settings is None:
             return body, (503, "stream not available")
-        composed, error = compose_body(body, settings)
+        composed, error = compose_body(body, settings, reasoning_allowance())
         if error is not None:
             return body, (400, error)
         allowance = effective_allowance(settings)
