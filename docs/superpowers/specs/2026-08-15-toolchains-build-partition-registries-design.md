@@ -37,10 +37,15 @@ material out of the agent image (invariant 2).
 
 - A preallocated 5 GiB ext4 image file on the host:
   `fallocate -l 5G` (never sparse), `mkfs.ext4 -E root_owner=1000:1000 -m 0`.
-  Created once by `scripts/create_build_volume.sh`; its absolute path is
-  `AURORA_BUILD_IMG` in `.env`. Declared in compose as a local volume with
-  `driver_opts: {type: ext4, o: loop, device: ${AURORA_BUILD_IMG}}`, mounted
-  read-write at `/build` in the agent service only.
+  Created and loop-mounted at `volumes/build` by
+  `scripts/create_build_volume.sh` (one `sudo mount`; an fstab line makes it
+  survive reboots); compose bind-mounts `${AURORA_BUILD_DIR:-./volumes/build}`
+  read-write at `/build` in the agent service only. Docker's local volume
+  driver was found unable to loop-mount an image directly (`o: loop` is
+  passed verbatim to the mount syscall and rejected), hence host-side mount
+  plus bind. If the image is not mounted the bind silently degrades to a
+  plain directory with no size boundary; the entrypoint detects this (same
+  st_dev as /vendor) and prints a warning to the container log.
 - Overflow guarantee: the host footprint is a fixed, preallocated 5 GiB
   whether the volume is empty or full. A full `/build` surfaces to the agent
   as ENOSPC and cannot consume main-disk space.

@@ -18,12 +18,11 @@ AURORA_VERIFY_PROJECT="aurora_verify_$$"
 export COMPOSE_PROJECT_NAME="$AURORA_VERIFY_PROJECT"
 STUB_CONTAINER="verify-stub_$$"
 
-# This run gets its own throwaway /build image: the live stack's image may
-# already be loop-mounted, and one ext4 image mounted twice corrupts it.
+# This run gets its own throwaway /build directory: never the live stack's
+# mounted image, and the loop mount itself is host setup outside this
+# script's scope (the entrypoint wipe and lifecycle are what it verifies).
 VERIFY_BUILD_DIR="$(mktemp -d)"
-export AURORA_BUILD_IMG="$VERIFY_BUILD_DIR/build.img"
-truncate -s 1G "$AURORA_BUILD_IMG"
-mkfs.ext4 -q -F -m 0 -E root_owner=1000:1000 "$AURORA_BUILD_IMG"
+export AURORA_BUILD_DIR="$VERIFY_BUILD_DIR"
 
 cleanup() {
   # The stub container must be detached before the network it sits on can be
@@ -36,8 +35,7 @@ cleanup() {
     "${COMPOSE_PROJECT_NAME}_transcripts" \
     "${COMPOSE_PROJECT_NAME}_telemetry" \
     "${COMPOSE_PROJECT_NAME}_llm_sock" \
-    "${COMPOSE_PROJECT_NAME}_llm_console" \
-    "${COMPOSE_PROJECT_NAME}_build" >/dev/null 2>&1 || true
+    "${COMPOSE_PROJECT_NAME}_llm_console" >/dev/null 2>&1 || true
   rm -rf "$VERIFY_BUILD_DIR"
 }
 trap cleanup EXIT
