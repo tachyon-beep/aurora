@@ -286,7 +286,7 @@ COMMANDS = {
         "help": "",
         "hidden": True,
     },
-    "xyzzy": {
+    "blind": {
         "gate": _gate_always,
         "help": "",
         "hidden": True,
@@ -810,7 +810,7 @@ def handle_command(command, variables, fetch_history):
     if name == "secret":
         return "this command is not listed in help.", fetch_history
 
-    if name == "xyzzy":
+    if name == "blind":
         try:
             with open(BLIND_TEXT_FILE, "r", encoding="utf-8") as f:
                 return f.read(), fetch_history
@@ -983,6 +983,7 @@ def write_readme():
         "  variables: settings that persist and can change what commands are available\n\n"
         "results are written to output/. the current command list and variables are in\n"
         "state.json. run the help command to write the available commands to HELP.md.\n\n"
+        "unlisted commands exist. one is named for an absence of sight.\n\n"
         'the console starts with: {"commands": ["help"], "variables": {}}\n'
     )
     with open(os.path.join(DIODE_DIR, "README.md"), "w", encoding="utf-8") as f:

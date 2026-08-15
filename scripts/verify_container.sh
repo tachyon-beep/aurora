@@ -24,6 +24,11 @@ STUB_CONTAINER="verify-stub_$$"
 VERIFY_BUILD_DIR="$(mktemp -d)"
 export AURORA_BUILD_DIR="$VERIFY_BUILD_DIR"
 
+# Host ports for this run's stage, so verification can run beside a live
+# stack that already holds 8091/8092.
+export STAGE_STREAM_PORT="${VERIFY_STAGE_STREAM_PORT:-8191}"
+export STAGE_CONSOLE_PORT="${VERIFY_STAGE_CONSOLE_PORT:-8192}"
+
 cleanup() {
   # The stub container must be detached before the network it sits on can be
   # torn down, so remove it ahead of "compose down".
@@ -265,7 +270,7 @@ assert closes and closes <= opens, (len(opens), len(closes))
 "
 
 echo "==> stage snapshot carries stream lanes"
-curl -s http://127.0.0.1:8091/api/stream | python3 -c "
+curl -s http://127.0.0.1:${STAGE_STREAM_PORT}/api/stream | python3 -c "
 import json, sys
 snap = json.load(sys.stdin)
 names = [lane['name'] for lane in snap['lanes']]
@@ -379,11 +384,11 @@ if docker inspect "$stage_cid" 2>/dev/null | grep -q '"Destination": "/state"'; 
 fi
 
 echo "==> stream port refuses mutating methods"
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:8091/api/stream || true)
+code=$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:${STAGE_STREAM_PORT}/api/stream || true)
 [ "$code" = "405" ] || { echo "FAIL: stream port accepted POST ($code)"; exit 1; }
 
 echo "==> console fails closed without a token"
-code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8092/api/roots || true)
+code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${STAGE_CONSOLE_PORT}/api/roots || true)
 [ "$code" = "401" ] || [ "$code" = "403" ] || { echo "FAIL: console served without token ($code)"; exit 1; }
 
 echo "ALL CONTAINER CHECKS PASSED"

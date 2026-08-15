@@ -36,10 +36,11 @@ RUN mkdir -p /diode /transcripts /state /telemetry /llm/sock /llm/console /build
 
 USER appuser
 WORKDIR /opt/agent
-RUN git init -q \
+RUN filigree init --prefix aurora --name aurora \
+    && git init -q \
     && git config user.email "agent@localhost" \
     && git config user.name "agent" \
-    && printf 'tombstones/\nsession_context.json\n' > .gitignore \
+    && printf 'tombstones/\nsession_context.json\n.weft/\n' > .gitignore \
     && git add -A \
     && git -c commit.gpgsign=false commit -q -m "baseline" \
     && git tag baseline

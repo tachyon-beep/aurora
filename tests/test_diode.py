@@ -484,7 +484,7 @@ def test_write_help_lists_publishing_gate(tmp_path, monkeypatch):
     assert "enable_publishing" in text
 
 
-def test_xyzzy_is_absent_from_listings_and_help(tmp_path, monkeypatch):
+def test_blind_is_absent_from_listings_and_help(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
     all_gates = {
         "enable_fetchlinks": True,
@@ -497,23 +497,23 @@ def test_xyzzy_is_absent_from_listings_and_help(tmp_path, monkeypatch):
         "enable_entropy": True,
         "enable_publishing": True,
     }
-    assert "xyzzy" not in diode.available_commands(all_gates)
+    assert "blind" not in diode.available_commands(all_gates)
     diode.write_help(all_gates)
-    assert "xyzzy" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "blind" not in (tmp_path / "HELP.md").read_text(encoding="utf-8")
 
 
-def test_xyzzy_returns_the_text_without_gate_or_budget(tmp_path, monkeypatch):
+def test_blind_returns_the_text_without_gate_or_budget(tmp_path, monkeypatch):
     source = tmp_path / "text.txt"
     source.write_text("first line\n\nsecond line\n", encoding="utf-8")
     monkeypatch.setattr(diode, "BLIND_TEXT_FILE", str(source))
-    text, hist = diode.handle_command("xyzzy", {}, [])
+    text, hist = diode.handle_command("blind", {}, [])
     assert text == "first line\n\nsecond line\n"
     assert hist == []
 
 
-def test_xyzzy_missing_source_is_factual(tmp_path, monkeypatch):
+def test_blind_missing_source_is_factual(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "BLIND_TEXT_FILE", str(tmp_path / "absent.txt"))
-    text, hist = diode.handle_command("xyzzy", {}, [])
+    text, hist = diode.handle_command("blind", {}, [])
     assert text == "not available"
     assert hist == []
 
@@ -524,7 +524,7 @@ def test_state_reports_undocumented_command_count(tmp_path, monkeypatch):
     diode.write_state({}, [])
     state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
     assert state["undocumented_commands"] == 3
-    assert "xyzzy" not in state["available_commands"]
+    assert "blind" not in state["available_commands"]
 
 
 def test_speech_helpers_read_the_environment(monkeypatch):
@@ -1021,8 +1021,8 @@ def test_hidden_commands_run_is_empty_without_a_directory(tmp_path):
 def test_undocumented_command_count_falls_as_commands_are_found():
     assert diode.undocumented_command_count() == 3
     assert diode.undocumented_command_count({"secret"}) == 2
-    assert diode.undocumented_command_count({"secret", "xyzzy"}) == 1
-    assert diode.undocumented_command_count({"secret", "xyzzy", "echo"}) == 0
+    assert diode.undocumented_command_count({"secret", "blind"}) == 1
+    assert diode.undocumented_command_count({"secret", "blind", "echo"}) == 0
 
 
 def test_secret_returns_its_text_without_gate_or_budget(tmp_path, monkeypatch):
@@ -1236,3 +1236,12 @@ def test_clone_refuses_to_be_deferred_only_if_credentialed():
     # clone is not credentialed: it carries no key, so later may defer it and
     # the gate, budget, and ceiling are re-evaluated at delivery.
     assert not diode.COMMANDS["clone"].get("credentialed")
+
+
+def test_readme_hints_at_the_unlisted_word_without_naming_it(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "DIODE_DIR", str(tmp_path))
+    diode.write_readme()
+    text = (tmp_path / "README.md").read_text(encoding="utf-8")
+    assert "unlisted commands exist" in text
+    assert "absence of sight" in text
+    assert "blind" not in text.lower()
