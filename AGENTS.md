@@ -1,37 +1,46 @@
-<!-- filigree:instructions:v3.1.0:c1c023c3 -->
-<!-- filigree:last-writer:filigree install -->
-## Filigree Issue Tracker
+# Repository Guidelines
 
-`filigree` tracks this project's work. Use it to find, claim, update and close
-issues: `filigree session-context` at session start, then
-`filigree start-next-work --assignee <name>`.
+## Project Structure & Module Organization
 
-Full reference: the **filigree-workflow** skill (patterns, priorities,
-observations, error codes), `filigree --help`, and the `mcp__filigree__*` tool
-schemas. Prefer the MCP tools when available; fall back to the CLI.
+Aurora is a Python 3.13, Docker Compose harness. Runtime components live at the repository root:
+`agent.py` and its byte-identical reset seed `agent_stock.py`, `chassis.py`, `proxy.py`, `diode.py`,
+`watchdog.py`, and `viewer.py`. The broadcast UI and server are under `stage/`; the static project
+site and assets are under `site/`. Put maintenance utilities in `scripts/`, pytest coverage in
+`tests/`, and dated designs or implementation plans in `docs/superpowers/`. Container boundaries
+are defined by `Dockerfile*` and `docker-compose.yml`.
 
-Two rules `--help` will not tell you:
+## Build, Test, and Development Commands
 
-1. Claim atomically: `work_start` / `work_start_next` (MCP) or `start-work` /
-   `start-next-work` (CLI). Never chain a claim with a separate status update;
-   that two-step form races other agents.
-2. On `SCHEMA_MISMATCH` the installed filigree is older than the project
-   database. Surface it to the user; do not retry.
-<!-- /filigree:instructions -->
+- `.venv/bin/python -m pytest -q --ignore=tests/test_container_smoke.py` runs the host test suite.
+- `.venv/bin/ruff format . && .venv/bin/ruff check .` formats and lints all Python code.
+- `python scripts/build_garden.py && docker compose build` regenerates the garden and builds images.
+- `docker compose up` starts the stack; run `scripts/verify_container.sh` against it to check
+  containment. The container smoke test requires Docker.
 
-<!-- loomweave:instructions:v1.5.0:39edbf6d -->
-<!-- loomweave:last-writer:loomweave install -->
-## Loomweave (code structure + SEI identity)
+## Coding Style & Naming Conventions
 
-Loomweave pre-extracts this repo into a queryable map — entities, their
-call/reference/import/relation edges, and subsystems — each carrying a Stable
-Entity Identity (SEI). Ask its `mcp__loomweave__*` tools, not grep, for "what
-calls X", "what subclasses X", "where is X defined", "find the thing that
-does Y".
+Use four-space indentation, double-quoted strings, and Ruff's 100-character line limit. Name
+functions and modules with `snake_case`, classes with `PascalCase`, and constants with
+`UPPER_SNAKE_CASE`. Prefer the standard library and keep agent, recorder, diode, watchdog, viewer,
+and stage concerns separate. Update `agent.py` and `agent_stock.py` together. Agent tool docstrings
+define model-visible schemas; keep them accurate and affectless, and do not add prose comments to
+`agent.py`.
 
-- Never hand-construct an entity id: take it from `entity_find` / `entity_at` /
-  `entity_resolve`, and bind cross-tool records on the `sei`, not the `id`.
-- If `project_status_get` reports stale, re-index before answering.
+## Testing Guidelines
 
-Full reference: `loomweave-workflow` skill, `loomweave --help`, MCP schemas.
-<!-- /loomweave:instructions -->
+Use pytest files named `tests/test_<area>.py` and test functions named `test_<behaviour>`. Add a
+focused regression for every behavior change, then run the host suite. For topology, credential,
+or containment changes, also build the images and run the container verifier. The project sets no
+numeric coverage threshold; prioritize boundary and failure-path assertions.
+
+## Commit & Pull Request Guidelines
+
+Follow the prevailing `<type>: <imperative summary>` style (`feat:`, `fix:`, `test:`, `docs:`,
+`build:`). Keep messages factual and benign. Pull requests should explain the rationale, identify
+containment or credential effects, link the issue, and list exact verification commands. Include
+screenshots for `stage/` or `site/` changes. Never commit `.env` or expose credentials to the agent.
+
+## Agent Workflow
+
+Use Filigree to claim tracked work atomically. Use Loomweave for code-structure queries, taking
+entity IDs from its lookup tools and refreshing a stale index before relying on results.
