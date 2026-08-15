@@ -131,8 +131,11 @@ Append to `tests/test_stage_pages.py`:
 
 ```python
 def _clamp_lines(selector):
-    """The -webkit-line-clamp declared for one selector in the stream page CSS."""
-    start = HTML.index(selector + " {")
+    """The -webkit-line-clamp declared for one selector in the stream page CSS.
+
+    Anchored on a newline so `.clamp.think` finds its own rule and not the
+    `.turn.wake .clamp.think` animation rule that precedes it."""
+    start = HTML.index("\n" + selector + " {")
     block = HTML[start : HTML.index("}", start)]
     match = re.search(r"-webkit-line-clamp:\s*(\d+)", block)
     assert match, f"{selector} declares no -webkit-line-clamp"
@@ -157,7 +160,7 @@ Only the depths are asserted. An arithmetic test on total turn height would have
 Run: `.venv/bin/python -m pytest tests/test_stage_pages.py -k clamp -v`
 Expected: FAIL — `_clamp_lines(".clamp.think")` returns 5.
 
-Note `_clamp_lines` anchors on `selector + " {"`, and `.clamp.think`, `.clamp.say` and `.tool` each appear exactly once in that form. Task 3's `_declared_size` uses a newline anchor for the same reason.
+Note `_clamp_lines` must anchor on `"\n" + selector + " {"`, not `selector + " {"`. `.clamp.think` appears twice as a substring: `.turn.wake .clamp.think {` at `pages.py:246` precedes the real rule at `:266`, so a bare `index()` finds the animation rule and the helper reports "declares no -webkit-line-clamp". Task 3's `_declared_size` uses the same newline anchor. (Corrected 2026-08-15 during execution; the code block above already carries the fix.)
 
 - [ ] **Step 3: Change the three clamp depths**
 
