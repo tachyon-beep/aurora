@@ -13,30 +13,60 @@ def _write_console(tmp_path, data):
 
 
 def test_missing_console_is_empty_not_an_error(tmp_path):
-    declarations, error = rs.load_console(str(tmp_path / "absent.json"))
+    declarations, enabled, error = rs.load_console(str(tmp_path / "absent.json"))
     assert declarations == {}
+    assert enabled is False
     assert error is None
 
 
 def test_torn_console_is_an_error_not_empty(tmp_path):
     path = tmp_path / "console.json"
     path.write_text('{"streams": {"aux"', encoding="utf-8")
-    declarations, error = rs.load_console(str(path))
+    declarations, enabled, error = rs.load_console(str(path))
     assert declarations is None
+    assert enabled is False
     assert error == "console is not valid json"
 
 
 def test_wrong_typed_streams_value_is_an_error(tmp_path):
     path = _write_console(tmp_path, {"streams": []})
-    declarations, error = rs.load_console(path)
+    declarations, enabled, error = rs.load_console(path)
     assert declarations is None
+    assert enabled is False
     assert error == "streams is not an object"
 
 
 def test_console_without_streams_key_is_empty(tmp_path):
     path = _write_console(tmp_path, {})
-    declarations, error = rs.load_console(path)
+    declarations, enabled, error = rs.load_console(path)
     assert declarations == {}
+    assert enabled is False
+    assert error is None
+
+
+@pytest.mark.parametrize(
+    "enable_streams,expected",
+    [
+        (True, True),
+        (False, False),
+        ("true", False),
+        (1, False),
+        (None, False),
+    ],
+)
+def test_enable_streams_requires_the_literal_json_boolean(tmp_path, enable_streams, expected):
+    path = _write_console(tmp_path, {"enable_streams": enable_streams, "streams": {}})
+    declarations, enabled, error = rs.load_console(path)
+    assert declarations == {}
+    assert enabled is expected
+    assert error is None
+
+
+def test_enable_streams_absent_is_disabled(tmp_path):
+    path = _write_console(tmp_path, {"streams": {"aux": {}}})
+    declarations, enabled, error = rs.load_console(path)
+    assert declarations == {"aux": {}}
+    assert enabled is False
     assert error is None
 
 
@@ -59,10 +89,11 @@ def test_console_parser_reads_only_bounded_input(monkeypatch):
     probe = ReadProbe()
     monkeypatch.setattr("builtins.open", lambda *args, **kwargs: probe)
 
-    declarations, error = rs.load_console("agent-controlled.json")
+    declarations, enabled, error = rs.load_console("agent-controlled.json")
 
     assert probe.sizes == [rs.CONSOLE_MAX_BYTES + 1]
     assert declarations is None
+    assert enabled is False
     assert error == "console is too large"
 
 
@@ -124,23 +155,45 @@ def test_non_object_declaration_is_rejected():
 
 
 def test_evaluate_console_splits_in_file_order():
-    accepted, rejected = rs.evaluate_console({"aux": {}, "Bad": {}, "second": {"budget": 3}})
+    accepted, rejected = rs.evaluate_console({"aux": {}, "Bad": {}, "second": {"budget": 3}}, True)
     assert list(accepted) == ["aux", "second"]
     assert rejected == {"Bad": "invalid stream name"}
 
 
 def test_evaluate_console_enforces_the_stream_cap():
     declarations = {f"s{i}": {} for i in range(10)}
-    accepted, rejected = rs.evaluate_console(declarations)
+    accepted, rejected = rs.evaluate_console(declarations, True)
     assert len(accepted) == rs.MAX_STREAMS
     assert rejected == {"s8": "stream limit reached", "s9": "stream limit reached"}
 
 
 def test_evaluate_console_caps_reported_junk_names():
-    accepted, rejected = rs.evaluate_console({"A" * 300: {}})
+    accepted, rejected = rs.evaluate_console({"A" * 300: {}}, True)
     assert not accepted
     (name,) = rejected
     assert len(name) <= 80
+
+
+def test_evaluate_console_rejects_everything_when_the_gate_is_off():
+    accepted, rejected = rs.evaluate_console({"aux": {}, "Bad": {}}, False)
+    assert accepted == {}
+    assert rejected == {"aux": "streams are not enabled", "Bad": "streams are not enabled"}
+
+
+def test_evaluate_console_gate_rejection_beats_the_stream_cap():
+    declarations = {f"s{i}": {} for i in range(9)}
+    accepted, rejected = rs.evaluate_console(declarations, False)
+    assert accepted == {}
+    assert rejected == {name: "streams are not enabled" for name in declarations}
+    assert "stream limit reached" not in rejected.values()
+
+
+def test_evaluate_console_gate_off_still_caps_reported_junk_names():
+    accepted, rejected = rs.evaluate_console({"A" * 300: {}}, False)
+    assert not accepted
+    (name,) = rejected
+    assert len(name) <= 80
+    assert rejected[name] == "streams are not enabled"
 
 
 def test_stream_limit_max_reads_the_environment(monkeypatch):
@@ -243,6 +296,7 @@ def test_render_state_reports_core_and_each_stream(monkeypatch):
         {"Bad": "invalid stream name"},
         {"aux": [now - 100]},
         now,
+        True,
     )
     streams = state["streams"]
     assert streams["core"] == {"socket": "core.sock", "status": "active"}
@@ -258,8 +312,15 @@ def test_render_state_reports_core_and_each_stream(monkeypatch):
 
 
 def test_render_state_carries_a_console_error_only_when_given():
-    state = rs.render_state({}, {}, {}, 0.0, console_error="console is not valid json")
+    state = rs.render_state({}, {}, {}, 0.0, True, console_error="console is not valid json")
     assert state["console_error"] == "console is not valid json"
+
+
+def test_render_state_reports_streams_enabled_in_both_states():
+    state = rs.render_state({}, {}, {}, 0.0, True)
+    assert state["streams_enabled"] is True
+    state = rs.render_state({}, {}, {}, 0.0, False)
+    assert state["streams_enabled"] is False
 
 
 def test_write_state_is_atomic_and_readable(tmp_path):
@@ -275,11 +336,13 @@ def test_readme_names_the_protocol_and_stays_affectless(tmp_path):
     for phrase in (
         "core.sock",
         "/llm/console/console.json",
+        "enable_streams:",
         "streams:",
         "budget:",
         "reasoning_effort:",
         "streams.json",
         "POST",
+        "is not served unless enable_streams is true",
     ):
         assert phrase in text
     assert "!" not in text
@@ -354,3 +417,39 @@ def test_state_reflects_use_and_console_errors():
     assert state["streams"]["aux"]["budget"]["used"] == 1
     state = registry.state(console_error="console is not valid json")
     assert state["console_error"] == "console is not valid json"
+
+
+def test_state_threads_streams_enabled_through_to_the_document():
+    registry = _registry()
+    state = registry.state(streams_enabled=True)
+    assert state["streams_enabled"] is True
+    state = registry.state(streams_enabled=False)
+    assert state["streams_enabled"] is False
+
+
+def test_turning_the_gate_off_tears_down_existing_streams():
+    registry = _registry()
+    declarations = {"aux": {}, "critic": {"budget": 3}}
+
+    accepted, rejected = rs.evaluate_console(declarations, True)
+    added, removed = registry.apply(accepted, rejected)
+    assert set(added) == {"aux", "critic"}
+    assert removed == []
+    state = registry.state(streams_enabled=True)
+    assert state["streams"]["aux"]["status"] == "active"
+    assert state["streams"]["critic"]["status"] == "active"
+
+    accepted, rejected = rs.evaluate_console(declarations, False)
+    added, removed = registry.apply(accepted, rejected)
+    assert added == []
+    assert set(removed) == {"aux", "critic"}
+    state = registry.state(streams_enabled=False)
+    assert state["streams_enabled"] is False
+    assert state["streams"]["aux"] == {
+        "status": "rejected",
+        "reason": "streams are not enabled",
+    }
+    assert state["streams"]["critic"] == {
+        "status": "rejected",
+        "reason": "streams are not enabled",
+    }

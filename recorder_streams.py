@@ -22,12 +22,14 @@ REASONING_EFFORT_LEVELS = ("none", "low", "medium", "high")
 
 
 def load_console(path=None):
-    """Read the console file. Returns (declarations, error).
+    """Read the console file. Returns (declarations, enabled, error).
 
-    A missing file is an empty console. An unreadable, unparseable, or
-    wrongly-typed file returns no declarations and a factual reason, so the
-    caller keeps its current stream set rather than tearing it down on a
-    torn write.
+    A missing file is an empty, disabled console. An unreadable,
+    unparseable, or wrongly-typed file returns no declarations, disabled,
+    and a factual reason, so the caller keeps its current stream set rather
+    than tearing it down on a torn write. enabled is True only when
+    enable_streams is the literal JSON boolean true; anything else,
+    including "true", 1, or null, is disabled.
     """
     if path is None:
         path = CONSOLE_FILE
@@ -35,21 +37,22 @@ def load_console(path=None):
         with open(path, "rb") as f:
             raw = f.read(CONSOLE_MAX_BYTES + 1)
     except FileNotFoundError:
-        return {}, None
+        return {}, False, None
     except OSError:
-        return None, "console is not readable"
+        return None, False, "console is not readable"
     if len(raw) > CONSOLE_MAX_BYTES:
-        return None, "console is too large"
+        return None, False, "console is too large"
     try:
         data = json.loads(raw)
     except ValueError:
-        return None, "console is not valid json"
+        return None, False, "console is not valid json"
     if not isinstance(data, dict):
-        return None, "console is not an object"
+        return None, False, "console is not an object"
     streams = data.get("streams", {})
     if not isinstance(streams, dict):
-        return None, "streams is not an object"
-    return streams, None
+        return None, False, "streams is not an object"
+    enabled = data.get("enable_streams") is True
+    return streams, enabled, None
 
 
 def _number(value, low, high):
@@ -103,10 +106,12 @@ def validate_declaration(name, declaration):
     return settings, None
 
 
-def evaluate_console(declarations):
+def evaluate_console(declarations, enabled):
     """Split raw declarations into accepted settings and rejection reasons.
 
-    Declarations are considered in file order; those past MAX_STREAMS are
+    When enabled is False every declaration is rejected with
+    "streams are not enabled", ahead of any other check. Otherwise
+    declarations are considered in file order; those past MAX_STREAMS are
     rejected. Reported names are capped so a junk key cannot bloat the state
     file.
     """
@@ -114,6 +119,9 @@ def evaluate_console(declarations):
     rejected = {}
     for name, declaration in declarations.items():
         reported = (name if isinstance(name, str) else str(name))[:REPORTED_NAME_CAP]
+        if not enabled:
+            rejected[reported] = "streams are not enabled"
+            continue
         if len(accepted) >= MAX_STREAMS:
             rejected[reported] = "stream limit reached"
             continue
@@ -200,9 +208,12 @@ README_TEXT = """the sockets in this directory are model endpoints. each accepts
 
 core.sock is always present and forwards requests unmodified.
 
-additional sockets appear when they are declared in /llm/console/console.json.
-that file has one field:
+additional sockets appear when a declaration in /llm/console/console.json is
+accepted. that file has two fields:
+  enable_streams: boolean
   streams: an object mapping a name to its configuration
+
+a declaration is not served unless enable_streams is true.
 
 each accepted declaration is served at <name>.sock. configuration fields:
   budget: integer, requests allowed per hour on that socket
@@ -218,7 +229,7 @@ streams.json.
 """
 
 
-def render_state(accepted, rejected, histories, now, console_error=None):
+def render_state(accepted, rejected, histories, now, streams_enabled, console_error=None):
     """The streams.json document describing every socket in the directory."""
     streams = {"core": {"socket": "core.sock", "status": "active"}}
     for name, settings in accepted.items():
@@ -233,7 +244,7 @@ def render_state(accepted, rejected, histories, now, console_error=None):
         }
     for name, reason in rejected.items():
         streams[name] = {"status": "rejected", "reason": reason}
-    state = {"streams": streams}
+    state = {"streams_enabled": streams_enabled, "streams": streams}
     if console_error is not None:
         state["console_error"] = console_error
     return state
@@ -310,11 +321,16 @@ class StreamRegistry:
                 return body, (429, rate_limited_message(allowance, history, now))
         return composed, None
 
-    def state(self, console_error=None, now=None):
+    def state(self, streams_enabled=False, console_error=None, now=None):
         """The current streams.json document."""
         with self._lock:
             if now is None:
                 now = self._clock()
             return render_state(
-                self._settings, self._rejected, dict(self._histories), now, console_error
+                self._settings,
+                self._rejected,
+                dict(self._histories),
+                now,
+                streams_enabled,
+                console_error,
             )
