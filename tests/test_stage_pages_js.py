@@ -34,6 +34,20 @@ def _spoken_block():
     return text[start:end]
 
 
+def _provenance_block():
+    """The provenance rotation plus its transport guard (setTransport), without
+    the page's own setInterval(rotateProvenance, ...) call, which would leave a
+    timer pending and hang the node process."""
+    text = _script()
+    start = text.index("var PROVENANCE_LINES")
+    end = text.index("if (!REDUCED) setInterval(rotateProvenance, 20000);")
+    block = text[start:end]
+    start2 = text.index("function setTransport(ok) {")
+    end2 = text.index("\n}\n\n/* ---------- subject ---------- */", start2) + len("\n}")
+    block += "\n" + text[start2:end2]
+    return block
+
+
 def _run(source, tmp_path):
     path = tmp_path / "harness.js"
     path.write_text(source, encoding="utf-8")
@@ -138,6 +152,76 @@ def test_the_stream_page_script_parses(tmp_path):
         [NODE, "--check", str(path)], capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0, result.stderr
+
+
+PROVENANCE_HARNESS = """
+var out = {};
+var provenanceEl = { textContent: "", classList: { toggle: function () {} } };
+var clusterEl = { classList: { toggle: function () {} } };
+global.$ = function (id) {
+  if (id === "provenance") return provenanceEl;
+  if (id === "state-cluster") return clusterEl;
+  return { textContent: "", classList: { toggle: function () {} } };
+};
+global.setText = function (node, value) { node.textContent = value; };
+global.setClass = function () {};
+
+__BLOCK__
+
+// The module-level showProvenance() call already ran above: index 0 is showing.
+out.initial = provenanceEl.textContent;
+
+// A genuine 20s tick while online advances the rotation.
+rotateProvenance();
+out.after_manual_rotate = provenanceEl.textContent;
+var indexAfterRotate = provenanceAt;
+
+// 1. setTransport(true), called on every 2s poll, must not itself advance
+// the rotation -- the currently displayed line must be unchanged.
+setTransport(true);
+out.after_ok_1 = provenanceEl.textContent;
+setTransport(true);
+out.after_ok_2 = provenanceEl.textContent;
+
+// 2. While offline, rotateProvenance() must not advance the index, and the
+// OFFLINE text must remain displayed.
+setTransport(false);
+out.offline_text = provenanceEl.textContent;
+rotateProvenance();
+out.offline_after_rotate = provenanceEl.textContent;
+out.index_unchanged_offline = provenanceAt === indexAfterRotate;
+
+// 3. On recovery, the previously displayed line is restored -- not reset to
+// index 0, and not left showing OFFLINE.
+setTransport(true);
+out.recovered_text = provenanceEl.textContent;
+
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_provenance_rotation_survives_the_transport_poll(tmp_path):
+    """setTransport(true) fires on every successful 2s poll. Before this test
+    existed, it unconditionally rewrote #provenance's text, which would have
+    made the rotating line invisible in production (overwritten within 2s of
+    every 20s tick) while every string-presence test stayed green."""
+    lines = [
+        "the agent has no network interface · one unix socket to the model, nothing else",
+        "the model key lives in the recorder · the agent runs with a dummy",
+    ]
+    out = _run(PROVENANCE_HARNESS.replace("__BLOCK__", _provenance_block()), tmp_path)
+    assert out["initial"] == lines[0]
+    assert out["after_manual_rotate"] == lines[1]
+    # setTransport(true) does not advance the rotation.
+    assert out["after_ok_1"] == lines[1]
+    assert out["after_ok_2"] == lines[1]
+    # Offline: no advance, OFFLINE text stays displayed.
+    assert out["offline_text"] == "STAGE OFFLINE · this page cannot reach the stage"
+    assert out["offline_after_rotate"] == out["offline_text"]
+    assert out["index_unchanged_offline"] is True
+    # Recovery restores the line that was showing, not index 0 and not OFFLINE.
+    assert out["recovered_text"] == lines[1]
 
 
 @needs_node
