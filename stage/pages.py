@@ -526,7 +526,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <span class="chip c-think"><i class="dot think"></i><b>THOUGHT</b><em>private reasoning</em></span>
       <span class="chip c-say"><i class="dot say"></i><b>SPEECH</b><em>said out loud</em></span>
       <span class="chip c-act"><i class="dot act"></i><b>ACTION</b><em>tool calls</em></span>
-      <span id="provenance">the transcript is the proxy's, not the agent's &middot; refreshed every 2s</span>
+      <span id="provenance"></span>
     </div>
     <div id="death-sweep" hidden></div>
   </header>
@@ -648,6 +648,29 @@ function setText(el, value) {
   return true;
 }
 function setClass(el, name, on) { if (el) el.classList.toggle(name, !!on); }
+
+/* Each line is literally true of the running system and traceable to a hard
+   invariant: the agent's container has network_mode none; the upstream key
+   lives only in the recorder, which injects it; the agent's own key is a
+   dummy; the proxy logs bodies and never headers. */
+var PROVENANCE_LINES = [
+  "the agent has no network interface · one unix socket to the model, nothing else",
+  "the model key lives in the recorder · the agent runs with a dummy",
+  "it can rewrite every line of itself · it cannot reach the machine it runs on",
+  "the transcript is the proxy's, not the agent's · refreshed every 2s"
+];
+var provenanceAt = 0;
+var transportOk = true;
+function showProvenance() {
+  setText($("provenance"), PROVENANCE_LINES[provenanceAt % PROVENANCE_LINES.length]);
+}
+function rotateProvenance() {
+  if (!transportOk) return;
+  provenanceAt++;
+  showProvenance();
+}
+showProvenance();
+if (!REDUCED) setInterval(rotateProvenance, 20000);
 function fmt(n) {
   n = Math.max(0, Math.round(n));
   var s = String(n), out = "", c = 0;
@@ -1069,11 +1092,11 @@ function setState(age) {
 }
 function setTransport(ok) {
   var p = $("provenance");
+  transportOk = !!ok;
   setClass(p, "offline", !ok);
   setClass($("state-cluster"), "offline", !ok);
-  setText(p, ok
-    ? "the transcript is the proxy's, not the agent's · refreshed every 2s"
-    : "STAGE OFFLINE · this page cannot reach the stage");
+  if (!ok) setText(p, "STAGE OFFLINE · this page cannot reach the stage");
+  else showProvenance();
 }
 
 /* ---------- subject ---------- */

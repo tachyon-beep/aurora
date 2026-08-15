@@ -272,3 +272,22 @@ def test_a_grave_shows_derived_facts_above_the_note():
 def test_the_dead_panel_counts_how_many_chose():
     assert "chose to die" in HTML
     assert "ended_by_choice" in HTML
+
+
+def test_the_provenance_line_states_the_containment():
+    assert "PROVENANCE_LINES" in HTML
+    assert "no network interface" in HTML
+    assert "dummy" in HTML
+    # the original disclosure is still one of the rotating lines
+    assert "the transcript is the proxy's, not the agent's" in HTML
+
+
+def test_the_provenance_rotation_still_states_the_containment_when_paused():
+    """prefers-reduced-motion stops the rotation, so whichever line is showing must
+    be one that still carries a containment fact — not a bare refresh notice."""
+    rotation = HTML[HTML.index("PROVENANCE_LINES") :]
+    rotation = rotation[: rotation.index("/* ---------- render ----------")]
+    assert "REDUCED" in rotation
+    first = HTML[HTML.index("PROVENANCE_LINES") :]
+    first = first[first.index("[") + 1 : first.index("]")].strip().splitlines()[0]
+    assert "no network interface" in first, first
