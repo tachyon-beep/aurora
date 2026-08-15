@@ -119,8 +119,8 @@ read-only rootfs, tmpfs `/tmp`, `cap_drop: ALL`, `no-new-privileges`, pids/mem l
 
 | Property | Value |
 |----------|-------|
-| Networks | `egress` (Twitch IRC out; serves HTTP) |
-| Mounts | `transcripts` **ro**, `diode` **ro**, `telemetry` **ro**, `exchange` **rw** |
+| Networks | `stream` (serves HTTP on 8091/8092; separate from the `egress` network the recorder and diode use; carries the stage's own optional summary/commentary calls when `STAGE_SUMMARY_API_KEY` is set) |
+| Mounts | `transcripts` **ro**, `diode` **ro**, `telemetry` **ro** |
 | Never | mounts `state`; holds the recorder's API key; writes agent code |
 | Ports | `127.0.0.1:8091` stream page; `127.0.0.1:8092` operator console |
 
