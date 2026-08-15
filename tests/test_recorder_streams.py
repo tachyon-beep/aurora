@@ -573,14 +573,46 @@ def test_admit_on_an_unknown_stream():
     assert refusal == (503, "stream not available")
 
 
-def test_removed_streams_forget_their_histories():
+def test_a_retired_stream_stays_charged_for_the_rest_of_its_window():
     registry = _registry()
     registry.apply({"aux": {"budget": 1}}, {})
     registry.admit("aux", b"{}")
     registry.apply({}, {})
     registry.apply({"aux": {"budget": 1}}, {})
     _, refusal = registry.admit("aux", b"{}")
+    assert refusal is not None
+    assert refusal[0] == 429
+
+
+def test_a_rejected_stream_stays_charged_when_it_is_declared_again():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 1}}, {})
+    registry.admit("aux", b"{}")
+    registry.reject("aux", "bind failed: OSError")
+    registry.apply({"aux": {"budget": 1}}, {})
+    _, refusal = registry.admit("aux", b"{}")
+    assert refusal is not None
+    assert refusal[0] == 429
+
+
+def test_a_retired_stream_is_forgotten_once_its_window_has_passed():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"aux": {"budget": 1}}, {})
+    registry.admit("aux", b"{}")
+    registry.apply({}, {})
+    now[0] += rs.BUDGET_WINDOW + 1
+    registry.apply({"aux": {"budget": 1}}, {})
+    _, refusal = registry.admit("aux", b"{}")
     assert refusal is None
+
+
+def test_a_retired_stream_is_absent_from_the_state_document():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 1}}, {})
+    registry.admit("aux", b"{}")
+    registry.apply({}, {})
+    assert "aux" not in registry.state()["streams"]
 
 
 def test_reject_moves_a_stream_into_the_rejected_set():

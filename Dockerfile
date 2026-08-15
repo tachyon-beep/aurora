@@ -28,6 +28,11 @@ RUN useradd --create-home --uid 1000 appuser
 COPY --chown=appuser:appuser agent.py agent_stock.py chassis.py watchdog.py proxy.py recorder_streams.py parse_transcripts.py system_prompt.txt user_prompt.txt /opt/agent/
 COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+# The default llm console, seeded by the entrypoint when the volume carries
+# none. Deliberately not under /opt/agent: the entrypoint copies that whole
+# directory into /work, which would place this in the agent's own workspace
+# and in the telemetry mirror.
+COPY --chown=appuser:appuser llm_console_seed.json /usr/local/share/aurora/llm_console_seed.json
 COPY --chown=appuser:appuser garden_export/ /garden/
 
 # Pre-create named-volume mountpoints owned by uid 1000. Docker copies this

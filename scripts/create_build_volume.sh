@@ -2,7 +2,9 @@
 # Create and mount the preallocated ext4 image backing the agent's /build.
 #
 # The file is fully allocated up front (never sparse): a full /build cannot
-# consume main-disk space beyond this fixed footprint. The filesystem root is
+# consume main-disk space beyond this fixed footprint. mkfs is given nodiscard
+# so formatting does not release the blocks fallocate reserved, which would
+# make the image sparse again. The filesystem root is
 # owned by uid 1000 (the agent user) via mkfs. The image is loop-mounted on
 # the host at volumes/build and compose bind-mounts that directory; docker's
 # local volume driver cannot loop-mount an image file directly (its o=loop
@@ -19,7 +21,7 @@ if [ -e "$IMG" ]; then
 else
     mkdir -p "$(dirname "$IMG")"
     fallocate -l "$SIZE" "$IMG"
-    mkfs.ext4 -q -F -m 0 -E root_owner=1000:1000 "$IMG"
+    mkfs.ext4 -q -F -m 0 -E root_owner=1000:1000,nodiscard "$IMG"
     echo "created $IMG ($SIZE, preallocated)"
 fi
 

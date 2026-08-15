@@ -6,7 +6,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
-from stage import browse, commentary, data, pages
+from stage import browse, commentary, data, diag, diag_page, pages
 
 try:
     from stage import summary
@@ -118,6 +118,26 @@ class ConsoleHandler(_BaseHandler):
         route = parsed.path
         if route == "/":
             self._send(200, pages.CONSOLE_PAGE_HTML, content_type="text/html; charset=utf-8")
+        elif route == "/diag":
+            self._send(200, diag_page.DIAG_PAGE_HTML, content_type="text/html; charset=utf-8")
+        elif route == "/api/diag/incarnations":
+            self._send(
+                200,
+                json.dumps(
+                    {"incarnations": diag.incarnations(transcript_path(), self._work_dir())}
+                ),
+            )
+        elif route == "/api/diag/incarnation":
+            self._handle_diag_incarnation(query)
+        elif route == "/api/diag/streams":
+            self._send(
+                200,
+                json.dumps({"streams": diag.streams(transcript_path(), events_path())}),
+            )
+        elif route == "/api/diag/stream":
+            self._handle_diag_stream(query)
+        elif route == "/api/diag/entry":
+            self._handle_diag_entry(query)
         elif route == "/api/roots":
             self._send(200, json.dumps(sorted(browse_roots())))
         elif route == "/api/browse":
@@ -192,6 +212,45 @@ class ConsoleHandler(_BaseHandler):
         text = browse.unified_diff_text(stock, current, "agent_stock.py", "agent.py")
         self._send(200, json.dumps({"diff": text}))
 
+    def _work_dir(self):
+        return os.path.join(TELEMETRY_DIR, "work")
+
+    @staticmethod
+    def _query_int(query, key):
+        value = query.get(key, [""])[0]
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    def _handle_diag_incarnation(self, query):
+        work = self._work_dir()
+        life = self._query_int(query, "life")
+        if life is None:
+            life = len(data.tombstone_paths(work)) + 1
+        offset = self._query_int(query, "offset") or 0
+        limit = self._query_int(query, "limit") or diag.DEFAULT_PAGE
+        page = diag.incarnation_turns(transcript_path(), work, life, offset=offset, limit=limit)
+        self._send(200, json.dumps(page))
+
+    def _handle_diag_stream(self, query):
+        name = query.get("name", [""])[0]
+        if not name:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        offset = self._query_int(query, "offset") or 0
+        limit = self._query_int(query, "limit") or diag.DEFAULT_PAGE
+        page = diag.stream_requests(transcript_path(), name, offset=offset, limit=limit)
+        self._send(200, json.dumps(page))
+
+    def _handle_diag_entry(self, query):
+        index = self._query_int(query, "index")
+        record = diag.entry(transcript_path(), index) if index is not None else None
+        if record is None:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        self._send(200, json.dumps(record))
+
 
 def transcript_path():
     """The recorder's JSONL transcript file path."""
@@ -219,9 +278,36 @@ def _public_lane(lane):
     }
 
 
+def _lane_rank(lane):
+    """Sort key ordering lanes by how much a viewer needs to see them.
+
+    stream_lanes retains a recently active unbound lane for an hour and sorts the
+    rest by name, so after a round of renaming the list can outrun the sockets that
+    exist, with retired lanes sorted ahead of live ones. Bound lanes can never
+    outnumber the sockets, so ranking them first means the cap only ever drops
+    lanes that are already retired. last_epoch is None until a lane opens or closes
+    a request, so it is ranked as older than any recorded epoch rather than
+    compared with one.
+    """
+    last = lane.get("last_epoch")
+    epoch = float(last) if isinstance(last, (int, float)) else float("-inf")
+    return (
+        lane.get("name") != "core",
+        not lane.get("bound"),
+        not (lane.get("in_flight") or 0),
+        -epoch,
+        str(lane.get("name") or ""),
+    )
+
+
 def _public_lanes(lanes):
-    """The public lane list, capped in count."""
-    return [_public_lane(lane) for lane in lanes[:LANES_CAP]]
+    """The public lane list, ranked so the cap drops the least live lanes first."""
+    return [_public_lane(lane) for lane in sorted(lanes, key=_lane_rank)[:LANES_CAP]]
+
+
+def _lanes_omitted(lanes):
+    """How many lanes the cap dropped, so the page can disclose them."""
+    return max(0, len(lanes) - LANES_CAP)
 
 
 def _clip(text, cap):
@@ -415,8 +501,11 @@ def _empty_snapshot(now):
         "turns": [],
         "events": [],
         "lanes": [],
+        "lanes_omitted": 0,
         "diode": {
             "outputs": [],
+            "operations_total": 0,
+            "operations_life": 0,
             "published": [],
             "published_total": 0,
             "spoken": [],
@@ -457,6 +546,7 @@ def _assemble_snapshot(now):
     )
     stats["model"] = _clip(str(stats.get("model") or ""), MODEL_CAP) or None
     life = stats["incarnation"] if any(t.get("life") is not None for t in turns) else None
+    lanes = data.stream_lanes(events_path(), now=now)
     diode = data.diode_activity(DIODE_DIR, deaths=deaths, incarnation=incarnation)
     published, published_total = data.diode_published(DIODE_DIR, limit=DISPLAY_PUBLISHED)
     spoken, spoken_total = data.diode_spoken(DIODE_DIR, limit=DISPLAY_SPOKEN)
@@ -470,9 +560,12 @@ def _assemble_snapshot(now):
         "code": data.code_stats(work),
         "turns": [_public_turn(t) for t in display],
         "events": data.self_modification_events(turns, limit=6, life=life),
-        "lanes": _public_lanes(data.stream_lanes(events_path(), now=now)),
+        "lanes": _public_lanes(lanes),
+        "lanes_omitted": _lanes_omitted(lanes),
         "diode": {
             "outputs": diode["outputs"][:DISPLAY_OUTPUTS],
+            "operations_total": diode["operations_total"],
+            "operations_life": diode["operations_life"],
             "published": published,
             "published_total": published_total,
             "spoken": spoken,

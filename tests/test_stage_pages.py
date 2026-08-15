@@ -306,6 +306,13 @@ def test_a_grave_shows_derived_facts_above_the_note():
     assert "clamp tomb" in HTML, "the note itself must survive the rebuild"
 
 
+def test_a_window_capped_turn_count_is_rendered_as_a_lower_bound():
+    """turns_lived is counted over a 40-record window, so a longer life leaves a
+    count that is a floor. The page carries the same "+" the subject panel uses for
+    turns_this_life rather than presenting the floor as an exact count."""
+    assert "turns_partial" in HTML
+
+
 def test_the_dead_panel_counts_how_many_chose():
     assert "chose to die" in HTML
     assert "ended_by_choice" in HTML

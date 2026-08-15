@@ -400,6 +400,21 @@ class StreamRegistry:
         self._histories = {}
         self._clock = clock
 
+    def _prune_histories(self, now):
+        """Age out spent stamps and forget the streams left with none.
+
+        A name that is no longer declared keeps its charge until its stamps
+        leave the window, so removing a stream from the agent-writable console
+        and declaring it again does not buy a second allowance inside the same
+        hour. Called with the lock already held.
+        """
+        kept = {}
+        for name, history in self._histories.items():
+            recent = [t for t in history if now - t < BUDGET_WINDOW]
+            if recent or name in self._settings:
+                kept[name] = recent
+        self._histories = kept
+
     def apply(self, accepted, rejected):
         """Adopt a console evaluation. Returns (added, removed) stream names."""
         with self._lock:
@@ -407,16 +422,15 @@ class StreamRegistry:
             removed = [name for name in self._settings if name not in accepted]
             self._settings = {name: dict(settings) for name, settings in accepted.items()}
             self._rejected = dict(rejected)
-            for name in removed:
-                self._histories.pop(name, None)
+            self._prune_histories(self._clock())
             return added, removed
 
     def reject(self, name, reason):
         """Record a stream the poll loop could not serve."""
         with self._lock:
             self._settings.pop(name, None)
-            self._histories.pop(name, None)
             self._rejected[name] = reason
+            self._prune_histories(self._clock())
 
     def admit(self, stream, body):
         """Compose and charge one request. Returns (body, refusal).

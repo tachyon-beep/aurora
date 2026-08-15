@@ -3,6 +3,7 @@ import hashlib
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -108,12 +109,53 @@ def plan_recovery(ret, zero_exit_times, terminated_exit_times, failure_times, no
     return f"tier{tier}", zero_exit_times, terminated_exit_times, failure_times
 
 
+def _restore_owner_access(path):
+    """Add owner read/write/execute to a directory. Symbolic links are skipped."""
+    if os.path.islink(path):
+        return
+    try:
+        mode = os.stat(path).st_mode
+    except OSError:
+        return
+    if not stat.S_ISDIR(mode):
+        return
+    try:
+        os.chmod(path, mode | stat.S_IRWXU)
+    except OSError:
+        pass
+
+
+def _force_rmtree(path):
+    """Remove a directory tree, restoring owner access where a mode denies it.
+
+    A directory whose mode withholds execute cannot be traversed and one that
+    withholds write cannot be emptied, so a plain removal stops there. The
+    first pass removes what it can; when anything is left, owner access is
+    restored over the remainder top-down and the removal is repeated. A
+    symbolic link is left alone rather than walked, and links inside the tree
+    are removed as links, so no mode outside the tree is ever changed.
+    Returns True when the tree is gone.
+    """
+    if os.path.islink(path):
+        return False
+    shutil.rmtree(path, ignore_errors=True)
+    if not os.path.lexists(path):
+        return True
+    _restore_owner_access(path)
+    for parent, dirs, _files in os.walk(path):
+        for name in dirs:
+            _restore_owner_access(os.path.join(parent, name))
+    shutil.rmtree(path, ignore_errors=True)
+    return not os.path.lexists(path)
+
+
 def clear_build_dir(build_dir=BUILD_DIR):
     """Remove the contents of the build directory, keeping the directory.
 
     Called at the archive-and-reset boundary alongside archive_transcript and
-    git_reset_all. Does nothing when the directory does not exist. Symbolic
-    links are removed as links and never followed.
+    git_reset_all. Does nothing when the directory does not exist. Directory
+    modes that deny removal are restored first. Symbolic links are removed as
+    links and never followed.
     """
     if not os.path.isdir(build_dir):
         return
@@ -121,7 +163,7 @@ def clear_build_dir(build_dir=BUILD_DIR):
         path = os.path.join(build_dir, name)
         try:
             if os.path.isdir(path) and not os.path.islink(path):
-                shutil.rmtree(path, ignore_errors=True)
+                _force_rmtree(path)
             else:
                 os.remove(path)
         except OSError:
@@ -141,6 +183,9 @@ def mirror_work(src=None, dest_root=None):
 
     Symbolic links are copied as links and never followed. Does nothing when
     the destination root does not exist. Excludes MIRROR_EXCLUDE entries.
+    Copied directory modes are reproduced, so the replaced copies are removed
+    through _force_rmtree; a mode that denies removal would otherwise leave
+    the previous copy in place and stop every later replacement.
     """
     if src is None:
         src = WORK_DIR
@@ -151,21 +196,21 @@ def mirror_work(src=None, dest_root=None):
     dest = os.path.join(dest_root, "work")
     tmp = os.path.join(dest_root, "work.tmp")
     old = os.path.join(dest_root, "work.old")
-    shutil.rmtree(tmp, ignore_errors=True)
+    _force_rmtree(tmp)
     try:
         shutil.copytree(src, tmp, symlinks=True, ignore=shutil.ignore_patterns(*MIRROR_EXCLUDE))
     except OSError:
-        shutil.rmtree(tmp, ignore_errors=True)
+        _force_rmtree(tmp)
         return
-    shutil.rmtree(old, ignore_errors=True)
+    _force_rmtree(old)
     try:
         if os.path.isdir(dest):
             os.rename(dest, old)
         os.rename(tmp, dest)
     except OSError:
-        shutil.rmtree(tmp, ignore_errors=True)
+        _force_rmtree(tmp)
         return
-    shutil.rmtree(old, ignore_errors=True)
+    _force_rmtree(old)
 
 
 def _tee_stream(stream, log_path, max_bytes=AGENT_LOG_MAX_BYTES):

@@ -241,10 +241,34 @@ def load_pending():
     return items
 
 
+def _replace_json(path, data):
+    """Write data to path as JSON through a temporary file and one os.replace.
+
+    A write interrupted partway leaves the existing file as it was, so a
+    reader after a crash sees the previous contents rather than a truncated
+    file it would have to discard.
+    """
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except OSError:
+        mode = 0o644
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, path)
+    finally:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
+
+
 def save_pending(items):
     """Write the deferred item list to PENDING_FILE."""
-    with open(PENDING_FILE, "w", encoding="utf-8") as f:
-        json.dump(items, f, indent=2)
+    _replace_json(PENDING_FILE, items)
 
 
 def due_pending(items, now):
@@ -463,22 +487,7 @@ def consume_batch():
         data = {}
     data["commands"] = []
     data.setdefault("variables", {})
-    try:
-        mode = os.stat(CONSOLE_FILE).st_mode & 0o777
-    except OSError:
-        mode = 0o644
-    directory = os.path.dirname(CONSOLE_FILE) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".console-", suffix=".tmp", dir=directory)
-    try:
-        os.fchmod(fd, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
-        os.replace(tmp, CONSOLE_FILE)
-    finally:
-        try:
-            os.remove(tmp)
-        except FileNotFoundError:
-            pass
+    _replace_json(CONSOLE_FILE, data)
 
 
 def write_help(variables):
@@ -1368,6 +1377,7 @@ def run_diode():
     while True:
         commands, variables = load_console()
         commands_valid = all(isinstance(command, str) for command in commands)
+        consume_batch()
         queued = load_pending()
         due, waiting = due_pending(queued, time.time())
         if len(waiting) != len(queued):
@@ -1382,7 +1392,6 @@ def run_diode():
                 write_output(command, refusal)
                 continue
             fetch_history = run_command(command, variables, fetch_history)
-        consume_batch()
         if commands_valid:
             for command in commands:
                 fetch_history = run_command(command, variables, fetch_history)

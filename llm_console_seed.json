@@ -1,0 +1,13 @@
+{
+  "enable_streams": true,
+  "streams": {
+    "text": {
+      "model": "deepseek/deepseek-v4-flash",
+      "budget": 30
+    },
+    "vision": {
+      "model": "qwen/qwen3.7-flash",
+      "budget": 30
+    }
+  }
+}

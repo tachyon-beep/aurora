@@ -79,7 +79,9 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      the agent can cause spend through a gated command (e.g. the diode's speech credential) but no
      command in that vocabulary returns a key — each diode credential lives only in the diode's own
      environment. The **`/llm/console` volume** is written by the agent and read only by the
-     recorder, which validates it against a closed field vocabulary. A declaration can create model
+     recorder, which validates it against a closed field vocabulary. The agent's entrypoint seeds
+     it once, only when absent, with a default declaration (`llm_console_seed.json`); the agent may
+     retune or remove it, and no component rewrites it thereafter. A declaration can create model
      sockets under `/llm/sock` and set pacing and hyperparameters for the agent's own model calls,
      but only once the console also sets `enable_streams` to the JSON boolean `true` — without it,
      declarations are validated and reported but never served;

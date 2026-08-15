@@ -11,6 +11,7 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
          font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
   header { padding: 10px 16px; border-bottom: 1px solid #303941; display: flex; gap: 16px; }
   header b { color: #66d9c2; }
+  header a { color: #66d9c2; }
   main { display: grid; grid-template-columns: 360px 1fr; height: calc(100vh - 45px); }
   #list { border-right: 1px solid #303941; overflow-y: auto; padding: 8px; }
   #view { overflow: auto; padding: 12px 16px; }
@@ -33,7 +34,7 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
 </style>
 </head>
 <body>
-<header><b>aurora console</b><span id="crumb"></span></header>
+<header><b>aurora console</b><a id="diag-link" href="/diag">diagnostics</a><span id="crumb"></span></header>
 <main>
   <div id="list">
     <div class="bar">
@@ -54,6 +55,7 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
 <script>
 const token = new URLSearchParams(location.search).get("token") || "";
 history.replaceState(null, "", location.pathname);
+document.getElementById("diag-link").href = "/diag?token=" + encodeURIComponent(token);
 let root = "telemetry";
 let path = "";
 function api(url) {
@@ -1180,12 +1182,7 @@ function renderSubject() {
   setText($("v-self"), String(selfCallsText));
   setClass($("row-self"), "dimv", selfCalls === 0);
 
-  var outs = (snap.diode && snap.diode.outputs) || [], reach = 0, anyLife = false;
-  for (i = 0; i < outs.length; i++) {
-    if (outs[i].life != null) anyLife = true;
-    if (outs[i].life === st.incarnation) reach++;
-  }
-  setText($("v-reach"), String(anyLife ? reach : outs.length));
+  setText($("v-reach"), String(reachedThisLife()));
 
   var tl = st.turns_this_life || 0;
   var turnsText = tl + (st.turns_this_life_exact ? "" : "+");
@@ -1393,8 +1390,12 @@ function renderDead() {
     setText(g.__clamp, sent);
     var facts = [];
     if (l.lifespan_seconds != null) facts.push("lived " + dur(l.lifespan_seconds));
+    /* turns_lived is counted over the transcript window, which the oldest life in
+       it can outrun; turns_partial says the count is a floor, and the "+" is the
+       one the subject panel already uses for an inexact turns_this_life. */
     if (l.turns_lived != null) {
-      facts.push(l.turns_lived + " turn" + (l.turns_lived === 1 ? "" : "s"));
+      var lived = l.turns_lived + (l.turns_partial ? "+" : "");
+      facts.push(lived + " turn" + (l.turns_lived === 1 && !l.turns_partial ? "" : "s"));
     }
     setText(g.__facts, facts.join(" · "));
   }
@@ -1411,9 +1412,11 @@ function renderDead() {
 
 /* ---------- ribbon ---------- */
 function clearRows(host) { while (host.firstChild) host.removeChild(host.firstChild); }
+/* The server counts every result the diode has filed and places each in a life;
+   `snap.diode.outputs` is only the newest few rows, so counting those froze the
+   figure once the display filled. */
+function reachedThisLife() { return (snap.diode && snap.diode.operations_life) || 0; }
 function renderRibbon() {
-  var st = snap.stats;
-
   var ev = (snap.events || []).slice(-4).reverse(), host = $("selfmod-rows");
   clearRows(host);
   setText($("selfmod-count"), (snap.events || []).length + " THIS LIFE");
@@ -1438,12 +1441,9 @@ function renderRibbon() {
 
   var outs = ((snap.diode && snap.diode.outputs) || []).slice(0, 4), ahost = $("reached-rows");
   clearRows(ahost);
-  var thisLife = 0, anyLife = false;
-  for (i = 0; i < outs.length; i++) {
-    if (outs[i].life != null) anyLife = true;
-    if (outs[i].life === st.incarnation) thisLife++;
-  }
-  setText($("reached-count"), (anyLife ? thisLife : outs.length) + " THIS LIFE");
+  /* The rows are the newest few; the count is the server's, taken over every
+     result the diode has filed, so it does not stop rising at the last row. */
+  setText($("reached-count"), reachedThisLife() + " THIS LIFE");
   for (i = 0; i < outs.length; i++) {
     var o = outs[i], r = el("div", "rrow", ahost);
     var c = el("span", "cmd", r);
@@ -1476,7 +1476,10 @@ function renderRibbon() {
   }
   setClass($("reached"), "is-sparse", $("said-text").scrollHeight <= 34);
 
-  var everReached = (snap.diode.published_total || 0) + (snap.diode.spoken_total || 0) + outs.length;
+  /* publish and speak file a result in output/ like every other command, so
+     they are already inside operations_total; adding their own totals on top
+     counted the same reach outside twice. */
+  var everReached = (snap.diode && snap.diode.operations_total) || 0;
   setClass($("reached-said"), "is-quiet", !(snap.diode.published || []).length &&
     !(snap.diode.spoken || []).length);
   setText($("reached-foot"), everReached
@@ -1731,11 +1734,16 @@ function renderLanes() {
      columns fit without clipping. A larger slice would render lanes into
      overflow that #stream-foot never discloses. */
   var shown = lanes.slice(0, 6), live = 0;
+  /* The server ranks core first and caps the list it sends, reporting the rest
+     as lanes_omitted; an omitted lane is therefore never core. */
+  var omitted = (snap && snap.lanes_omitted) || 0;
   /* given/built are counted over every declared lane, not just the ones the
      grid can show: the figure is a claim about the whole set, and slicing it
      to the rendered rows would understate BUILT (or miss GIVEN, if core is
-     not among the first six) once more lanes exist than the grid displays. */
-  var given = 0, built = 0;
+     not among the first six) once more lanes exist than the grid displays.
+     The lanes the server capped are part of that set as much as the ones the
+     grid has no room for. */
+  var given = 0, built = omitted;
   for (var g = 0; g < lanes.length; g++) {
     if (lanes[g].name === "core") given++;
     else built++;
@@ -1758,7 +1766,7 @@ function renderLanes() {
   }
   setText($("stream-count"),
     lanes.length ? given + " GIVEN · " + built + " BUILT" : "");
-  var hidden = lanes.length - shown.length;
+  var hidden = lanes.length - shown.length + omitted;
   setText($("stream-foot"), hidden > 0
     ? hidden + " more stream" + (hidden === 1 ? "" : "s") + " not shown"
     : (lanes.length ? live + " in flight" : "It thinks with the one socket it was given."));

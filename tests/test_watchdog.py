@@ -84,6 +84,115 @@ def test_clear_build_dir_tolerates_missing_directory(tmp_path):
     watchdog.clear_build_dir(str(tmp_path / "absent"))
 
 
+def _widen(root):
+    """Restore owner access under root so the temporary tree can be collected."""
+    for path, dirs, _files in os.walk(str(root)):
+        for name in dirs:
+            child = os.path.join(path, name)
+            if not os.path.islink(child):
+                os.chmod(child, 0o700)
+
+
+def test_clear_build_dir_removes_directories_that_deny_traversal(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "locked" / "inner").mkdir(parents=True)
+    (build / "locked" / "inner" / "artifact.bin").write_bytes(b"\x00")
+    (build / "locked").chmod(0o000)
+    try:
+        watchdog.clear_build_dir(str(build))
+        assert list(build.iterdir()) == []
+    finally:
+        _widen(build)
+
+
+def test_clear_build_dir_removes_directories_that_deny_writes(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "readonly").mkdir()
+    (build / "readonly" / "artifact.bin").write_bytes(b"\x00")
+    (build / "readonly").chmod(0o555)
+    try:
+        watchdog.clear_build_dir(str(build))
+        assert list(build.iterdir()) == []
+    finally:
+        _widen(build)
+
+
+def test_clear_build_dir_removes_nested_locked_directories(tmp_path):
+    build = tmp_path / "build"
+    build.mkdir()
+    deep = build / "a" / "b" / "c" / "d"
+    deep.mkdir(parents=True)
+    (deep / "artifact.bin").write_bytes(b"\x00")
+    for part in (deep, deep.parent, deep.parent.parent, deep.parent.parent.parent):
+        part.chmod(0o000)
+    try:
+        watchdog.clear_build_dir(str(build))
+        assert list(build.iterdir()) == []
+    finally:
+        _widen(build)
+
+
+def test_clear_build_dir_does_not_follow_symlinks_out_of_locked_directories(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    target = outside / "kept.txt"
+    target.write_text("kept\n", encoding="utf-8")
+    target.chmod(0o600)
+    build = tmp_path / "build"
+    build.mkdir()
+    (build / "readonly").mkdir()
+    (build / "readonly" / "link").symlink_to(outside)
+    (build / "readonly" / "file_link").symlink_to(target)
+    (build / "readonly").chmod(0o555)
+    outside_mode = outside.stat().st_mode
+    try:
+        watchdog.clear_build_dir(str(build))
+        assert list(build.iterdir()) == []
+        assert target.read_text(encoding="utf-8") == "kept\n"
+        assert target.stat().st_mode & 0o777 == 0o600
+        assert outside.stat().st_mode == outside_mode
+    finally:
+        _widen(build)
+
+
+def test_force_rmtree_leaves_a_symlinked_root_and_its_target_alone(tmp_path):
+    outside = tmp_path / "outside"
+    (outside / "sub").mkdir(parents=True)
+    (outside / "sub" / "kept.txt").write_text("kept\n", encoding="utf-8")
+    (outside / "sub").chmod(0o500)
+    link = tmp_path / "work.old"
+    link.symlink_to(outside)
+    try:
+        assert watchdog._force_rmtree(str(link)) is False
+        assert link.is_symlink()
+        assert (outside / "sub").stat().st_mode & 0o777 == 0o500
+        assert (outside / "sub" / "kept.txt").exists()
+    finally:
+        _widen(outside)
+
+
+def test_mirror_keeps_updating_past_a_directory_that_denies_writes(tmp_path):
+    src = tmp_path / "work"
+    src.mkdir()
+    (src / "agent.py").write_text("AGENT\n", encoding="utf-8")
+    (src / "readonly").mkdir()
+    (src / "readonly" / "artifact.bin").write_bytes(b"\x00")
+    (src / "readonly").chmod(0o555)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    try:
+        for revision in range(4):
+            (src / "agent.py").write_text(f"AGENT {revision}\n", encoding="utf-8")
+            watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+            mirrored = dest_root / "work" / "agent.py"
+            assert mirrored.read_text(encoding="utf-8") == f"AGENT {revision}\n"
+    finally:
+        _widen(src)
+        _widen(dest_root)
+
+
 def test_file_hash_changes_with_content(tmp_path):
     f = tmp_path / "w.py"
     f.write_text("a\n", encoding="utf-8")

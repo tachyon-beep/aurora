@@ -105,7 +105,7 @@ def test_lineage_prefers_tombstones(tmp_path):
     )
     out = data.lineage(str(tmp_path), [], limit=3)
     assert len(out) == 2
-    assert out[0]["summary"] == "second life ended."
+    assert out[0]["summary"] == "second life ended. detail."
     assert out[0]["source"] == "tombstone"
 
 
@@ -121,15 +121,16 @@ def test_lineage_falls_back_to_done_calls(tmp_path):
         {
             "source": "transcript",
             "label": "turn 4",
-            "summary": "went well.",
+            "summary": "went well. details.",
             "ordinal": None,
             "kind": "declared",
             "turn": None,
             "ended_epoch": None,
-            "sentence": "went well.",
+            "sentence": "went well. details.",
             "sentence_chars": len("went well. details."),
             "lifespan_seconds": None,
             "turns_lived": None,
+            "turns_partial": False,
         }
     ]
 
@@ -221,7 +222,7 @@ def test_lineage_reads_only_the_head_of_tombstones(tmp_path, monkeypatch):
         "Short note. " + "y" * 5000, encoding="utf-8"
     )
     items = data.lineage(str(work), [])
-    assert items[0]["summary"] == "Short note."
+    assert items[0]["summary"] == "Short note. " + "y" * 52
 
 
 def test_parse_epoch_tolerates_both_offsets_and_junk():
@@ -467,8 +468,9 @@ def test_lineage_records_kind_turn_and_time(tmp_path):
     assert items[2]["turn"] == 141
     assert items[1]["turn"] is None
     assert abs(items[0]["ended_epoch"] - (time.time() - 60)) < 5
-    assert items[2]["summary"] == "Incarnation ended by done() at turn 141."
-    assert items[2]["sentence"] == "Incarnation ended by done() at turn 141."
+    note = "Incarnation ended by done() at turn 141. It rewrote its clipping function."
+    assert items[2]["summary"] == note
+    assert items[2]["sentence"] == note
 
 
 def test_lineage_sentence_is_longer_than_summary_and_counts_the_whole_head(tmp_path):
@@ -517,6 +519,100 @@ def test_diode_activity_falls_back_to_mtime_and_default_verb(tmp_path):
     assert entry["verb"] == "ran handmade"
     assert abs(entry["epoch"] - time.time()) < 60
     assert entry["life"] is None
+
+
+def test_diode_activity_counts_operations_past_the_display_limit(tmp_path):
+    """`outputs` is sliced for display, so a count taken from it stops rising once
+    the display is full. Every run of a command files exactly one result, so the
+    count is taken over the whole listing the slice came from."""
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    for i in range(12):
+        (out_dir / f"20260814_0410{i:02d}_000000_weather_x.txt").write_text("x", encoding="utf-8")
+    got = data.diode_activity(str(tmp_path), limit=4)
+    assert len(got["outputs"]) == 4
+    assert got["operations_total"] == 12
+
+
+def test_diode_activity_counts_an_artifact_and_its_result_as_one_operation(tmp_path):
+    """clone and commons file what they fetched beside the command's own result, so
+    a file count counts one reach outside twice."""
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    (out_dir / "20260814_041000_000000_clone_owner_repo.tar.gz").write_bytes(b"x")
+    (out_dir / "20260814_041001_000000_clone_owner_repo.txt").write_text("x", encoding="utf-8")
+    (out_dir / "20260814_041002_000000_commons_cat.jpg").write_bytes(b"x")
+    (out_dir / "20260814_041003_000000_commons_cat.txt").write_text("x", encoding="utf-8")
+    got = data.diode_activity(str(tmp_path))
+    assert len(got["outputs"]) == 4
+    assert got["operations_total"] == 2
+
+
+def test_diode_activity_counts_this_life_over_the_whole_listing(tmp_path):
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    for i in range(6):
+        (out_dir / f"20260814_0350{i:02d}_000000_weather_x.txt").write_text("x", encoding="utf-8")
+    for i in range(5):
+        (out_dir / f"20260814_0410{i:02d}_000000_weather_x.txt").write_text("x", encoding="utf-8")
+    deaths = [data.parse_epoch("2026-08-14T04:00:00Z")]
+    got = data.diode_activity(str(tmp_path), limit=4, deaths=deaths, incarnation=2)
+    assert got["operations_total"] == 11
+    assert got["operations_life"] == 5
+
+
+def test_diode_activity_counts_only_commands_that_reach_outside(tmp_path):
+    """Every command files a result, including a local one and a name the diode does
+    not have. The figure the page renders is a count of reaching outside the box, so
+    a refused guess and a command that never left must not raise it."""
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    for name in (
+        "20260814_041000_000000_help.txt",
+        "20260814_041001_000000_time.txt",
+        "20260814_041002_000000_notacommand_xyz.txt",
+        "20260814_041003_000000_weather_boston.txt",
+        "20260814_041004_000000_publish_hello.txt",
+    ):
+        (out_dir / name).write_text("x", encoding="utf-8")
+    got = data.diode_activity(str(tmp_path))
+    assert got["operations_total"] == 2
+
+
+def test_diode_activity_reports_the_whole_count_when_no_output_can_be_placed(tmp_path):
+    """Without a life to place them in, the this-life figure is the whole figure
+    rather than a zero the page would render as "0 THIS LIFE"."""
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    (out_dir / "weather.txt").write_text("x", encoding="utf-8")
+    (out_dir / "quakes.txt").write_text("x", encoding="utf-8")
+    got = data.diode_activity(str(tmp_path), deaths=[], incarnation=3)
+    assert got["operations_total"] == 2
+    assert got["operations_life"] == 2
+
+
+def test_diode_activity_counts_without_stating_the_directory(tmp_path, monkeypatch):
+    """The count runs over every name in the listing, so it reads epochs out of the
+    names rather than stating a file per entry. The work the read does is set by the
+    display slice, not by how large the output directory has grown."""
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    calls = []
+    real_stat = os.stat
+    monkeypatch.setattr(os, "stat", lambda path, *a, **k: (calls.append(path), real_stat(path))[1])
+
+    def _run(count):
+        for i in range(count):
+            name = f"20260814_04{i // 60:02d}{i % 60:02d}_000000_weather_x.txt"
+            (out_dir / name).write_text("x", encoding="utf-8")
+        del calls[:]
+        got = data.diode_activity(str(tmp_path), limit=4, deaths=[], incarnation=1)
+        return got["operations_total"], len(calls)
+
+    small_total, small_stats = _run(12)
+    large_total, large_stats = _run(40)
+    assert (small_total, large_total) == (12, 40)
+    assert small_stats == large_stats
 
 
 def test_diode_activity_classifies_life_when_asked(tmp_path):
@@ -1200,10 +1296,20 @@ def test_first_sentence_keeps_reading_past_a_very_short_opener():
     assert len(out) >= data.MIN_SUMMARY_CHARS
 
 
+def test_first_sentence_keeps_the_whole_text_when_no_boundary_reaches_the_floor():
+    """A short label followed by one closing sentence offers no boundary at or past
+    the floor: the terminal period carries no trailing space, so it is no boundary.
+    Falling back to the last boundary below the floor returns the label the floor
+    exists to read past; the cap, not a short boundary, is what bounds the text."""
+    note = "inc10 complete. fixed the queue."
+    assert data.first_sentence(note, cap=320, floor=data.MIN_SUMMARY_CHARS) == note
+
+
 def test_first_sentence_default_behaviour_is_unchanged():
     """_phrase_event wants one short sentence; the floor is opt-in."""
     assert data.first_sentence("One. Two. Three.") == "One."
     assert data.first_sentence("One. Two. Three.", floor=0) == "One."
+    assert data.first_sentence("a. b. c. d") == "a."
 
 
 def test_first_sentence_still_honours_its_cap_with_a_floor():
@@ -1248,6 +1354,48 @@ def test_lineage_counts_turns_from_the_transcript_not_the_death_note(tmp_path):
     turns = [{"kind": "loop", "life": 1}, {"kind": "loop", "life": 1}, {"kind": "loop", "life": 2}]
     out = data.lineage(str(work), turns, now=1786800000.0)
     assert out[0]["turns_lived"] == 2
+
+
+def test_lineage_marks_a_window_capped_turn_count_partial(tmp_path):
+    """_assemble_snapshot supplies only the transcript's last 40 records, so a life
+    longer than the window leaves a count that is a lower bound, not a turn count.
+    The oldest supplied turn already belonging to the life is the evidence the
+    window truncated it: nothing older than that life is there to prove otherwise."""
+    work = tmp_path / "work"
+    tombs = work / "tombstones"
+    tombs.mkdir(parents=True)
+    (tombs / "incarnation-20260815_000000_000000-1.txt").write_text("inc1 complete.")
+    turns = [{"kind": "loop", "life": 1} for _ in range(40)]
+    out = data.lineage(str(work), turns, now=1786800000.0)
+    assert out[0]["turns_lived"] == 40
+    assert out[0]["turns_partial"] is True
+
+
+def test_lineage_turn_count_is_exact_when_the_window_reaches_past_the_life(tmp_path):
+    """A turn from an older life inside the window proves the window holds this
+    life's first turn, so its count is the whole count and not a lower bound."""
+    work = tmp_path / "work"
+    tombs = work / "tombstones"
+    tombs.mkdir(parents=True)
+    (tombs / "incarnation-20260815_000000_000000-1.txt").write_text("inc1 complete.")
+    (tombs / "incarnation-20260815_001000_000000-2.txt").write_text("inc2 complete.")
+    turns = [{"kind": "loop", "life": 1}, {"kind": "loop", "life": 2}, {"kind": "loop", "life": 2}]
+    out = data.lineage(str(work), turns, now=1786800000.0)
+    assert [entry["ordinal"] for entry in out] == [2, 1]
+    assert out[0]["turns_lived"] == 2
+    assert out[0]["turns_partial"] is False
+    assert out[1]["turns_partial"] is True
+
+
+def test_lineage_never_marks_a_note_derived_turn_count_partial(tmp_path):
+    """The note's own turn number is not read out of the window, so the window
+    cannot have truncated it."""
+    work = tmp_path / "work"
+    (work / "tombstones").mkdir(parents=True)
+    (work / "tombstones" / "incarnation-1.txt").write_text("ended by done() at turn 63.")
+    out = data.lineage(str(work), [{"kind": "loop", "life": 2}], now=1786800000.0)
+    assert out[0]["turns_lived"] == 63
+    assert out[0]["turns_partial"] is False
 
 
 def test_lineage_falls_back_to_a_turn_the_note_does_name(tmp_path):

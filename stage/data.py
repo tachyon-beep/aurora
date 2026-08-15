@@ -39,6 +39,7 @@ DIODE_VERBS = {
     "gutensearch": "searched for a book",
     "gutenberg": "fetched a book",
     "commons": "fetched a file",
+    "clone": "fetched a repository",
     "feed": "read a feed",
     "fetchrss": "read a feed",
     "fetchlinks": "followed a link",
@@ -570,15 +571,18 @@ def first_sentence(text, cap=140, floor=0):
 
     Stops at the first sentence boundary that leaves at least floor characters.
     A note opening "inc10 complete." is a label, not a summary; with a floor the
-    extraction reads on into the substance instead of returning the label.
+    extraction reads on into the substance instead of returning the label. When no
+    boundary reaches the floor the whole text is kept and the cap bounds it, since
+    a boundary below the floor is the label the floor exists to read past.
     """
     text = " ".join(text.split())
     cut = None
     for index, char in enumerate(text):
+        if index + 1 < floor:
+            continue
         if char in ".!?" and index + 1 < len(text) and text[index + 1] == " ":
             cut = index + 1
-            if cut >= floor:
-                break
+            break
     if cut is not None:
         text = text[:cut]
     if len(text) > cap:
@@ -616,6 +620,7 @@ def _lineage_entry(source, label, text, ordinal, kind, turn, ended_epoch):
         "sentence_chars": len(collapsed),
         "lifespan_seconds": None,
         "turns_lived": None,
+        "turns_partial": False,
     }
 
 
@@ -626,12 +631,20 @@ def _derive_lives(entries, turns):
     the span. Turn counts come from the life tag annotate_lives already put on each
     turn; a turn number named in the note is only the fallback, because a note
     reading "inc9 complete." names none.
+
+    The turns are a window over the tail of the transcript, so the oldest life in
+    it may have begun before the window did. That life's count is a lower bound
+    rather than a count, and carries turns_partial for the page to say so; every
+    older life has a turn from an older life still in the window to prove the
+    window holds its first turn. A count read from the note is never a lower
+    bound, because it was not read out of the window.
     """
     lived = {}
     for turn in turns or []:
         life = turn.get("life")
         if isinstance(life, int):
             lived[life] = lived.get(life, 0) + 1
+    oldest = min(lived) if lived else None
     for index, entry in enumerate(entries):
         older = entries[index + 1] if index + 1 < len(entries) else None
         ended = entry.get("ended_epoch")
@@ -641,6 +654,7 @@ def _derive_lives(entries, turns):
         ordinal = entry.get("ordinal")
         counted = lived.get(ordinal) if isinstance(ordinal, int) else None
         entry["turns_lived"] = counted if counted else entry.get("turn")
+        entry["turns_partial"] = bool(counted) and ordinal == oldest
     return entries
 
 
@@ -752,15 +766,64 @@ def output_argument(stem):
     return argument.strip()[:40]
 
 
+def _operation_result(name):
+    """Whether an output filename records one command that reached outside the box.
+
+    The diode files exactly one result per command run and names it with a .txt
+    extension; a command that fetches a thing files that thing beside the result
+    under its own extension. Counting every file would count one command twice.
+    An artifact whose own extension is .txt (a fetched book, a text media file)
+    is indistinguishable from a result by name, and is counted as one.
+
+    Only a command DIODE_VERBS knows as leaving the box is counted. A command
+    that runs without egress files a result too, and so does a name the diode
+    does not have, so counting every result would report reaching outside for
+    runs that never did.
+    """
+    if not name.endswith(".txt"):
+        return False
+    return output_command(_output_stem(name)) in DIODE_VERBS
+
+
+def _count_operations(names, deaths, incarnation):
+    """(operations in the listing, operations in the current life) from names alone.
+
+    Epochs are read out of the filenames rather than stat, so the count runs over
+    the whole listing without stating a file per entry. When no name can be placed
+    in a life, the current life's figure is the whole figure rather than a zero.
+    """
+    total = 0
+    life_total = 0
+    placed = False
+    for name in names:
+        if not _operation_result(name):
+            continue
+        total += 1
+        if incarnation is None:
+            continue
+        life = classify_life(_filename_epoch(name), deaths or [], incarnation)
+        if life is None:
+            continue
+        placed = True
+        if life == incarnation:
+            life_total += 1
+    return total, life_total if placed else total
+
+
 def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
-    """Newest diode output files, phrased, plus the console and state file bodies."""
+    """Newest diode output files, phrased, plus the console and state file bodies.
+
+    The operation counts are taken over the whole listing rather than the display
+    slice, so a page reading them does not stop counting at the slice.
+    """
     output_dir = os.path.join(diode_dir, "output")
     outputs = []
     try:
-        names = sorted(os.listdir(output_dir), reverse=True)[:limit]
+        listing = sorted(os.listdir(output_dir), reverse=True)
     except OSError:
-        names = []
-    for name in names:
+        listing = []
+    operations_total, operations_life = _count_operations(listing, deaths, incarnation)
+    for name in listing[:limit]:
         full = contained_file(diode_dir, os.path.join(output_dir, name))
         if full is None:
             continue
@@ -791,6 +854,8 @@ def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
     outputs.sort(key=lambda entry: entry["epoch"], reverse=True)
     return {
         "outputs": outputs,
+        "operations_total": operations_total,
+        "operations_life": operations_life,
         "console": _capped_text(contained_file(diode_dir, os.path.join(diode_dir, "console.json"))),
         "state": _capped_text(contained_file(diode_dir, os.path.join(diode_dir, "state.json"))),
     }

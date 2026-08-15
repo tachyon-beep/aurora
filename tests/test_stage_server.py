@@ -232,7 +232,7 @@ def test_stream_snapshot_shape(stream):
     assert snap["stats"]["model"] == "m"
     assert snap["turns"][-1]["content"] == "hello"
     assert snap["events"][-1]["name"] == "write_file"
-    assert snap["lineage"][0]["summary"] == "ended early."
+    assert snap["lineage"][0]["summary"] == "ended early. detail."
     assert "diode" in snap
     assert "evidence" in snap["commentary"]["colour"]
     assert isinstance(snap["commentary"]["colour"]["evidence"], str)
@@ -464,6 +464,7 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "turns",
         "events",
         "lanes",
+        "lanes_omitted",
         "diode",
         "lineage",
         "story",
@@ -486,6 +487,8 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
     }
     assert set(snap["diode"]) == {
         "outputs",
+        "operations_total",
+        "operations_life",
         "published",
         "published_total",
         "spoken",
@@ -673,6 +676,21 @@ def test_stream_snapshot_carries_published_transmissions(tmp_path, monkeypatch):
     assert epochs == sorted(epochs, reverse=True)
 
 
+def test_stream_snapshot_carries_operation_counts_past_the_display_slice(tmp_path, monkeypatch):
+    """`outputs` is sliced to DISPLAY_OUTPUTS rows, so a page counting the rows it
+    was sent stops counting at four. publish files a result in output/ like every
+    other command, so published_total is already inside the operation count and
+    adding it would count one reach outside twice."""
+    diode = [(f"output/20260814_0410{i:02d}_000000_weather_x.txt", "x") for i in range(9)]
+    diode.append(("output/20260814_041100_000000_publish_hello.txt", "published"))
+    diode.append(("published/20260814_041100_000001.txt", "hello"))
+    snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)], diode=diode)
+    assert len(snap["diode"]["outputs"]) == server.DISPLAY_OUTPUTS
+    assert snap["diode"]["operations_total"] == 10
+    assert snap["diode"]["operations_life"] == 10
+    assert snap["diode"]["published_total"] == 1
+
+
 def test_stream_snapshot_carries_spoken_utterances(tmp_path, monkeypatch):
     diode = [
         ("spoken/20260814_120000_000000.mp3", "ID3audio"),
@@ -714,6 +732,7 @@ def test_stream_snapshot_never_raises_on_missing_directories(tmp_path, monkeypat
         "turns",
         "events",
         "lanes",
+        "lanes_omitted",
         "diode",
         "lineage",
         "story",
@@ -740,6 +759,7 @@ def test_stream_snapshot_returns_the_full_key_set_when_a_reader_fails(tmp_path, 
         "turns",
         "events",
         "lanes",
+        "lanes_omitted",
         "diode",
         "lineage",
         "story",
@@ -957,3 +977,65 @@ def test_public_lanes_cap_names_and_count():
     assert len(public[0]["name"]) == server.LANE_NAME_CAP
     assert public[0]["in_flight"] == 1
     assert public[0]["tokens_hour"] == 30
+
+
+def _lane(name, **fields):
+    lane = {
+        "name": name,
+        "bound": False,
+        "in_flight": 0,
+        "in_flight_since": None,
+        "last_epoch": None,
+        "requests_hour": 0,
+        "errors_hour": 0,
+        "tokens_hour": 0,
+    }
+    lane.update(fields)
+    return lane
+
+
+def test_public_lanes_cap_drops_retired_lanes_before_bound_ones():
+    """stream_lanes keeps a recently active unbound lane for an hour and sorts by
+    name, so after a round of renaming the list outruns the cap with retired lanes
+    sorted ahead of live ones. Slicing that order drops sockets the agent is using
+    in favour of sockets that no longer exist."""
+    retired = [_lane("aaa-%d" % i, requests_hour=1) for i in range(8)]
+    bound = [_lane("zzz-%d" % i, bound=True) for i in range(3)]
+    public = server._public_lanes([_lane("core", bound=True)] + retired + bound)
+    names = [lane["name"] for lane in public]
+    assert names[0] == "core"
+    assert set(names) >= {"zzz-0", "zzz-1", "zzz-2"}
+    assert len(public) == server.LANES_CAP
+
+
+def test_public_lanes_order_survives_a_lane_that_has_never_been_used():
+    """last_epoch is None until a lane opens or closes a request, and comparing
+    None with a float raises. stream_snapshot swallows the error into the empty
+    snapshot, so the whole page would blank rather than fail loudly."""
+    public = server._public_lanes(
+        [_lane("quiet", bound=True), _lane("busy", bound=True, last_epoch=5.0)]
+    )
+    assert [lane["name"] for lane in public] == ["busy", "quiet"]
+
+
+def test_public_lanes_ranks_in_flight_above_idle_and_recent_above_stale():
+    public = server._public_lanes(
+        [
+            _lane("stale", bound=True, last_epoch=1.0),
+            _lane("recent", bound=True, last_epoch=9.0),
+            _lane("busy", bound=True, in_flight=1, last_epoch=1.0),
+        ]
+    )
+    assert [lane["name"] for lane in public] == ["busy", "recent", "stale"]
+
+
+def test_the_snapshot_reports_the_lanes_the_cap_dropped(tmp_path, monkeypatch):
+    """A cap that silently shortens the list leaves the page's "N more streams not
+    shown" understating what it hides."""
+    assert server._lanes_omitted([_lane("l-%d" % i) for i in range(server.LANES_CAP + 4)]) == 4
+    assert server._lanes_omitted([_lane("core")]) == 0
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(tmp_path))
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
+    assert server.stream_snapshot()["lanes_omitted"] == 0
+    assert server._empty_snapshot(1000.0)["lanes_omitted"] == 0

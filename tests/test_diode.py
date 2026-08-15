@@ -206,6 +206,49 @@ def test_batch_is_consumed_before_a_later_output_failure(tmp_path, monkeypatch):
     assert console["commands"] == []
 
 
+def test_a_batch_written_during_deferred_work_is_left_for_the_next_cycle(tmp_path, monkeypatch):
+    class CycleComplete(Exception):
+        pass
+
+    monkeypatch.setattr(diode, "DIODE_DIR", str(tmp_path))
+    monkeypatch.setattr(diode, "CONSOLE_FILE", str(tmp_path / "console.json"))
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    (tmp_path / "console.json").write_text(
+        json.dumps({"commands": ["help"], "variables": {}}), encoding="utf-8"
+    )
+    (tmp_path / "pending.json").write_text(
+        json.dumps([{"due": 0, "kind": "echo", "text": "deferred"}]), encoding="utf-8"
+    )
+
+    real_write_output = diode.write_output
+    ran = []
+
+    def write_output_writing_a_fresh_batch(command, text):
+        ran.append(command)
+        if command == "echo":
+            (tmp_path / "console.json").write_text(
+                json.dumps({"commands": ["fresh"], "variables": {}}), encoding="utf-8"
+            )
+        real_write_output(command, text)
+
+    monkeypatch.setattr(diode, "write_output", write_output_writing_a_fresh_batch)
+    monkeypatch.setattr(
+        diode.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(CycleComplete()),
+    )
+
+    with pytest.raises(CycleComplete):
+        diode.run_diode()
+
+    console = json.loads((tmp_path / "console.json").read_text(encoding="utf-8"))
+    assert console["commands"] == ["fresh"]
+    assert ran == ["echo", "help"]
+
+
 def test_write_help_lists_available_commands(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
     diode.write_help({"enable_clock": True})
@@ -1231,6 +1274,27 @@ def test_load_pending_drops_items_outside_the_known_schema(tmp_path, monkeypatch
     (tmp_path / "pending.json").write_text(json.dumps(items), encoding="utf-8")
 
     assert diode.load_pending() == [{"due": 40, "kind": "echo", "text": "kept"}]
+
+
+def test_save_pending_leaves_the_queue_intact_when_the_replacement_write_fails(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "pending.json"
+    monkeypatch.setattr(diode, "PENDING_FILE", str(path))
+    original = json.dumps([{"due": 0, "kind": "echo", "text": "keep"}])
+    path.write_text(original, encoding="utf-8")
+
+    def fail_during_dump(_data, target, indent=None):
+        target.write("[")
+        raise OSError("write failed")
+
+    monkeypatch.setattr(diode.json, "dump", fail_during_dump)
+
+    with pytest.raises(OSError, match="write failed"):
+        diode.save_pending([{"due": 1, "kind": "echo", "text": "new"}])
+
+    assert path.read_text(encoding="utf-8") == original
+    assert list(tmp_path.iterdir()) == [path]
 
 
 def test_due_pending_splits_on_the_due_time_and_drops_the_malformed():

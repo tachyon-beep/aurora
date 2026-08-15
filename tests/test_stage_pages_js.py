@@ -59,6 +59,16 @@ def _lanes_block():
     return text[start:end]
 
 
+def _ribbon_block():
+    """renderRibbon plus clearRows, which shares its sentinel block. The
+    formatters it calls (`pad2`, `bytes`, `hhmmss`) and the DOM helpers are
+    stubbed by the harness."""
+    text = _script()
+    start = text.index("/* ---------- ribbon ---------- */")
+    end = text.index("var SPOKEN_MEMORY")
+    return text[start:end]
+
+
 def _run(source, tmp_path):
     path = tmp_path / "harness.js"
     path.write_text(source, encoding="utf-8")
@@ -507,6 +517,14 @@ out.count_core_last = streamCount.textContent;
 out.foot_core_last = streamFoot.textContent;
 out.rows_core_last = host.children.length;
 
+/* The server caps the list it sends and reports what it dropped, so the page
+   sees nine lanes and a count of four more it never received. */
+host = makeNode("div");
+global.snap = { lanes: [lane("core")].concat(others(8)), lanes_omitted: 4 };
+renderLanes();
+out.count_omitted = streamCount.textContent;
+out.foot_omitted = streamFoot.textContent;
+
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -529,3 +547,111 @@ def test_the_given_built_figure_counts_every_declared_lane_not_just_the_shown_ro
     assert out["count_core_last"] == "1 GIVEN · 8 BUILT"
     assert out["foot_core_last"] == "3 more streams not shown"
     assert out["rows_core_last"] == 6
+
+
+@needs_node
+def test_lanes_the_server_capped_are_disclosed_alongside_the_ones_the_grid_hides(tmp_path):
+    """The server caps its lane list too, so `lanes` is not the whole set either.
+    Counting only the grid's own overflow understates what is hidden, and the
+    GIVEN/BUILT figure -- a claim about every declared lane -- understates BUILT."""
+    out = _run(LANES_HARNESS.replace("__BLOCK__", _lanes_block()), tmp_path)
+    assert out["foot_omitted"] == "7 more streams not shown"
+    assert out["count_omitted"] == "1 GIVEN · 12 BUILT"
+
+
+RIBBON_HARNESS = """
+function makeNode(tag) {
+  var n = {
+    tagName: tag, className: "", textContent: "", scrollHeight: 0, children: [],
+    classList: { toggle: function () {} },
+    appendChild: function (child) { this.children.push(child); },
+    removeChild: function (child) {
+      var idx = this.children.indexOf(child);
+      if (idx >= 0) this.children.splice(idx, 1);
+    }
+  };
+  Object.defineProperty(n, "firstChild", {
+    get: function () { return this.children.length ? this.children[0] : null; }
+  });
+  return n;
+}
+var nodes = {};
+global.$ = function (id) {
+  if (!nodes[id]) nodes[id] = makeNode("div");
+  return nodes[id];
+};
+global.el = function (tag, cls, parent) {
+  var n = makeNode(tag);
+  if (cls) n.className = cls;
+  if (parent) parent.appendChild(n);
+  return n;
+};
+global.setText = function (node, value) { node.textContent = String(value == null ? "" : value); };
+global.setClass = function () {};
+global.norm = function (t) { return String(t == null ? "" : t).replace(/\\s+/g, " ").trim(); };
+global.pad2 = function (n) { return String(n); };
+global.bytes = function (n) { return String(n); };
+global.hhmmss = function () { return "00:00:00"; };
+
+__BLOCK__
+
+/* Ten ordinary commands and one publish, of which the server sends four rows.
+   A page counting the rows it was sent stops at four; publish files a result
+   in output/ like any other command, so published_total is already inside
+   operations_total and adding it counts the same reach twice. */
+function outputs(n) {
+  var list = [];
+  for (var i = 0; i < n; i++) {
+    list.push({ command: "weather", slug: "weather", verb: "read the weather",
+                argument: "", epoch: 1000 + i, size: 10, life: 3 });
+  }
+  return list;
+}
+global.snap = {
+  stats: { incarnation: 3 },
+  events: [],
+  diode: {
+    outputs: outputs(4),
+    operations_total: 11,
+    operations_life: 6,
+    published: [{ epoch: 1000, text: "hello" }],
+    published_total: 1,
+    spoken: [],
+    spoken_total: 2
+  }
+};
+renderRibbon();
+var out = {
+  reached_count: nodes["reached-count"].textContent,
+  reached_foot: nodes["reached-foot"].textContent,
+  rows: nodes["reached-rows"].children.length
+};
+
+/* Nothing filed at all: the panel must still say so rather than name a count. */
+nodes = {};
+global.snap = {
+  stats: { incarnation: 1 },
+  events: [],
+  diode: { outputs: [], operations_total: 0, operations_life: 0,
+           published: [], published_total: 0, spoken: [], spoken_total: 0 }
+};
+renderRibbon();
+out.quiet_count = nodes["reached-count"].textContent;
+out.quiet_foot = nodes["reached-foot"].textContent;
+
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_reach_counts_come_from_the_uncapped_totals_not_the_rendered_rows(tmp_path):
+    """`outputs` carries at most DISPLAY_OUTPUTS rows, so counting it froze both
+    figures at four. published and spoken each file a result in output/ too, so
+    adding their totals on top counted those reaches twice. Only running the
+    function catches this: the page's source text looks the same either way."""
+    out = _run(RIBBON_HARNESS.replace("__BLOCK__", _ribbon_block()), tmp_path)
+    assert out["rows"] == 4
+    assert out["reached_count"] == "6 THIS LIFE"
+    assert out["reached_foot"] == "11 times across every life"
+    assert out["quiet_count"] == "0 THIS LIFE"
+    assert out["quiet_foot"] == "It has never reached outside the box."
