@@ -157,7 +157,6 @@ services:
       context: .
       dockerfile: Dockerfile.viewer
     image: aurora-viewer
-    profiles: ["viewer"]
     environment:
       TRANSCRIPT_DIR: /transcripts
       VIEWER_PORT: "8090"

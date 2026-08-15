@@ -167,9 +167,12 @@ def test_the_stream_page_script_parses(tmp_path):
 
 PROVENANCE_HARNESS = """
 var out = {};
+var premiseEl = { textContent: "", classList: { toggle: function () {} } };
 var provenanceEl = { textContent: "", classList: { toggle: function () {} } };
 var clusterEl = { classList: { toggle: function () {} } };
+global.announceUntil = 0;
 global.$ = function (id) {
+  if (id === "premise") return premiseEl;
   if (id === "provenance") return provenanceEl;
   if (id === "state-cluster") return clusterEl;
   return { textContent: "", classList: { toggle: function () {} } };
@@ -179,33 +182,47 @@ global.setClass = function () {};
 
 __BLOCK__
 
-// The module-level showProvenance() call already ran above: index 0 is showing.
-out.initial = provenanceEl.textContent;
+// The module-level calls already ran above: containment line 0 is on the
+// masthead (#premise) and the premise sentence is on the secondary line.
+out.initial = premiseEl.textContent;
+out.initial_secondary = provenanceEl.textContent;
 
-// A genuine 20s tick while online advances the rotation.
+// A genuine 20s tick while online advances the rotation on the masthead.
 rotateProvenance();
-out.after_manual_rotate = provenanceEl.textContent;
+out.after_manual_rotate = premiseEl.textContent;
 var indexAfterRotate = provenanceAt;
 
-// 1. setTransport(true), called on every 2s poll, must not itself advance
-// the rotation -- the currently displayed line must be unchanged.
+// 1. setTransport(true), called on every 2s poll, must not advance the
+// rotation, and must keep the premise sentence on the secondary line.
 setTransport(true);
-out.after_ok_1 = provenanceEl.textContent;
+out.after_ok_1 = premiseEl.textContent;
 setTransport(true);
-out.after_ok_2 = provenanceEl.textContent;
+out.after_ok_2 = premiseEl.textContent;
+out.secondary_after_ok = provenanceEl.textContent;
 
-// 2. While offline, rotateProvenance() must not advance the index, and the
-// OFFLINE text must remain displayed.
+// 2. While offline, the OFFLINE notice replaces only the secondary line;
+// rotateProvenance() must not advance the index or touch the masthead.
 setTransport(false);
 out.offline_text = provenanceEl.textContent;
 rotateProvenance();
-out.offline_after_rotate = provenanceEl.textContent;
+out.offline_masthead = premiseEl.textContent;
 out.index_unchanged_offline = provenanceAt === indexAfterRotate;
 
-// 3. On recovery, the previously displayed line is restored -- not reset to
-// index 0, and not left showing OFFLINE.
+// 3. On recovery, the premise sentence returns and the masthead still shows
+// the line that was showing -- not index 0, not OFFLINE.
 setTransport(true);
-out.recovered_text = provenanceEl.textContent;
+out.recovered_secondary = provenanceEl.textContent;
+out.recovered_masthead = premiseEl.textContent;
+
+// 4. While a death announcement holds the masthead, the rotation must not
+// overwrite it; when tick() clears announceUntil, showProvenance() resumes.
+announceUntil = 1;
+premiseEl.textContent = "INCARNATION 9 HAS ENDED.";
+rotateProvenance();
+out.announce_kept = premiseEl.textContent;
+announceUntil = 0;
+showProvenance();
+out.after_announce = premiseEl.textContent;
 
 process.stdout.write(JSON.stringify(out));
 """
@@ -214,25 +231,41 @@ process.stdout.write(JSON.stringify(out));
 @needs_node
 def test_provenance_rotation_survives_the_transport_poll(tmp_path):
     """setTransport(true) fires on every successful 2s poll. Before this test
-    existed, it unconditionally rewrote #provenance's text, which would have
-    made the rotating line invisible in production (overwritten within 2s of
-    every 20s tick) while every string-presence test stayed green."""
+    existed, it unconditionally rewrote the rotating line's element, which would
+    have made the rotation invisible in production (overwritten within 2s of
+    every 20s tick) while every string-presence test stayed green. The rotation
+    now lives on the masthead (#premise) and the premise sentence on the
+    secondary line (#provenance); offline handling touches only the latter."""
     lines = [
         "the agent has no network interface · one unix socket to the model, nothing else",
         "the model key lives in the recorder · the agent runs with a dummy",
     ]
+    premise = (
+        "A language model has been given the file that runs it. "
+        "It cannot leave the box. It can end itself, and usually does."
+    )
     out = _run(PROVENANCE_HARNESS.replace("__BLOCK__", _provenance_block()), tmp_path)
     assert out["initial"] == lines[0]
+    assert out["initial_secondary"] == premise
     assert out["after_manual_rotate"] == lines[1]
     # setTransport(true) does not advance the rotation.
     assert out["after_ok_1"] == lines[1]
     assert out["after_ok_2"] == lines[1]
-    # Offline: no advance, OFFLINE text stays displayed.
+    assert out["secondary_after_ok"] == premise
+    # Offline: notice on the secondary line only; no advance, masthead untouched.
     assert out["offline_text"] == "STAGE OFFLINE · this page cannot reach the stage"
-    assert out["offline_after_rotate"] == out["offline_text"]
+    assert out["offline_masthead"] == lines[1]
     assert out["index_unchanged_offline"] is True
-    # Recovery restores the line that was showing, not index 0 and not OFFLINE.
-    assert out["recovered_text"] == lines[1]
+    # Recovery restores the premise sentence; the masthead line never moved.
+    assert out["recovered_secondary"] == premise
+    assert out["recovered_masthead"] == lines[1]
+    # A death announcement is never overwritten mid-beat; once cleared, the
+    # rotation resumes at the index the silent tick advanced it to.
+    assert out["announce_kept"] == "INCARNATION 9 HAS ENDED."
+    assert (
+        out["after_announce"]
+        == "it can rewrite every line of itself · it cannot reach the machine it runs on"
+    )
 
 
 @needs_node

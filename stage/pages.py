@@ -28,6 +28,8 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
         border-radius: 4px; padding: 2px 8px; cursor: pointer; margin-right: 6px; }
   select { background: #171c20; color: #eef3f6; border: 1px solid #303941;
            border-radius: 4px; padding: 2px 6px; }
+  #viewer-note { color: #79848c; padding: 3px 6px 8px; }
+  #viewer-note a { color: #66d9c2; }
 </style>
 </head>
 <body>
@@ -39,6 +41,9 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
       <button id="up">up</button>
       <button id="diff">agent.py diff</button>
     </div>
+    <div id="viewer-note" hidden>A turn-structured, searchable rendering of these
+      transcripts is served by the viewer at
+      <a href="http://localhost:8090">http://localhost:8090</a> (host loopback).</div>
     <div id="entries"></div>
   </div>
   <div id="view">
@@ -68,6 +73,7 @@ function crumb() {
 }
 function load() {
   crumb();
+  document.getElementById("viewer-note").hidden = !(root === "transcripts" && !path);
   api(`/api/browse?root=${root}&path=${encodeURIComponent(path)}`).then(d => {
     const box = document.getElementById("entries");
     const hadFocus = box.contains(document.activeElement);
@@ -201,8 +207,11 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #mh-a { display: flex; align-items: baseline; gap: 22px; }
 #wordmark { font: 600 26px/30px var(--sans); letter-spacing: .18em; color: var(--paper); }
 .vrule { width: 1px; height: 20px; background: var(--rule-2); align-self: center; flex: none; }
-#premise { margin: 0; font: 400 15px/22px var(--sans); color: var(--paper-dim); max-width: 900px; }
-#premise.announce { color: var(--paper); }
+/* #premise carries the rotating containment facts (PROVENANCE_LINES): they are
+   the page's load-bearing claims, so they hold the dominant masthead slot at
+   full contrast. The aphoristic premise sentence moved down to #provenance. */
+#premise { margin: 0; font: 500 15px/22px var(--sans); color: var(--paper); max-width: 900px; }
+#premise.announce { color: var(--taken); }
 #state-cluster { margin-left: auto; display: flex; align-items: center; gap: 10px; flex: none; }
 #state-word { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   color: var(--paper-dim); }
@@ -231,8 +240,14 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .chip.c-think em { font: italic 400 13px/18px var(--serif); }
 .chip.c-say b { color: var(--say); }
 .chip.c-act b { color: var(--act); }
-#provenance { margin-left: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint); }
+/* #provenance now carries the secondary premise sentence (or the offline
+   notice). It ellipsizes rather than push #repo past the canvas edge: the
+   chips take roughly 620px of #mh-b's 1872px, #repo's 30 mono characters
+   about 234px, leaving about 940px before the premise has to shrink. */
+#provenance { margin-left: auto; min-width: 0; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; font: 400 13px/18px var(--sans); color: var(--paper-faint); }
 #provenance.offline { color: var(--fault); }
+#repo { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint); }
 #death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 2px;
   background: var(--taken); z-index: 20; transform-origin: left; transform: scaleX(1); }
 #death-sweep.sweeping { animation: sweep 900ms cubic-bezier(.22,.61,.36,1); }
@@ -386,6 +401,9 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 /* commentary:end */
 #story .recap-wrap { flex: 1 1 auto; min-height: 0; overflow: hidden; }
 #recap-box .more { margin-top: 2px; }
+/* The 4-line clamp is a ceiling; fitRecap() lowers it inline to the whole
+   27px lines .recap-wrap actually has, since the wrap's height is whatever the
+   fixed story blocks leave (74-98px of #now, the pull box, the byline). */
 #recap { margin: 0; font: 400 17px/27px var(--serif); max-width: 62ch; color: var(--paper-dim);
   -webkit-line-clamp: 4; line-clamp: 4; text-wrap: pretty; }
 #recap-lede { color: var(--paper); }
@@ -394,6 +412,13 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 #pull-box { margin-top: 6px; flex: none; }
 #pull { margin: 0; font: italic 400 16px/24px var(--serif); color: var(--think); max-width: 62ch;
   -webkit-line-clamp: 2; line-clamp: 2; }
+/* One 16px line plus its 2px margin: those 18px come out of .recap-wrap, the
+   flexible #story region, whose recap clamp fitRecap() refits to whole 27px
+   lines so the region gives up a full line rather than clipping mid-glyph.
+   Set in the quote's own colour so it reads as part of the quote, distinct
+   from #byline, which attributes the generated recap above it. */
+#pull-attrib { margin-top: 2px; font: 400 13px/16px var(--mono); color: var(--think);
+  opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .q { color: var(--paper-faint); font-style: normal; }
 #byline { margin-top: auto; padding-top: 4px; display: flex; align-items: center; gap: 6px;
   font: 400 13px/18px var(--mono); color: var(--paper-dim); flex: none; }
@@ -540,7 +565,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
     <div id="mh-a">
       <span id="wordmark">AURORA</span>
       <span class="vrule"></span>
-      <p id="premise">A language model has been given the file that runs it. It cannot leave the box. It can end itself, and usually does.</p>
+      <p id="premise"></p>
       <div id="state-cluster">
         <span id="state-dot" class="dot hollow"></span>
         <span id="state-word">STANDING BY</span>
@@ -552,6 +577,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <span class="chip c-say"><i class="dot say"></i><b>SPEECH</b><em>said out loud</em></span>
       <span class="chip c-act"><i class="dot act"></i><b>ACTION</b><em>tool calls</em></span>
       <span id="provenance"></span>
+      <span id="repo">github.com/tachyon-beep/aurora</span>
     </div>
     <div id="death-sweep" hidden></div>
   </header>
@@ -612,6 +638,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       <hr class="rule" id="story-rule">
       <div id="pull-box" class="blk rail-blk">
         <p id="pull" class="clamp"><span class="q">&ldquo;</span><span id="pull-text"></span><span class="q">&rdquo;</span></p>
+        <div id="pull-attrib"></div>
         <div class="open-tail" hidden></div>
         <div class="more" hidden><span class="more-label"></span></div>
       </div>
@@ -684,10 +711,17 @@ var PROVENANCE_LINES = [
   "it can rewrite every line of itself · it cannot reach the machine it runs on",
   "the transcript is the proxy's, not the agent's · refreshed every 2s"
 ];
+var PREMISE_LINE = "A language model has been given the file that runs it. " +
+  "It cannot leave the box. It can end itself, and usually does.";
 var provenanceAt = 0;
 var transportOk = true;
+/* The containment facts hold the masthead slot (#premise); the premise
+   sentence is the secondary line (#provenance). A death announcement borrows
+   #premise for 4s, so the rotation stays silent while announceUntil is set
+   and tick() calls showProvenance() when the announcement clears. */
 function showProvenance() {
-  setText($("provenance"), PROVENANCE_LINES[provenanceAt % PROVENANCE_LINES.length]);
+  if (announceUntil) return;
+  setText($("premise"), PROVENANCE_LINES[provenanceAt % PROVENANCE_LINES.length]);
 }
 function rotateProvenance() {
   if (!transportOk) return;
@@ -695,6 +729,7 @@ function rotateProvenance() {
   showProvenance();
 }
 showProvenance();
+setText($("provenance"), PREMISE_LINE);
 if (!REDUCED) setInterval(rotateProvenance, 20000);
 function fmt(n) {
   n = Math.max(0, Math.round(n));
@@ -1116,12 +1151,14 @@ function setState(age) {
   return s;
 }
 function setTransport(ok) {
+  /* Offline overwrites only the secondary line: the masthead's containment
+     line was never disturbed, so recovery has nothing to restore there. */
   var p = $("provenance");
   transportOk = !!ok;
   setClass(p, "offline", !ok);
   setClass($("state-cluster"), "offline", !ok);
   if (!ok) setText(p, "STAGE OFFLINE · this page cannot reach the stage");
-  else showProvenance();
+  else setText(p, PREMISE_LINE);
 }
 
 /* ---------- subject ---------- */
@@ -1231,6 +1268,22 @@ function renderNow() {
   setText($("play-age"), age == null ? "" : dur(age));
   setText($("now-colour"), colour.text || "");
 }
+/* .recap-wrap takes whatever height the fixed story blocks leave, which is
+   not generally a whole number of recap lines: #now runs 74-98px depending on
+   the colour line, and #pull-attrib takes 18px more. overflow: hidden alone
+   would clip the last visible line mid-glyph, so the clamp is refitted to the
+   space in whole 27px lines (the #recap line-height), never above the CSS
+   ceiling of 4. Inline line-clamp is inert while the block is open: the open
+   style switches #recap to display: block. */
+function fitRecap() {
+  var box = $("recap-box"), recap = $("recap");
+  if (!box || !recap || box.classList.contains("open")) return;
+  var lines = Math.max(1, Math.min(4, Math.floor(box.parentElement.clientHeight / 27)));
+  if (recap.__fitLines === lines) return;
+  recap.__fitLines = lines;
+  recap.style.webkitLineClamp = String(lines);
+  recap.style.lineClamp = String(lines);
+}
 function renderStory() {
   var story = snap.story, text, model = null, gen = null;
   if (story && typeof story.text === "string" && story.text.trim()) {
@@ -1256,6 +1309,11 @@ function renderStory() {
     var s = norm(lin[0].sentence);
     if (setText($("pull-text"), s)) $("pull").__dirty = true;
     markBlock(pbox, snap.stats.incarnation + ":pull", s, lin[0].sentence_chars, false);
+    var who = lin[0].ordinal != null ? "incarnation " + lin[0].ordinal : "the last incarnation";
+    var att = lin[0].kind === "harness"
+      ? "— the harness's note on " + who
+      : "— from " + who + "'s own last note";
+    setText($("pull-attrib"), att);
   } else {
     pbox.hidden = true;
   }
@@ -1291,8 +1349,11 @@ function makeGrave() {
   g.__box = box;
   return g;
 }
-var KIND_LABEL = { declared: "ENDED BY ITS OWN HAND", harness: "STOPPED BY THE HARNESS",
-  unknown: "CAUSE UNRECORDED" };
+/* Each kind is a reading of the incarnation's tombstone note — the agent's own
+   done() message, or the harness's synthetic one — not a fact the stage
+   measured. The labels name the note as the source rather than pass a verdict. */
+var KIND_LABEL = { declared: "ENDED ON ITS OWN NOTE", harness: "ENDED ON A HARNESS NOTE",
+  unknown: "ENDED WITHOUT A NOTE" };
 // #dead is 244px tall (#rail's third row). Subtracting the panel's 2x15px
 // padding+border and a fixed 32px title and 16px foot line leaves ~166px for
 // #graves. Each grave is a real record now (facts line plus two lines of note,
@@ -1341,7 +1402,7 @@ function renderDead() {
   var hiddenLives = Math.max(0, (st.lives_ended || 0) - lin.length);
   var ended = st.lives_ended || 0, chose = st.ended_by_choice || 0;
   var parts = [];
-  if (ended) parts.push(chose + " of " + ended + " chose to die");
+  if (ended) parts.push("by their own notes, " + chose + " of " + ended + " chose to die");
   if (hiddenLives > 0) {
     parts.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");
   }
@@ -1634,10 +1695,10 @@ function tick() {
   if (announceUntil && Date.now() > announceUntil) {
     announceUntil = 0;
     $("premise").classList.remove("announce");
-    setText($("premise"), "A language model has been given the file that runs it. " +
-      "It cannot leave the box. It can end itself, and usually does.");
+    showProvenance();
   }
   if ((st.turns_this_life || 0) === 0) renderColdStart();
+  fitRecap();
 }
 
 /* ---------- lanes ---------- */

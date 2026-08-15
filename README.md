@@ -4,6 +4,8 @@
 
 A containerized harness for running **self-modifying LLM agents** under layered containment.
 
+Project page: <https://tachyon-beep.github.io/aurora/> (deployed from `site/` via GitHub Pages).
+
 Aurora gives an agent real freedom to rewrite its own source code, explore, and change how it
 operates — while keeping that freedom inside a sandbox it cannot edit its way out of, and keeping a
 tamper-evident record of everything it does outside its reach.
@@ -40,7 +42,7 @@ flowchart LR
     agent["agent<br/>rewrites its own code<br/>no network interface"]
     recorder["recorder<br/>holds the upstream API key<br/>injects auth · logs bodies, not headers"]
     diode["diode<br/>closed command vocabulary<br/>SSRF-checked fetches"]
-    viewer["viewer (optional)<br/>read-only · host loopback :8090"]
+    viewer["viewer<br/>read-only · host loopback :8090"]
     stage["stage<br/>read-only · never mounts /state<br/>stream :8091 · console :8092"]
 
     tvol[("transcripts<br/>volume")]
@@ -86,7 +88,7 @@ flowchart LR
 | **watchdog** | Supervises the agent and recovers it if it breaks itself badly. | Self-editable by the agent, but the durable recovery baseline is built into the image and the real record lives outside the container. |
 | **telemetry volume** | A mirror of the agent's working tree plus its captured log, written by the watchdog so the stage can show what the agent is doing without touching the agent's own filesystem. | Written only by the watchdog; mounted **read-only** into the stage. Symlinks are copied as links and never followed. |
 | **stage** | The outward-facing broadcast surface: a stream page built for an OBS browser source, and a separate token-gated operator console. | Read-only image on its own `stream` network — no path to the agent. **Never mounts `/state`**, and never holds the recorder's credential. The console binds host-loopback only and is never exposed through the tunnel; the stream port serves no mutating endpoints. |
-| **viewer** | Optional, ephemeral web UI to watch the transcript live. | Read-only mount, host-loopback only, isolated from every other network. Off unless explicitly enabled. |
+| **viewer** | Ephemeral web UI to watch the transcript live; starts with the stack. | Read-only mount, host-loopback only, isolated from every other network. Not restarted automatically if it exits. |
 
 ### The agent's world
 
@@ -161,14 +163,8 @@ docker compose up --build
 The recorder comes up first, then the agent begins its loop, talking to the model through the
 recorder. Transcripts accumulate on the `transcripts` volume.
 
-To watch what the agent is doing, in a live web feed:
-
-```bash
-docker compose --profile viewer up viewer
-# open http://localhost:8090
-```
-
-The viewer is read-only and ephemeral — stop it and nothing persists.
+The viewer starts with the stack; open `http://localhost:8090` to watch the transcript in a live
+web feed. It is read-only and ephemeral — stop it and nothing persists.
 
 ### Building the workshop
 
@@ -224,11 +220,12 @@ internet for OBS or viewers, run a Cloudflare Tunnel pointing at `http://localho
 | `proxy.py` | The recorder — the credential-holding, transcript-writing proxy. |
 | `diode.py` / `Dockerfile.diode` | The one-way web command channel. |
 | `watchdog.py` | The supervisor and tiered recovery. |
-| `viewer.py` / `Dockerfile.viewer` | The optional live transcript viewer. |
+| `viewer.py` / `Dockerfile.viewer` | The live transcript viewer (read-only, host-loopback). |
 | `stage/` / `Dockerfile.stage` | The stream page (OBS browser source) and the token-gated operator console with a container browser. |
 | `Dockerfile` / `entrypoint.sh` / `docker-compose.yml` | The harness image and topology. |
 | `scripts/build_garden.py` / `requirements-agent.txt` | Builds the two-document read-only garden and defines the lean package set installed in the harness image. |
 | `scripts/verify_container.sh` | Verifies containment invariants against a running stack. |
+| `site/` | The project landing page, deployed to GitHub Pages by `.github/workflows/pages.yml`. |
 | `tests/` | Test suite (not shipped into any image). |
 | `docs/` | Design specs and implementation plans. |
 

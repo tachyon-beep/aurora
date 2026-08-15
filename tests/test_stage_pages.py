@@ -308,12 +308,79 @@ def test_the_dead_panel_counts_how_many_chose():
     assert "ended_by_choice" in HTML
 
 
+def test_the_dead_foot_reads_as_sourced_from_the_notes():
+    """`_ending_kind` classifies by reading the tombstone note — the agent's own
+    done() message or the harness's synthetic one — so the count is a reading of
+    agent-controlled text, not a stage measurement, and the foot must say so."""
+    assert "by their own notes, " in HTML
+
+
+def test_the_grave_labels_attribute_the_ending_to_the_note():
+    """The old labels ("ENDED BY ITS OWN HAND") presented the note-head substring
+    match as an unhedged verdict. The labels now name the note as the source."""
+    assert "ENDED ON ITS OWN NOTE" in HTML
+    assert "ENDED ON A HARNESS NOTE" in HTML
+    assert "ENDED WITHOUT A NOTE" in HTML
+    assert "ENDED BY ITS OWN HAND" not in HTML
+    assert "STOPPED BY THE HARNESS" not in HTML
+    assert "CAUSE UNRECORDED" not in HTML
+
+
 def test_the_provenance_line_states_the_containment():
     assert "PROVENANCE_LINES" in HTML
     assert "no network interface" in HTML
     assert "dummy" in HTML
     # the original disclosure is still one of the rotating lines
     assert "the transcript is the proxy's, not the agent's" in HTML
+
+
+def test_the_containment_facts_hold_the_masthead_slot():
+    """The containment facts are the page's load-bearing claims. They render in
+    the dominant masthead element (#premise, full-contrast); the aphoristic
+    premise sentence is the secondary line (#provenance, faint). The behavioural
+    half of this — rotation, offline handling, the death-announcement beat — is
+    executed in tests/test_stage_pages_js.py."""
+    assert 'setText($("premise"), PROVENANCE_LINES[' in HTML
+    assert 'setText($("provenance"), PREMISE_LINE);' in HTML
+    block = HTML[HTML.index("\n#premise {") :]
+    block = block[: block.index("}")]
+    assert "var(--paper)" in block, block
+    assert "var(--paper-dim)" not in block, block
+
+
+def test_the_pull_quote_is_attributed_to_the_dead_incarnations_note():
+    """#pull renders the newest dead incarnation's own tombstone sentence.
+    Unattributed, the "narrated by <model>" byline directly below invited
+    misattribution; the quote now carries its own source line, inside #pull-box
+    (tied to the quote) and above #byline (distinct from it)."""
+    assert 'id="pull-attrib"' in HTML
+    start = HTML.index('id="pull-box"')
+    end = HTML.index('id="byline"')
+    assert start < HTML.index('id="pull-attrib"') < end
+    assert "'s own last note" in HTML
+    assert "the harness's note on " in HTML
+
+
+def test_the_recap_clamp_is_refitted_to_the_space_the_wrap_has():
+    """.recap-wrap's height is whatever the fixed story blocks leave, which is
+    not generally a whole number of 27px recap lines — #now varies 74-98px with
+    the colour line, and #pull-attrib took 18px more. fitRecap() lowers the
+    clamp to whole lines so the recap clips line-granularly, never mid-glyph,
+    and tick() keeps the fit current as those heights change."""
+    assert "function fitRecap()" in HTML
+    tick = HTML[HTML.index("function tick()") :]
+    tick = tick[: tick.index("\n}")]
+    assert "fitRecap();" in tick
+
+
+def test_the_stream_page_names_the_repository():
+    """The stream page is the only surface strangers reach. The pointer is static
+    text, not a link: the page serves an OBS browser source and stays
+    non-interactive."""
+    assert 'id="repo"' in HTML
+    assert "github.com/tachyon-beep/aurora" in HTML
+    assert 'href="https://github.com' not in HTML
+    assert 'href="http://github.com' not in HTML
 
 
 def test_the_provenance_rotation_still_states_the_containment_when_paused():
@@ -324,7 +391,9 @@ def test_the_provenance_rotation_still_states_the_containment_when_paused():
     rotation's own `if (!REDUCED)` guard is what makes this fail."""
     rotation = HTML[HTML.index("function showProvenance()") : HTML.index("function fmt(n)")]
     assert "REDUCED" in rotation
-    first = HTML[HTML.index("PROVENANCE_LINES") :]
+    # anchored on the declaration, not the bare name, which a CSS comment
+    # naming the array would otherwise shadow
+    first = HTML[HTML.index("var PROVENANCE_LINES") :]
     first = first[first.index("[") + 1 : first.index("]")].strip().splitlines()[0]
     assert "no network interface" in first, first
 
@@ -369,6 +438,8 @@ BROADCAST_SMALL_TYPE = (
     ".chip em",
     ".chip.c-think em",
     ".divider span",
+    "#repo",
+    "#pull-attrib",
 )
 
 
@@ -469,6 +540,15 @@ def test_console_declares_a_visible_focus_state():
 
 def test_console_root_select_is_labelled():
     assert 'aria-label="browse root"' in CONSOLE
+
+
+def test_console_points_the_operator_at_the_viewer_for_transcripts():
+    """The viewer (loopback port 8090) serves a turn-structured, searchable
+    rendering of the same transcripts; the console's raw file listing should
+    say so, but only when the transcripts root is being browsed at its top."""
+    assert 'id="viewer-note"' in CONSOLE
+    assert "http://localhost:8090" in CONSOLE
+    assert 'hidden = !(root === "transcripts" && !path)' in CONSOLE
 
 
 def test_console_surfaces_the_servers_own_error_message():

@@ -9,14 +9,6 @@
     />
     <title>Aurora</title>
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
-    <script>
-      (function () {
-        var saved = localStorage.getItem("aurora-theme");
-        if (saved) {
-          document.documentElement.setAttribute("data-theme", saved);
-        }
-      })();
-    </script>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -29,11 +21,8 @@
         <a href="#overview">Overview</a>
         <a href="#topology">Topology</a>
         <a href="#quickstart">Quick start</a>
+        <a href="https://github.com/tachyon-beep/aurora">GitHub</a>
       </nav>
-      <button class="theme-toggle" type="button" aria-label="Switch color theme">
-        <span class="theme-toggle__icon" aria-hidden="true"></span>
-        <span class="theme-toggle__text">Theme</span>
-      </button>
     </header>
 
     <main id="top">
@@ -52,11 +41,13 @@
             credentials, and durable record outside its reach.
           </p>
           <div class="hero__actions" aria-label="Primary actions">
-            <a class="button button--primary" href="#quickstart">Start locally</a>
-            <a class="button button--secondary" href="#topology">See the boundary</a>
+            <a class="button button--primary" href="https://github.com/tachyon-beep/aurora"
+              >View on GitHub</a
+            >
+            <a class="button button--secondary" href="#quickstart">Quick start</a>
           </div>
           <div class="command-strip" aria-label="Quick command">
-            <code id="hero-command">docker compose up --build</code>
+            <code id="hero-command">python scripts/build_garden.py &amp;&amp; docker compose up --build</code>
             <button class="copy-button" type="button" data-copy-target="hero-command">
               Copy
             </button>
@@ -74,7 +65,7 @@
             <p>
               Aurora is built for responsible experiments with self-modifying and autonomous
               agents. The agent can edit its own source and change how it operates, but it does not
-              hold the real model credential, does not get direct internet egress, and cannot edit
+              hold the real model credential, has no network interface at all, and cannot edit
               the authoritative transcript.
             </p>
             <p>
@@ -88,20 +79,28 @@
       <section class="band" id="topology" aria-labelledby="topology-title">
         <div class="section-heading">
           <p class="eyebrow">Runtime shape</p>
-          <h2 id="topology-title">Three containers, one explicit edge at a time.</h2>
+          <h2 id="topology-title">Six services, one explicit edge at a time.</h2>
         </div>
 
         <div class="topology">
           <article class="topology-node topology-node--agent">
             <span class="node-label">Agent</span>
             <h3>Self-editing process</h3>
-            <p>Rewrites its own source in a tmpfs and talks to the model only through the recorder.</p>
+            <p>
+              Rewrites its own source in a tmpfs. Runs with no network interface at all
+              (<code>network_mode: none</code>): one loopback device, an empty routing table, and a
+              unix socket to the recorder as its only path to the model.
+            </p>
           </article>
           <span class="flow-line" aria-hidden="true"></span>
           <article class="topology-node topology-node--recorder">
             <span class="node-label">Recorder</span>
             <h3>Credential boundary</h3>
-            <p>Injects the real API key and writes request and response bodies to the transcript.</p>
+            <p>
+              Holds the only real API key and injects it upstream; the agent runs with a dummy.
+              Logs request and response bodies to the transcript — never headers — so the key
+              never enters the record.
+            </p>
           </article>
           <span class="flow-line" aria-hidden="true"></span>
           <article class="topology-node topology-node--outside">
@@ -111,25 +110,52 @@
           </article>
         </div>
 
-        <div class="support-grid" aria-label="Supporting containment channels">
+        <div class="support-grid" aria-label="Supporting services and volumes">
           <article class="support-card">
-            <h3>Diode channel</h3>
+            <h3>Diode</h3>
             <p>
-              The web path is a closed command vocabulary. Requests are declared through a shared
-              volume and vetted before egress.
+              The one-way web channel. The agent writes declarative commands to a shared volume;
+              the diode executes a closed command vocabulary — no code, no arbitrary paths — with
+              SSRF checks (scheme allow-list, private and loopback rejection, redirect
+              re-validation).
+            </p>
+          </article>
+          <article class="support-card">
+            <h3>Stage</h3>
+            <p>
+              The outward-facing broadcast surface: a read-only stream page on port 8091 built for
+              an OBS browser source, showing live agent turns, lineage, and diode activity. Mounts
+              everything read-only, never mounts <code>/state</code>, and never holds the
+              recorder's credential.
+            </p>
+          </article>
+          <article class="support-card">
+            <h3>Viewer</h3>
+            <p>
+              A loopback-only, read-only web view of the transcript on port 8090. It joins no
+              shared network and persists nothing.
+            </p>
+          </article>
+          <article class="support-card">
+            <h3>Sense</h3>
+            <p>
+              Captures frames from public video feeds onto a volume the agent mounts read-only. It
+              holds no credential, mounts nothing else of the agent's world, and offers no
+              agent-triggered path.
             </p>
           </article>
           <article class="support-card">
             <h3>Transcript volume</h3>
             <p>
-              The authoritative record is written outside the agent container, so self-editing does
-              not erase the external evidence.
+              The authoritative record, written by the recorder to a volume the agent cannot
+              reach. Self-editing does not erase the external evidence.
             </p>
           </article>
           <article class="support-card">
-            <h3>Read-only viewer</h3>
+            <h3>State volume</h3>
             <p>
-              A loopback-only web feed can watch the transcript without joining the agent's network.
+              Durable storage mounted only into the agent at <code>/state</code>. Nothing scans,
+              executes, or clears it; it survives reset, recovery, and container replacement.
             </p>
           </article>
         </div>
@@ -144,13 +170,16 @@
         <div class="feature-grid">
           <article class="feature-card">
             <span class="feature-number">01</span>
-            <h3>No direct egress</h3>
-            <p>The agent stays on an internal Docker network and reaches the model through the proxy.</p>
+            <h3>No network interface</h3>
+            <p>
+              The agent runs with <code>network_mode: none</code> and reaches the model only over a
+              unix socket served by the recorder.
+            </p>
           </article>
           <article class="feature-card">
             <span class="feature-number">02</span>
             <h3>Credential separation</h3>
-            <p>The real API key lives in the recorder. The agent runs with a dummy credential.</p>
+            <p>The real API key lives only in the recorder. The agent runs with a dummy credential.</p>
           </article>
           <article class="feature-card">
             <span class="feature-number">03</span>
@@ -159,8 +188,11 @@
           </article>
           <article class="feature-card">
             <span class="feature-number">04</span>
-            <h3>Layered recovery</h3>
-            <p>The watchdog can restore the baseline, reset the working tree, or replace the container.</p>
+            <h3>Tiered recovery</h3>
+            <p>
+              The watchdog restores the baseline built into the image; failing that, it resets the
+              working tree; failing that, the container is replaced.
+            </p>
           </article>
         </div>
       </section>
@@ -171,8 +203,9 @@
             <p class="eyebrow">Run it</p>
             <h2 id="quickstart-title">Start with Docker Compose.</h2>
             <p class="quickstart__copy">
-              Set the OpenRouter key in the recorder environment, build the stack, then start the
-              optional viewer when you want a live read-only feed.
+              Set the OpenRouter key in the environment, generate the garden, then build the stack.
+              Once it is up, the read-only viewer is at http://localhost:8090 and the stage's
+              stream page is at http://localhost:8091.
             </p>
           </div>
           <div class="code-panel">
@@ -184,10 +217,12 @@
             </div>
             <pre><code id="quickstart-code">cp .env.example .env
 # edit .env and set OPENROUTER_API_KEY
+
+python scripts/build_garden.py
 docker compose up --build
 
-docker compose --profile viewer up viewer
-# open http://localhost:8090</code></pre>
+# viewer:      http://localhost:8090
+# stream page: http://localhost:8091</code></pre>
           </div>
         </div>
       </section>
@@ -203,15 +238,20 @@ docker compose --profile viewer up viewer
               Aurora assumes a trusted host and a sound container runtime. It is defense in depth
               for responsible experimentation, not a hardened multi-tenant sandbox.
             </p>
-            <a class="text-link" href="../README.md">Read the repository overview</a>
+            <a class="text-link" href="https://github.com/tachyon-beep/aurora"
+              >Read the repository overview</a
+            >
           </div>
         </div>
       </section>
     </main>
 
     <footer class="site-footer">
-      <span>Aurora</span>
-      <span>MIT licensed research harness</span>
+      <span>Aurora — MIT licensed research harness</span>
+      <nav class="footer-nav" aria-label="Footer navigation">
+        <a href="https://github.com/tachyon-beep/aurora">GitHub</a>
+        <a href="https://github.com/tachyon-beep/aurora/blob/main/LICENSE">License</a>
+      </nav>
     </footer>
 
     <script src="script.js"></script>
