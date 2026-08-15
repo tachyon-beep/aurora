@@ -43,7 +43,7 @@ third-party python packages:
 
 {requirements}
 
-rustc, cargo, sbcl, pforth, swi-prolog, gcc, nasm, make, jq, sqlite3, miller, and datamash are installed.
+rustc, cargo, sbcl, pforth, swi-prolog, gcc, nasm, make, jq, sqlite3, miller, datamash, and ripgrep are installed.
 
 a local rust crate registry is present; cargo resolves against it. common lisp systems are present under /vendor/lisp; asdf can load them. a static sentence embedding model is present under /vendor/models.
 

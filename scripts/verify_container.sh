@@ -112,7 +112,7 @@ fi
 echo "==> agent compiled toolchains are present"
 docker compose exec -T agent sh -c '
   rustc --version >/dev/null && sbcl --version >/dev/null &&
-  command -v pforth swipl nasm mlr datamash jq sqlite3 >/dev/null
+  command -v pforth swipl nasm mlr datamash jq sqlite3 rg >/dev/null
 '
 
 echo "==> agent new runtime packages import; loomweave and filigree respond"
