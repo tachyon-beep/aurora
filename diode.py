@@ -40,6 +40,7 @@ ECHO_DELAY_MAX = 604800
 ECHO_TEXT_CAP = 4000
 DEFERRED_COMMAND_CAP = 500
 PENDING_MAX = 32
+PENDING_FILE_MAX_BYTES = 2_000_000
 DEFERRING_COMMANDS = ("echo", "later")
 
 CLONE_URL_TEMPLATE = "https://codeload.github.com/{owner}/{repo}/tar.gz/{ref}"
@@ -182,13 +183,42 @@ def parse_delay(arg):
 def load_pending():
     """Read the deferred item list from PENDING_FILE; empty on missing or malformed."""
     try:
-        with open(PENDING_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        with open(PENDING_FILE, "rb") as f:
+            raw = f.read(PENDING_FILE_MAX_BYTES + 1)
     except (OSError, ValueError):
+        return []
+    if len(raw) > PENDING_FILE_MAX_BYTES:
+        return []
+    try:
+        data = json.loads(raw)
+    except ValueError:
         return []
     if not isinstance(data, list):
         return []
-    return [item for item in data if isinstance(item, dict)]
+    items = []
+    for item in data:
+        if len(items) >= PENDING_MAX:
+            break
+        if not isinstance(item, dict) or "due" not in item:
+            continue
+        kind = item.get("kind")
+        if kind == "echo" and isinstance(item.get("text"), str):
+            items.append(
+                {
+                    "due": item["due"],
+                    "kind": "echo",
+                    "text": item["text"][:ECHO_TEXT_CAP],
+                }
+            )
+        elif kind == "command" and isinstance(item.get("command"), str):
+            items.append(
+                {
+                    "due": item["due"],
+                    "kind": "command",
+                    "command": item["command"][:DEFERRED_COMMAND_CAP],
+                }
+            )
+    return items
 
 
 def save_pending(items):
@@ -324,6 +354,16 @@ for _news_name, (_news_domain, _news_url) in NEWS_SOURCES.items():
         "gate": _news_gate,
         "help": f"{_news_name} -> return current news headlines from {_news_domain}",
     }
+
+
+def deferred_command_refusal(command):
+    """Return a refusal when a command is not eligible for deferred execution."""
+    word = command_word(command)
+    if word not in COMMANDS:
+        return UNKNOWN_COMMAND.format(name=word)
+    if word in DEFERRING_COMMANDS or COMMANDS[word].get("credentialed"):
+        return f"cannot defer: {word}"
+    return None
 
 
 def available_commands(variables):
@@ -874,11 +914,9 @@ def handle_command(command, variables, fetch_history):
             item["text"] = rest[:ECHO_TEXT_CAP]
         else:
             inner = rest[:DEFERRED_COMMAND_CAP]
-            word = command_word(inner)
-            if word not in COMMANDS:
-                return UNKNOWN_COMMAND.format(name=word), fetch_history
-            if word in DEFERRING_COMMANDS or COMMANDS[word].get("credentialed"):
-                return f"cannot defer: {word}", fetch_history
+            refusal = deferred_command_refusal(inner)
+            if refusal is not None:
+                return refusal, fetch_history
             item["kind"] = "command"
             item["command"] = inner
         pending.append(item)
@@ -1062,9 +1100,12 @@ def run_diode():
             if item.get("kind") == "echo":
                 write_output("echo", str(item.get("text", "")))
                 continue
-            fetch_history = run_command(
-                str(item.get("command", "")), variables, fetch_history, found
-            )
+            command = str(item.get("command", ""))
+            refusal = deferred_command_refusal(command)
+            if refusal is not None:
+                write_output(command, refusal)
+                continue
+            fetch_history = run_command(command, variables, fetch_history, found)
         consume_batch()
         if commands_valid:
             for command in commands:

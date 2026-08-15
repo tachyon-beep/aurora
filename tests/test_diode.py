@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import time
@@ -1179,6 +1180,86 @@ def test_load_pending_tolerates_absent_and_malformed(tmp_path, monkeypatch):
     assert diode.load_pending() == []
 
 
+def test_load_pending_reads_only_bounded_input(monkeypatch):
+    class ReadProbe(io.BytesIO):
+        def __init__(self):
+            super().__init__(b"[" + b" " * 2_000_000 + b"]")
+            self.sizes = []
+
+        def read(self, size=-1):
+            self.sizes.append(size)
+            return super().read(size)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    probe = ReadProbe()
+    monkeypatch.setattr("builtins.open", lambda *args, **kwargs: probe)
+
+    assert diode.load_pending() == []
+    assert probe.sizes == [2_000_001]
+    assert diode.PENDING_FILE_MAX_BYTES == 2_000_000
+
+
+def test_load_pending_caps_agent_written_item_count(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    items = [
+        {"due": index, "kind": "echo", "text": f"item {index}"}
+        for index in range(diode.PENDING_MAX + 1)
+    ]
+    (tmp_path / "pending.json").write_text(json.dumps(items), encoding="utf-8")
+
+    assert diode.load_pending() == items[: diode.PENDING_MAX]
+
+
+def test_load_pending_normalizes_items_to_bounded_known_fields(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    items = [
+        {
+            "due": 10,
+            "kind": "echo",
+            "text": "e" * (diode.ECHO_TEXT_CAP + 1),
+            "extra": "discarded",
+        },
+        {
+            "due": "20",
+            "kind": "command",
+            "command": "c" * (diode.DEFERRED_COMMAND_CAP + 1),
+            "extra": "discarded",
+        },
+    ]
+    (tmp_path / "pending.json").write_text(json.dumps(items), encoding="utf-8")
+
+    assert diode.load_pending() == [
+        {
+            "due": 10,
+            "kind": "echo",
+            "text": "e" * diode.ECHO_TEXT_CAP,
+        },
+        {
+            "due": "20",
+            "kind": "command",
+            "command": "c" * diode.DEFERRED_COMMAND_CAP,
+        },
+    ]
+
+
+def test_load_pending_drops_items_outside_the_known_schema(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    items = [
+        {"due": 10, "kind": "other", "text": "message"},
+        {"due": 20, "kind": "echo", "text": 123},
+        {"due": 30, "kind": "command", "command": []},
+        {"due": 40, "kind": "echo", "text": "kept"},
+    ]
+    (tmp_path / "pending.json").write_text(json.dumps(items), encoding="utf-8")
+
+    assert diode.load_pending() == [{"due": 40, "kind": "echo", "text": "kept"}]
+
+
 def test_due_pending_splits_on_the_due_time_and_drops_the_malformed():
     items = [{"due": 10}, {"due": 100}, {"due": "soon"}]
     due, waiting = diode.due_pending(items, 50)
@@ -1286,6 +1367,48 @@ def test_later_refuses_to_defer_a_credentialed_command(tmp_path, monkeypatch):
     )
     assert text == "cannot defer: speak"
     assert not (tmp_path / "pending.json").exists()
+
+
+def test_due_persisted_credentialed_command_is_refused_before_dispatch(tmp_path, monkeypatch):
+    class CycleComplete(Exception):
+        pass
+
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "DIODE_DIR", str(tmp_path))
+    monkeypatch.setattr(diode, "CONSOLE_FILE", str(tmp_path / "console.json"))
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    (tmp_path / "console.json").write_text(
+        json.dumps({"commands": [], "variables": {"enable_speech": True}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "pending.json").write_text(
+        json.dumps([{"due": 0, "kind": "command", "command": "speak queued-paid"}]),
+        encoding="utf-8",
+    )
+    speech_calls = []
+    monkeypatch.setattr(
+        diode,
+        "_speak_request",
+        lambda text: (speech_calls.append(text) or True, b"audio"),
+    )
+    monkeypatch.setattr(
+        diode.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(CycleComplete()),
+    )
+
+    with pytest.raises(CycleComplete):
+        diode.run_diode()
+
+    assert speech_calls == []
+    assert json.loads((tmp_path / "pending.json").read_text(encoding="utf-8")) == []
+    (result,) = (tmp_path / "output").iterdir()
+    assert result.read_text(encoding="utf-8") == "cannot defer: speak"
+    assert not (tmp_path / "spoken").exists()
 
 
 def test_parse_clone_arg_accepts_slug_and_optional_ref():

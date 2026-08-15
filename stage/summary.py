@@ -9,7 +9,6 @@ import difflib
 import glob
 import hashlib
 import os
-import re
 import threading
 import time
 
@@ -103,14 +102,6 @@ def _plural(count, word):
     return word if count == 1 else word + "s"
 
 
-def _tombstone_ordinal(path):
-    """The incarnation number encoded in a tombstone filename, or None."""
-    match = re.search(r"incarnation-(\d+)", os.path.basename(path))
-    if not match:
-        return None
-    return int(match.group(1))
-
-
 def _ending_kind(text):
     """A coarse classification of how an incarnation ended, from its tombstone text."""
     lowered = text.lower()
@@ -130,7 +121,7 @@ def _tombstone_notes(work_dir):
     paths = sorted(p for p in found if data.contained_file(work_dir, p) is not None)
     total = len(paths)
     notes = []
-    for path in reversed(paths[-MAX_TOMBSTONES:]):
+    for position, path in enumerate(reversed(paths[-MAX_TOMBSTONES:])):
         try:
             with open(path, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read(TOMBSTONE_READ_BYTES)
@@ -139,8 +130,8 @@ def _tombstone_notes(work_dir):
         text = llm._collapse(text)[:TOMBSTONE_CHARS]
         if not text:
             continue
-        ordinal = _tombstone_ordinal(path)
-        label = f"incarnation {ordinal}" if ordinal is not None else "an earlier incarnation"
+        ordinal = total - position
+        label = f"incarnation {ordinal}"
         notes.append(f"- {label} ({_ending_kind(text)}): {text}")
     return notes, total
 

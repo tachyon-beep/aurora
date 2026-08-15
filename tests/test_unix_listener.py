@@ -16,6 +16,7 @@ def transcripts(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "TRANSCRIPT_FILE", str(tmp_path / "transcript.jsonl"))
     monkeypatch.setattr(proxy, "PLAIN_TRANSCRIPT_FILE", str(tmp_path / "transcript.txt"))
     monkeypatch.setattr(proxy, "EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    monkeypatch.setattr(proxy, "_active_bindings", set())
     return tmp_path
 
 

@@ -320,6 +320,26 @@ def test_prompt_carries_tombstones_newest_first(tmp_path):
     assert "1 line added and 0 removed" in prompt
 
 
+def test_timestamp_tombstones_use_chronological_ordinals(tmp_path):
+    work = tmp_path / "work"
+    tombstones = work / "tombstones"
+    tombstones.mkdir(parents=True)
+    (tombstones / "incarnation-20260814_235959_000001-41.txt").write_text(
+        "older done() note", encoding="utf-8"
+    )
+    (tombstones / "incarnation-20260815_000001_000002-42.txt").write_text(
+        "newer done() note", encoding="utf-8"
+    )
+
+    notes, total = summary._tombstone_notes(str(work))
+
+    assert total == 2
+    assert [note.split(" (", 1)[0] for note in notes] == [
+        "- incarnation 2",
+        "- incarnation 1",
+    ]
+
+
 # --- refresh policy -------------------------------------------------------
 
 

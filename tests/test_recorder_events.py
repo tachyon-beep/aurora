@@ -6,6 +6,7 @@ import pytest
 
 import proxy
 import recorder_streams
+from stage import data as stage_data
 
 
 @pytest.fixture
@@ -14,6 +15,7 @@ def transcripts(tmp_path, monkeypatch):
     monkeypatch.setattr(proxy, "TRANSCRIPT_FILE", str(tmp_path / "transcript.jsonl"))
     monkeypatch.setattr(proxy, "PLAIN_TRANSCRIPT_FILE", str(tmp_path / "transcript.txt"))
     monkeypatch.setattr(proxy, "EVENTS_FILE", str(tmp_path / "events.jsonl"))
+    monkeypatch.setattr(proxy, "_active_bindings", set(), raising=False)
     return tmp_path
 
 
@@ -42,6 +44,25 @@ def test_log_event_carries_extra_fields(transcripts):
     assert event["duration_seconds"] == 1.5
 
 
+def test_event_rotation_checkpoints_active_bindings_for_the_stage_fold(transcripts, monkeypatch):
+    monkeypatch.setattr(proxy, "EVENTS_MAX_BYTES", 1_000_000)
+    proxy.log_event("bind", "core")
+    proxy.log_event("bind", "aux")
+
+    monkeypatch.setattr(proxy, "EVENTS_MAX_BYTES", 1)
+    proxy.log_event("close", "core", id="forced", status=200)
+
+    events = _events(transcripts)
+    assert [(event["event"], event["stream"]) for event in events] == [
+        ("bind", "aux"),
+        ("bind", "core"),
+    ]
+    assert [
+        (lane["name"], lane["bound"])
+        for lane in stage_data.stream_lanes(str(transcripts / "events.jsonl"))
+    ] == [("core", True), ("aux", True)]
+
+
 def test_log_event_failure_is_contained(transcripts, monkeypatch, capsys):
     monkeypatch.setattr(proxy, "EVENTS_FILE", str(transcripts / "no" / "events.jsonl"))
 
@@ -51,6 +72,32 @@ def test_log_event_failure_is_contained(transcripts, monkeypatch, capsys):
     monkeypatch.setattr(proxy.os, "makedirs", broken_makedirs)
     proxy.log_event("open", "core", id="x")
     assert "Error writing event" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("event", "initial"),
+    [("bind", frozenset()), ("unbind", frozenset({"aux"}))],
+)
+def test_failed_lifecycle_event_write_does_not_change_active_bindings(
+    transcripts, monkeypatch, event, initial
+):
+    class BrokenWriter:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def write(self, text):
+            raise OSError("disk full")
+
+    expected = set(initial)
+    monkeypatch.setattr(proxy, "_active_bindings", set(initial))
+    monkeypatch.setattr(proxy, "open", lambda *args, **kwargs: BrokenWriter(), raising=False)
+
+    proxy.log_event(event, "aux")
+
+    assert proxy._active_bindings == expected
 
 
 def test_request_ids_are_distinct_hex():

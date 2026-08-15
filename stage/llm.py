@@ -154,6 +154,8 @@ def _parse_reply(raw, max_output_chars):
     first = choices[0]
     if not isinstance(first, dict):
         return None
+    if first.get("finish_reason") == "length":
+        return None
     message = first.get("message")
     if not isinstance(message, dict):
         return None

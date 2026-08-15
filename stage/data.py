@@ -1,3 +1,4 @@
+import bisect
 import datetime
 import difflib
 import glob
@@ -67,6 +68,8 @@ def contained_file(root, path):
 _line_count_state = {}
 _code_stat_state = {}
 _state_lock = threading.Lock()
+_event_fold_state = {}
+_event_state_lock = threading.Lock()
 
 
 def _count_lines(path):
@@ -229,22 +232,48 @@ def parse_epoch(timestamp):
         return None
 
 
+def _timestamp_from_record_prefix(text):
+    """Timestamp from the producer's first JSON field when the record is incomplete."""
+    match = re.match(r'^\s*\{\s*"timestamp"\s*:\s*', text)
+    if not match:
+        return None
+    try:
+        timestamp, end = json.JSONDecoder().raw_decode(text, match.end())
+    except ValueError:
+        return None
+    remainder = text[end:].lstrip()
+    if not remainder or remainder[0] not in ",}":
+        return None
+    return parse_epoch(timestamp)
+
+
 def first_transcript_epoch(transcript_path, read_bytes=None):
-    """Epoch of the first parseable transcript entry, from a bounded head read."""
+    """Epoch of the first parseable transcript entry, from a bounded head read.
+
+    The recorder writes ``timestamp`` first, so a complete timestamp remains
+    usable when the byte cap bisects the rest of an oversized first record.
+    """
     if read_bytes is None:
         read_bytes = HEAD_READ_BYTES
     try:
         with open(transcript_path, "rb") as f:
             raw = f.read(read_bytes)
+            truncated = os.fstat(f.fileno()).st_size > len(raw)
     except OSError:
         return None
-    for text in raw.decode("utf-8", errors="replace").splitlines():
+    lines = raw.decode("utf-8", errors="replace").splitlines()
+    partial_last_line = truncated and not raw.endswith((b"\n", b"\r"))
+    for index, text in enumerate(lines):
         line = text.strip()
         if not line:
             continue
         try:
             entry = json.loads(line)
         except ValueError:
+            if partial_last_line and index == len(lines) - 1:
+                epoch = _timestamp_from_record_prefix(line)
+                if epoch is not None:
+                    return epoch
             continue
         if not isinstance(entry, dict):
             continue
@@ -772,6 +801,97 @@ def _event_lines(path):
         return
 
 
+def _event_file_version(path):
+    """Identity and content version for the live event file, or None when absent."""
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return None
+    return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+
+def _parse_event_fold(path):
+    """Fold one complete event-file version into durable and time-indexed state."""
+    lanes = {}
+    opens = {}
+    closes = {}
+    for text in _event_lines(path):
+        line = text.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        name = event.get("stream")
+        if not isinstance(name, str) or not name:
+            continue
+        lane = lanes.setdefault(name, {"bound": False, "last_epoch": None})
+        kind = event.get("event")
+        epoch = parse_epoch(event.get("timestamp"))
+        if kind == "bind":
+            lane["bound"] = True
+        elif kind == "unbind":
+            lane["bound"] = False
+        elif kind == "open":
+            if epoch is not None:
+                opens[(name, event.get("id"))] = epoch
+                lane["last_epoch"] = _later(lane["last_epoch"], epoch)
+        elif kind == "close":
+            opens.pop((name, event.get("id")), None)
+            lane["last_epoch"] = _later(lane["last_epoch"], epoch)
+            if epoch is not None:
+                status = event.get("status")
+                is_error = isinstance(status, int) and status >= 400
+                usage = event.get("usage")
+                total = usage.get("total_tokens") if isinstance(usage, dict) else None
+                tokens = (
+                    int(total)
+                    if isinstance(total, (int, float)) and not isinstance(total, bool)
+                    else 0
+                )
+                closes.setdefault(name, []).append((epoch, is_error, tokens))
+    indexed_closes = {}
+    for name, entries in closes.items():
+        entries.sort(key=lambda entry: entry[0])
+        epochs = []
+        error_prefix = [0]
+        token_prefix = [0]
+        for epoch, is_error, tokens in entries:
+            epochs.append(epoch)
+            error_prefix.append(error_prefix[-1] + int(is_error))
+            token_prefix.append(token_prefix[-1] + tokens)
+        indexed_closes[name] = (tuple(epochs), tuple(error_prefix), tuple(token_prefix))
+    return {"lanes": lanes, "opens": opens, "closes": indexed_closes}
+
+
+def _event_fold(path):
+    """Folded live-file state, refreshed only when identity or content changes."""
+    with _event_state_lock:
+        version = _event_file_version(path)
+        if version is None:
+            _event_fold_state.pop(path, None)
+            return {"lanes": {}, "opens": {}, "closes": {}}
+        cached = _event_fold_state.get(path)
+        if cached is not None and cached[0] == version:
+            return cached[1]
+        fold = {"lanes": {}, "opens": {}, "closes": {}}
+        for _attempt in range(2):
+            fold = _parse_event_fold(path)
+            after = _event_file_version(path)
+            if after == version:
+                _event_fold_state[path] = (version, fold)
+                return fold
+            if after is None:
+                _event_fold_state.pop(path, None)
+                return {"lanes": {}, "opens": {}, "closes": {}}
+            version = after
+        _event_fold_state.pop(path, None)
+        return fold
+
+
 def _empty_lane(name):
     return {
         "name": name,
@@ -805,45 +925,19 @@ def stream_lanes(events_path, now=None, window=3600):
     if now is None:
         now = time.time()
     lanes = {"core": _empty_lane("core")}
-    opens = {}
-    for text in _event_lines(events_path):
-        line = text.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        name = event.get("stream")
-        if not isinstance(name, str) or not name:
-            continue
-        kind = event.get("event")
-        epoch = parse_epoch(event.get("timestamp"))
+    fold = _event_fold(events_path)
+    for name, state in fold["lanes"].items():
         lane = lanes.setdefault(name, _empty_lane(name))
-        if kind == "bind":
-            lane["bound"] = True
-        elif kind == "unbind":
-            lane["bound"] = False
-        elif kind == "open":
-            if epoch is not None:
-                opens[(name, event.get("id"))] = epoch
-                lane["last_epoch"] = _later(lane["last_epoch"], epoch)
-        elif kind == "close":
-            opens.pop((name, event.get("id")), None)
-            lane["last_epoch"] = _later(lane["last_epoch"], epoch)
-            if epoch is not None and now - epoch < window:
-                lane["requests_hour"] += 1
-                status = event.get("status")
-                if isinstance(status, int) and status >= 400:
-                    lane["errors_hour"] += 1
-                usage = event.get("usage")
-                if isinstance(usage, dict):
-                    total = usage.get("total_tokens")
-                    if isinstance(total, (int, float)) and not isinstance(total, bool):
-                        lane["tokens_hour"] += int(total)
-    for (name, _id), epoch in opens.items():
+        lane["bound"] = state["bound"]
+        lane["last_epoch"] = state["last_epoch"]
+    threshold = now - window
+    for name, (epochs, error_prefix, token_prefix) in fold["closes"].items():
+        start = bisect.bisect_right(epochs, threshold)
+        lane = lanes[name]
+        lane["requests_hour"] = len(epochs) - start
+        lane["errors_hour"] = error_prefix[-1] - error_prefix[start]
+        lane["tokens_hour"] = token_prefix[-1] - token_prefix[start]
+    for (name, _id), epoch in fold["opens"].items():
         if now - epoch > INFLIGHT_MAX_AGE:
             continue
         lane = lanes[name]

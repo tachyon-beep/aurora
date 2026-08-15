@@ -138,6 +138,21 @@ def test_clean_flattens_and_cuts_to_a_sentence():
     assert llm.clean("One sentence. Two sentence. Three.", 20) == "One sentence."
 
 
+def test_parse_reply_rejects_content_cut_off_by_the_token_limit():
+    raw = json.dumps(
+        {
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {"content": "This answer stops before it is complete"},
+                }
+            ]
+        }
+    )
+
+    assert llm._parse_reply(raw, llm.MAX_OUTPUT_CHARS) is None
+
+
 def test_source_never_names_the_recorder_credentials():
     with open("stage/llm.py", "r", encoding="utf-8") as f:
         source = f.read()

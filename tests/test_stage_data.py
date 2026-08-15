@@ -246,6 +246,18 @@ def test_first_transcript_epoch_reads_only_the_head(tmp_path):
     assert data.first_transcript_epoch(str(path), read_bytes=8) is None
 
 
+def test_first_transcript_epoch_reads_timestamp_from_an_oversized_first_record(tmp_path):
+    path = tmp_path / "t.jsonl"
+    entry = {
+        "timestamp": "2026-08-14T04:11:02Z",
+        "request": {"messages": [{"content": "x" * (data.HEAD_READ_BYTES * 2)}]},
+    }
+    _write_jsonl(path, [entry])
+
+    assert path.stat().st_size > data.HEAD_READ_BYTES
+    assert data.first_transcript_epoch(str(path)) == data.parse_epoch("2026-08-14T04:11:02Z")
+
+
 def test_first_transcript_epoch_skips_unparseable_and_untimed_lines(tmp_path):
     path = tmp_path / "t.jsonl"
     with open(path, "w", encoding="utf-8") as f:
@@ -1055,6 +1067,124 @@ def test_stream_lanes_preserves_a_bind_older_than_the_old_tail(tmp_path):
 
     aux = next(lane for lane in lanes if lane["name"] == "aux")
     assert aux["bound"] is True
+
+
+def _count_event_lines(monkeypatch):
+    original = data._event_lines
+    count = {"lines": 0}
+
+    def counted(path):
+        for text in original(path):
+            count["lines"] += 1
+            yield text
+
+    monkeypatch.setattr(data, "_event_lines", counted)
+    return count
+
+
+def test_stream_lanes_reuses_an_unchanged_event_file(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    path = _write_events(tmp_path, _busy_event_history(now, count=3))
+    count = _count_event_lines(monkeypatch)
+
+    data.stream_lanes(path, now=now)
+    data.stream_lanes(path, now=now + 1)
+
+    assert count["lines"] == 3
+
+
+def test_stream_lanes_refreshes_after_an_append(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [{"timestamp": _event_stamp(now - 10), "event": "bind", "stream": "aux"}],
+    )
+    data.stream_lanes(path, now=now)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(
+            json.dumps(
+                {
+                    "timestamp": _event_stamp(now - 5),
+                    "event": "close",
+                    "stream": "aux",
+                    "id": "done",
+                    "status": 200,
+                }
+            )
+            + "\n"
+        )
+
+    lanes = data.stream_lanes(path, now=now)
+
+    aux = next(lane for lane in lanes if lane["name"] == "aux")
+    assert aux["bound"] is True
+    assert aux["requests_hour"] == 1
+
+
+def test_stream_lanes_ages_cached_activity_without_rereading(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [
+            {
+                "timestamp": _event_stamp(now - 590),
+                "event": "open",
+                "stream": "core",
+                "id": "active",
+            },
+            {
+                "timestamp": _event_stamp(now - 3590),
+                "event": "close",
+                "stream": "core",
+                "id": "done",
+                "status": 200,
+            },
+        ],
+    )
+    count = _count_event_lines(monkeypatch)
+
+    (before,) = data.stream_lanes(path, now=now)
+    (after,) = data.stream_lanes(path, now=now + 20)
+
+    assert before["in_flight"] == 1
+    assert before["requests_hour"] == 1
+    assert after["in_flight"] == 0
+    assert after["requests_hour"] == 0
+    assert count["lines"] == 2
+
+
+def test_stream_lanes_invalidates_cached_state_after_truncation(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [{"timestamp": _event_stamp(now - 10), "event": "bind", "stream": "aux"}],
+    )
+    assert [lane["name"] for lane in data.stream_lanes(path, now=now)] == ["core", "aux"]
+
+    _write_events(tmp_path, _busy_event_history(now, count=1))
+    lanes = data.stream_lanes(path, now=now)
+
+    assert [lane["name"] for lane in lanes] == ["core"]
+    assert lanes[0]["requests_hour"] == 1
+
+
+def test_stream_lanes_invalidates_cached_state_after_replacement(tmp_path):
+    now = 1_000_000.0
+    path = _write_events(
+        tmp_path,
+        [{"timestamp": _event_stamp(now - 10), "event": "bind", "stream": "aux"}],
+    )
+    assert [lane["name"] for lane in data.stream_lanes(path, now=now)] == ["core", "aux"]
+    replacement = tmp_path / "replacement.jsonl"
+    replacement.write_text(
+        json.dumps(_busy_event_history(now, count=1)[0]) + "\n", encoding="utf-8"
+    )
+    replacement.replace(path)
+
+    lanes = data.stream_lanes(path, now=now)
+
+    assert [lane["name"] for lane in lanes] == ["core"]
+    assert lanes[0]["requests_hour"] == 1
 
 
 def test_first_sentence_keeps_reading_past_a_very_short_opener():

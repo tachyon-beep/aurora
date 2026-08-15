@@ -24,6 +24,7 @@ EVENTS_MAX_BYTES = 16_777_216
 
 _transcript_lock = threading.Lock()
 _events_lock = threading.Lock()
+_active_bindings = set()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
@@ -127,7 +128,19 @@ def log_event(event, stream, **fields):
             os.makedirs(os.path.dirname(EVENTS_FILE) or ".", exist_ok=True)
             with open(EVENTS_FILE, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry) + "\n")
-            rotate_if_needed(EVENTS_FILE, EVENTS_MAX_BYTES)
+            if event == "bind":
+                _active_bindings.add(stream)
+            elif event == "unbind":
+                _active_bindings.discard(stream)
+            if rotate_if_needed(EVENTS_FILE, EVENTS_MAX_BYTES) is not None:
+                with open(EVENTS_FILE, "a", encoding="utf-8") as f:
+                    for name in sorted(_active_bindings):
+                        checkpoint = {
+                            "timestamp": entry["timestamp"],
+                            "event": "bind",
+                            "stream": name,
+                        }
+                        f.write(json.dumps(checkpoint) + "\n")
     except Exception as e:
         print(f"Error writing event: {e}", file=sys.stderr)
 
