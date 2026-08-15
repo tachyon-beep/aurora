@@ -128,6 +128,8 @@ def test_lineage_falls_back_to_done_calls(tmp_path):
             "ended_epoch": None,
             "sentence": "went well.",
             "sentence_chars": len("went well. details."),
+            "lifespan_seconds": None,
+            "turns_lived": None,
         }
     ]
 
@@ -1077,3 +1079,50 @@ def test_first_sentence_default_behaviour_is_unchanged():
 def test_first_sentence_still_honours_its_cap_with_a_floor():
     out = data.first_sentence("a. " * 400, cap=320, floor=data.MIN_SUMMARY_CHARS)
     assert len(out) <= 323
+
+
+def test_lineage_derives_each_lifespan_from_the_ending_before_it(tmp_path):
+    """An incarnation begins when the one before it ends, so consecutive endings
+    give lifespan without the agent recording anything. _tombstone_epoch prefers a
+    sane mtime over the filename stamp, so the fixture pins mtime explicitly."""
+    now = 1786800000.0
+    work = tmp_path / "work"
+    tombs = work / "tombstones"
+    tombs.mkdir(parents=True)
+    pairs = (("20260815_000000_000000", now - 1200), ("20260815_001000_000000", now - 600))
+    for i, (stamp, ended) in enumerate(pairs, start=1):
+        path = tombs / f"incarnation-{stamp}-{i}.txt"
+        path.write_text(f"inc{i} complete.", encoding="utf-8")
+        os.utime(path, (ended, ended))
+    out = data.lineage(str(work), [], now=now)
+    assert len(out) == 2
+    assert out[0]["lifespan_seconds"] == 600.0
+    assert out[1]["lifespan_seconds"] is None
+
+
+def test_lineage_lifespan_is_none_when_an_epoch_is_missing(tmp_path):
+    work = tmp_path / "work"
+    (work / "tombstones").mkdir(parents=True)
+    (work / "tombstones" / "incarnation-1.txt").write_text("gone", encoding="utf-8")
+    out = data.lineage(str(work), [], now=1786800000.0)
+    assert out[0]["lifespan_seconds"] is None
+
+
+def test_lineage_counts_turns_from_the_transcript_not_the_death_note(tmp_path):
+    """These agents write "inc9 complete." — _ending_turn finds no turn in that, so
+    a panel built on the note's own turn number would render nothing."""
+    work = tmp_path / "work"
+    tombs = work / "tombstones"
+    tombs.mkdir(parents=True)
+    (tombs / "incarnation-20260815_000000_000000-1.txt").write_text("inc1 complete.")
+    turns = [{"kind": "loop", "life": 1}, {"kind": "loop", "life": 1}, {"kind": "loop", "life": 2}]
+    out = data.lineage(str(work), turns, now=1786800000.0)
+    assert out[0]["turns_lived"] == 2
+
+
+def test_lineage_falls_back_to_a_turn_the_note_does_name(tmp_path):
+    work = tmp_path / "work"
+    (work / "tombstones").mkdir(parents=True)
+    (work / "tombstones" / "incarnation-1.txt").write_text("ended by done() at turn 63.")
+    out = data.lineage(str(work), [], now=1786800000.0)
+    assert out[0]["turns_lived"] == 63

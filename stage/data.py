@@ -578,7 +578,34 @@ def _lineage_entry(source, label, text, ordinal, kind, turn, ended_epoch):
         "ended_epoch": ended_epoch,
         "sentence": first_sentence(text, cap=320, floor=MIN_SUMMARY_CHARS),
         "sentence_chars": len(collapsed),
+        "lifespan_seconds": None,
+        "turns_lived": None,
     }
+
+
+def _derive_lives(entries, turns):
+    """Fill each ending's lifespan and turn count from what the stage can observe.
+
+    An incarnation began when the one before it ended, so consecutive endings give
+    the span. Turn counts come from the life tag annotate_lives already put on each
+    turn; a turn number named in the note is only the fallback, because a note
+    reading "inc9 complete." names none.
+    """
+    lived = {}
+    for turn in turns or []:
+        life = turn.get("life")
+        if isinstance(life, int):
+            lived[life] = lived.get(life, 0) + 1
+    for index, entry in enumerate(entries):
+        older = entries[index + 1] if index + 1 < len(entries) else None
+        ended = entry.get("ended_epoch")
+        began = older.get("ended_epoch") if older else None
+        if isinstance(ended, (int, float)) and isinstance(began, (int, float)) and ended > began:
+            entry["lifespan_seconds"] = float(ended - began)
+        ordinal = entry.get("ordinal")
+        counted = lived.get(ordinal) if isinstance(ordinal, int) else None
+        entry["turns_lived"] = counted if counted else entry.get("turn")
+    return entries
 
 
 def lineage(work_dir, turns, limit=5, now=None):
@@ -605,7 +632,7 @@ def lineage(work_dir, turns, limit=5, now=None):
             )
         )
     if out:
-        return out
+        return _derive_lives(out, loop_turns(turns))
     for turn in reversed(loop_turns(turns)):
         for tc in turn.get("tool_calls", []) or []:
             if tc.get("name") == "done":
@@ -627,8 +654,8 @@ def lineage(work_dir, turns, limit=5, now=None):
                     )
                 )
                 if len(out) >= limit:
-                    return out
-    return out
+                    return _derive_lives(out, loop_turns(turns))
+    return _derive_lives(out, loop_turns(turns))
 
 
 def _capped_text(path, cap=2000):

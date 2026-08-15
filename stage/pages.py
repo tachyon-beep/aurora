@@ -388,7 +388,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 
 #graves { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
 .grave { display: grid; grid-template-columns: 22px 1fr; column-gap: 14px; flex: none;
-  min-height: 62px; }
+  min-height: 80px; }
 .grave .g-body { position: relative; min-width: 0; }
 .grave .blk-tomb { position: static; }
 .grave .blk-tomb .more { position: absolute; right: 0; bottom: 2px; height: 16px; margin: 0;
@@ -399,6 +399,8 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .grave .tick { width: 2px; height: 100%; justify-self: end; }
 .grave .g-eyebrow { font: 600 11px/16px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.g-facts { font: 400 13px/18px var(--mono); color: var(--paper-faint); margin-top: 2px;
+  font-variant-numeric: tabular-nums; }
 .clamp.tomb { -webkit-line-clamp: 2; line-clamp: 2; font: 400 15px/23px var(--serif);
   color: var(--paper-dim); max-width: 60ch; margin-top: 2px; text-wrap: pretty; }
 .k-declared { color: var(--chosen); } .k-declared .tick { background: var(--chosen); }
@@ -474,6 +476,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 #reached.is-sparse.is-captioned #reached-foot { margin-top: auto; }
 #speak-audio { display: none; }
 #reached-foot { margin-top: auto; font: 400 11px/16px var(--mono); color: var(--paper-faint); flex: none; }
+#reached-said { flex: none; }
 #reached-said:empty, #reached-said.is-quiet { display: none; }
 
 /* ---------- expansion ---------- */
@@ -1230,6 +1233,7 @@ function makeGrave() {
   var body = el("div", "g-body", g);
   g.__eyebrow = el("div", "g-eyebrow", body);
   var box = el("div", "blk blk-tomb rail-blk", body);
+  g.__facts = el("div", "g-facts", box);
   g.__clamp = el("div", "clamp tomb", box);
   el("div", "open-tail", box).hidden = true;
   var more = el("div", "more", box);
@@ -1269,13 +1273,22 @@ function renderDead() {
     var sent = norm(l.sentence || l.summary || "");
     markBlock(g.__box, st.incarnation + ":tomb" + i, sent, l.sentence_chars, false);
     setText(g.__clamp, sent);
+    var facts = [];
+    if (l.lifespan_seconds != null) facts.push("lived " + dur(l.lifespan_seconds));
+    if (l.turns_lived != null) {
+      facts.push(l.turns_lived + " turn" + (l.turns_lived === 1 ? "" : "s"));
+    }
+    setText(g.__facts, facts.join(" · "));
   }
   for (var k = lin.length; k < graveNodes.length; k++) graveNodes[k].hidden = true;
   var hiddenLives = Math.max(0, (st.lives_ended || 0) - lin.length);
-  setText($("dead-foot"), hiddenLives > 0
-    ? hiddenLives + " earlier live" + (hiddenLives === 1 ? "" : "s") + " " +
-      (hiddenLives === 1 ? "is" : "are") + " not shown."
-    : "");
+  var ended = st.lives_ended || 0, chose = st.ended_by_choice || 0;
+  var parts = [];
+  if (ended) parts.push(chose + " of " + ended + " chose to die");
+  if (hiddenLives > 0) {
+    parts.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");
+  }
+  setText($("dead-foot"), parts.join(" · "));
 }
 
 /* ---------- ribbon ---------- */

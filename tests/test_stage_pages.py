@@ -146,6 +146,16 @@ def test_the_merged_panel_playback_path_is_structurally_wired():
     assert "\n  renderSpoken();\n" in HTML
 
 
+def test_the_reached_said_wrapper_does_not_shrink_below_its_content():
+    """`#said-stamp`, `#said-text` and `#speak-caption` carry a load-bearing
+    `flex: none` (they used to be direct flex children of `.panel`, a flex column).
+    The `#reached-said` wrapper introduced by the merge now sits between them and
+    `.panel`, so it is the actual flex item; without its own `flex: none` it would
+    take the default `flex-shrink: 1` and could be compressed below its content
+    height inside the fixed-height ribbon row, clipping the caption stack."""
+    assert "#reached-said { flex: none; }" in HTML
+
+
 def test_stream_page_plays_each_utterance_once_and_only_when_fresh():
     assert "spokenPlayed" in HTML
     assert "/audio/" in HTML
@@ -249,3 +259,16 @@ def test_the_monologue_clamps_deep_enough_for_a_viewer_who_cannot_click():
     assert _clamp_lines(".clamp.think") >= 14
     assert _clamp_lines(".clamp.say") >= 6
     assert _clamp_lines(".tool") >= 3
+
+
+def test_a_grave_shows_derived_facts_above_the_note():
+    """The stage states what it measured; the agent's own note stays below it."""
+    assert "lifespan_seconds" in HTML
+    assert "turns_lived" in HTML
+    assert "g-facts" in HTML
+    assert "clamp tomb" in HTML, "the note itself must survive the rebuild"
+
+
+def test_the_dead_panel_counts_how_many_chose():
+    assert "chose to die" in HTML
+    assert "ended_by_choice" in HTML
