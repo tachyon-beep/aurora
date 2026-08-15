@@ -290,6 +290,62 @@ def test_a_stale_grab_tmp_is_removed_on_the_next_attempt(tmp_path, monkeypatch):
     assert not (feed_dir / ".grab.jpg").exists()
 
 
+# startup reconciliation
+
+
+def test_reconcile_storage_prunes_slots_outside_the_configured_ring(tmp_path):
+    feed_dir = tmp_path / "0"
+    feed_dir.mkdir()
+    for name in ("000.jpg", "001.jpg", "002.jpg", "999.jpg"):
+        (feed_dir / name).write_bytes(name.encode())
+    (feed_dir / "operator-note.txt").write_text("keep", encoding="utf-8")
+
+    sense.reconcile_storage(tmp_path, [{"dir": "0", "id": "x"}], slots=2)
+
+    assert sorted(path.name for path in feed_dir.iterdir()) == [
+        "000.jpg",
+        "001.jpg",
+        "operator-note.txt",
+    ]
+
+
+def test_reconcile_storage_removes_unconfigured_feed_directories(tmp_path):
+    configured = tmp_path / "0"
+    configured.mkdir()
+    removed = tmp_path / "old-feed"
+    removed.mkdir()
+    (removed / "001.jpg").write_bytes(b"stale")
+    (tmp_path / "status.json").write_text("{}", encoding="utf-8")
+
+    sense.reconcile_storage(tmp_path, [{"dir": "0", "id": "x"}], slots=2)
+
+    assert configured.is_dir()
+    assert not removed.exists()
+    assert (tmp_path / "status.json").is_file()
+
+
+def test_main_reconciles_storage_before_the_first_capture_cycle(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setenv("SENSE_DIR", str(tmp_path))
+    monkeypatch.setenv("SENSE_FEEDS", '[{"dir":"cam","id":"x"}]')
+    monkeypatch.setenv("SENSE_RING_SLOTS", "7")
+    monkeypatch.setattr(sense, "SENSE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        sense,
+        "reconcile_storage",
+        lambda root, feeds, slots: calls.append((root, feeds, slots)),
+    )
+    monkeypatch.setattr(sense, "run_cycle", lambda *args, **kwargs: calls.append("cycle"))
+    monkeypatch.setattr(sense.time, "time", lambda: 0.0)
+    monkeypatch.setattr(sense.time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopIteration))
+
+    with pytest.raises(StopIteration):
+        sense.main()
+
+    assert calls[0] == (tmp_path, [{"dir": "cam", "id": "x"}], 7)
+    assert calls[1] == "cycle"
+
+
 # cycle scheduling
 
 

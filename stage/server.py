@@ -184,9 +184,9 @@ class ConsoleHandler(_BaseHandler):
 
     def _handle_diff(self):
         work = os.path.join(TELEMETRY_DIR, "work")
-        current = os.path.join(work, "agent.py")
-        stock = os.path.join(work, "agent_stock.py")
-        if not (os.path.isfile(current) and os.path.isfile(stock)):
+        current = data.contained_file(TELEMETRY_DIR, os.path.join(work, "agent.py"))
+        stock = data.contained_file(TELEMETRY_DIR, os.path.join(work, "agent_stock.py"))
+        if current is None or stock is None:
             self._send(404, json.dumps({"error": "mirror not available"}))
             return
         text = browse.unified_diff_text(stock, current, "agent_stock.py", "agent.py")

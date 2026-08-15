@@ -207,13 +207,15 @@ def test_playback_queues_utterances_instead_of_playing_only_the_newest():
     assert "if (!a || spokenBusy || !spokenQueue.length) return;" in HTML
 
 
-def test_the_queue_advances_on_every_way_playback_can_stop():
-    # An unhandled failure would leave spokenBusy set and wedge the queue. That
-    # the advance happens exactly once per item is executed, not grepped, in
-    # tests/test_stage_pages_js.py.
+def test_the_queue_advances_on_terminal_playback_but_holds_autoplay_refusal():
+    # An unhandled terminal failure would leave spokenBusy set and wedge the
+    # queue. NotAllowedError is recoverable and must return before the advance;
+    # both branches are executed, not just grepped, in test_stage_pages_js.py.
     assert 'a.addEventListener("ended", spokenAdvance)' in HTML
     assert 'a.addEventListener("error", spokenAdvance)' in HTML
-    assert "if (mine === spokenCurrent) spokenAdvance();" in HTML
+    assert 'if (e && e.name === "NotAllowedError") {' in HTML
+    assert "if (mine !== spokenCurrent) return;" in HTML
+    assert "spokenAdvance();" in HTML
 
 
 def test_the_played_set_survives_a_reload():
@@ -227,7 +229,8 @@ def test_the_played_set_survives_a_reload():
 def test_a_future_dated_utterance_never_plays():
     # The agent can write into /diode/spoken, and a stamp in the future would
     # otherwise stay inside the freshness window forever.
-    assert "if (ageMs < 0 || ageMs > 180000) continue;" in HTML
+    assert "if (ageMs < 0 || ageMs > 180000) {" in HTML
+    assert "markSpokenPlayed(name);" in HTML
 
 
 def test_the_playback_freshness_gate_matches_the_commentary_recency_window():

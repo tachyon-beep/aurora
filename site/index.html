@@ -47,7 +47,7 @@
             <a class="button button--secondary" href="#quickstart">Quick start</a>
           </div>
           <div class="command-strip" aria-label="Quick command">
-            <code id="hero-command">python scripts/build_garden.py &amp;&amp; docker compose up --build</code>
+            <code id="hero-command">sh scripts/prepare_host.sh &amp;&amp; docker compose up --build</code>
             <button class="copy-button" type="button" data-copy-target="hero-command">
               Copy
             </button>
@@ -203,9 +203,9 @@
             <p class="eyebrow">Run it</p>
             <h2 id="quickstart-title">Start with Docker Compose.</h2>
             <p class="quickstart__copy">
-              Set the OpenRouter key in the environment, generate the garden, then build the stack.
-              Once it is up, the read-only viewer is at http://localhost:8090 and the stage's
-              stream page is at http://localhost:8091.
+              Set the OpenRouter key, prepare the host mounts and offline assets, then build the
+              stack. Once it is up, the read-only viewer is at http://localhost:8090 and the
+              stage's stream page is at http://localhost:8091.
             </p>
           </div>
           <div class="code-panel">
@@ -218,7 +218,7 @@
             <pre><code id="quickstart-code">cp .env.example .env
 # edit .env and set OPENROUTER_API_KEY
 
-python scripts/build_garden.py
+sh scripts/prepare_host.sh
 docker compose up --build
 
 # viewer:      http://localhost:8090

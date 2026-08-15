@@ -6,11 +6,12 @@ RUN apt-get update \
        sqlite3 libsqlite3-dev libffi-dev miller datamash ripgrep \
     && rm -rf /var/lib/apt/lists/*
 
-COPY vendor/wheels/ /tmp/wheels/
+COPY vendor/ /tmp/vendor/
 COPY requirements-agent.txt /tmp/requirements-agent.txt
-RUN pip install --no-cache-dir /tmp/wheels/*.whl \
-    && pip install --no-cache-dir -r /tmp/requirements-agent.txt \
-    && rm -rf /tmp/wheels /tmp/requirements-agent.txt
+RUN set -- /tmp/vendor/wheels/*.whl; \
+    if [ -e "$1" ]; then pip install --no-cache-dir "$@"; fi; \
+    pip install --no-cache-dir -r /tmp/requirements-agent.txt; \
+    rm -rf /tmp/vendor /tmp/requirements-agent.txt
 
 # Cargo resolves against the local registry mounted read-only at /vendor;
 # caches and build artifacts land on the disk-backed /build volume because

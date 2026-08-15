@@ -126,6 +126,20 @@ def test_diff_view(console):
     assert "-STOCK" in text and "+CURRENT" in text
 
 
+@pytest.mark.parametrize("name", ["agent.py", "agent_stock.py"])
+def test_diff_rejects_a_source_symlink_outside_telemetry(console, tmp_path, name):
+    outside = tmp_path / f"outside-{name}"
+    outside.write_text("OUTSIDE-DIFF-SENTINEL\n", encoding="utf-8")
+    source = tmp_path / "telemetry" / "work" / name
+    source.unlink()
+    source.symlink_to(outside)
+
+    status, body = _get(console, "/api/diff")
+
+    assert status == 404
+    assert b"OUTSIDE-DIFF-SENTINEL" not in body
+
+
 def test_console_page_served(console):
     status, body = _get(console, "/")
     assert status == 200

@@ -175,8 +175,8 @@ are on the image allow-list alongside `chassis.py`.
   (the container smoke test needs Docker).
 - Lint/format before committing: `.venv/bin/ruff format . && .venv/bin/ruff check .`
 - Tests live in `tests/` and are **not** shipped into any image.
-- Container checks: `docker compose build`, `docker compose up`, and `scripts/verify_container.sh`
-  against a running stack.
+- Container checks: `sh scripts/prepare_host.sh`, `docker compose build`, `docker compose up`, and
+  `scripts/verify_container.sh` against a running stack.
 - Agent-image packages live in `requirements-agent.txt`; `scripts/build_garden.py` generates the
   garden runtime inventory from that manifest. Keep the approved set within 100 MiB of the
   pre-change image built on the same host. Do not add ML runtimes, local models, browser engines,

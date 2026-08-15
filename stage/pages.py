@@ -1511,6 +1511,33 @@ function markSpokenPlayed(name) {
   spokenPlayed = kept;
   try { window.localStorage.setItem("spokenPlayed", JSON.stringify(names)); } catch (e) {}
 }
+function spokenKnown(name) {
+  if (spokenPlayed[name]) return true;
+  if (spokenCurrent && spokenCurrent.name === name) return true;
+  for (var i = 0; i < spokenQueue.length; i++) {
+    if (spokenQueue[i].name === name) return true;
+  }
+  return false;
+}
+function attemptSpoken() {
+  var a = $("speak-audio"), mine = spokenCurrent;
+  if (!a || !mine) return;
+  try {
+    var p = a.play();
+    if (p && p.catch) p.catch(function (e) {
+      if (mine !== spokenCurrent) return;
+      if (e && e.name === "NotAllowedError") {
+        soundBlocked();
+        return;
+      }
+      spokenAdvance();
+    });
+  } catch (e) {
+    if (mine !== spokenCurrent) return;
+    if (e && e.name === "NotAllowedError") soundBlocked();
+    else spokenAdvance();
+  }
+}
 function playNextSpoken() {
   var a = $("speak-audio");
   if (!a || spokenBusy || !spokenQueue.length) return;
@@ -1518,34 +1545,13 @@ function playNextSpoken() {
   spokenCurrent = spokenQueue.shift();
   setSpokenCaption(spokenCurrent.text);
   a.src = "/audio/" + encodeURIComponent(spokenCurrent.name);
-  /* A load failure fires "error" AND rejects this promise, so the rejection has
-     to name the item it belongs to: advancing on both would shift the next
-     utterance out of the queue and skip it unplayed. Testing spokenBusy would
-     not help, since by then the next item has already set it. */
-  var mine = spokenCurrent;
-  try {
-    var p = a.play();
-    /* Both a refused autoplay and a load failure reject this promise (the
-       load failure also fires "error", handled below), so the rejection
-       reason has to be checked rather than assumed: only NotAllowedError is
-       an autoplay refusal, which is recoverable by asking the viewer to
-       click. A load failure (NotSupportedError, e.g. a file mid-write or one
-       that rotated away between snapshot and fetch) is not a permission
-       problem and offering sound would not fix it — revealing the button on
-       that path would plant a dead, unrecoverable control on the broadcast,
-       which has no pointer to hide it again. Gate on the positive condition
-       so an unrecognised rejection reason fails closed (button stays
-       hidden) rather than open. The queue still drains either way. */
-    if (p && p.catch) p.catch(function (e) {
-      if (e && e.name === "NotAllowedError") soundBlocked();
-      if (mine === spokenCurrent) spokenAdvance();
-    });
-  } catch (e) { spokenAdvance(); }
+  attemptSpoken();
 }
 function spokenAdvance() {
-  /* Reached on end, on a failed load, and on a refused autoplay: each of those
-     leaves the element idle, so the queue drains instead of wedging. Takes no
-     argument — it is bound directly as an event listener. */
+  /* Reached on end or an unrecoverable load/play failure. The current name is
+     persisted before advancing so a reload retries only work that never
+     started; autoplay refusal does not call this function. */
+  if (spokenCurrent) markSpokenPlayed(spokenCurrent.name);
   spokenCurrent = null;
   spokenBusy = false;
   playNextSpoken();
@@ -1561,14 +1567,16 @@ function soundBlocked() {
     b.__wired = true;
     b.addEventListener("click", function () {
       b.hidden = true;
-      var a = $("speak-audio");
-      if (a) { try { a.play(); } catch (e) {} }
+      attemptSpoken();
     });
   }
 }
 (function () {
   var a = $("speak-audio");
   if (!a) return;
+  a.addEventListener("playing", function () {
+    if (spokenCurrent) markSpokenPlayed(spokenCurrent.name);
+  });
   a.addEventListener("ended", spokenAdvance);
   a.addEventListener("error", spokenAdvance);
 })();
@@ -1580,16 +1588,19 @@ function renderSpoken() {
   }
   if (!spokenBusy && !spokenQueue.length) setSpokenCaption(sp[0].text);
   /* Oldest first, so a snapshot carrying more than one utterance queues them in
-     the order they were made rather than playing only the newest. Every name is
-     marked before the freshness check on purpose: one that was already stale when
-     it arrived must never play later. A negative age is a stamp in the future,
-     which only a planted file can have, and it never plays. */
+     the order they were made rather than playing only the newest. Current and
+     queued names remain in memory without being persisted as played; that keeps
+     refreshes from duplicating them while allowing a reload to recover anything
+     autoplay blocked. Stale and future-dated names are persisted immediately so
+     they can never become playable later. */
   for (var i = sp.length - 1; i >= 0; i--) {
     var name = sp[i].name || "";
-    if (!name || spokenPlayed[name]) continue;
-    markSpokenPlayed(name);
+    if (!name || spokenKnown(name)) continue;
     var ageMs = clock() - (sp[i].epoch || 0) * 1000;
-    if (ageMs < 0 || ageMs > 180000) continue;
+    if (ageMs < 0 || ageMs > 180000) {
+      markSpokenPlayed(name);
+      continue;
+    }
     spokenQueue.push({ name: name, text: norm(sp[i].text || "") });
   }
   playNextSpoken();

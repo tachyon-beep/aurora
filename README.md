@@ -149,16 +149,21 @@ treating as untrusted. See **Scope & limitations** below.
 
 ## Quick start
 
-Requires Docker with Compose v2, and Python on the host to generate the garden before the build
-(the containers themselves need no host Python).
+Requires Docker with Compose v2, Python, `fallocate`, and ext4 tools on the host. The one-time build
+volume mount also requires root permission; the preparation script uses passwordless `sudo` when
+available and otherwise prints the exact mount command to run.
 
 ```bash
 cp .env.example .env
 # edit .env and set OPENROUTER_API_KEY (the upstream key — it is mounted only into the recorder)
 
-python scripts/build_garden.py
+sh scripts/prepare_host.sh
 docker compose up --build
 ```
+
+Preparation creates and mounts the preallocated 5 GiB `/build` image, creates the writable sense
+bind source, builds any missing offline Rust/Common Lisp/model assets, and generates the garden.
+Complete vendor assets are retained on later runs.
 
 The recorder comes up first, then the agent begins its loop, talking to the model through the
 recorder. Transcripts accumulate on the `transcripts` volume.
@@ -173,10 +178,10 @@ The harness image includes a small, read-only `/garden` containing exactly two f
 materials and limits. It contains no repository snapshots, example apps, database, puzzle, or
 assignment.
 
-Generate the garden before building the image:
+Prepare the host artifacts and generate the garden before building the image:
 
 ```bash
-python scripts/build_garden.py
+sh scripts/prepare_host.sh
 docker compose build
 ```
 
@@ -223,6 +228,7 @@ internet for OBS or viewers, run a Cloudflare Tunnel pointing at `http://localho
 | `viewer.py` / `Dockerfile.viewer` | The live transcript viewer (read-only, host-loopback). |
 | `stage/` / `Dockerfile.stage` | The stream page (OBS browser source) and the token-gated operator console with a container browser. |
 | `Dockerfile` / `entrypoint.sh` / `docker-compose.yml` | The harness image and topology. |
+| `scripts/prepare_host.sh` | Provisions required bind mounts and offline vendor assets, then builds the garden. |
 | `scripts/build_garden.py` / `requirements-agent.txt` | Builds the two-document read-only garden and defines the lean package set installed in the harness image. |
 | `scripts/verify_container.sh` | Verifies containment invariants against a running stack. |
 | `site/` | The project landing page, deployed to GitHub Pages by `.github/workflows/pages.yml`. |

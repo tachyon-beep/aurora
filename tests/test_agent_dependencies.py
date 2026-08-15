@@ -80,9 +80,10 @@ def test_dockerfile_installs_agent_dependency_manifest() -> None:
     instructions = _dockerfile_instructions()
     manifest_copy = "COPY requirements-agent.txt /tmp/requirements-agent.txt"
     manifest_install_run = (
-        "RUN pip install --no-cache-dir /tmp/wheels/*.whl "
-        "&& pip install --no-cache-dir -r /tmp/requirements-agent.txt "
-        "&& rm -rf /tmp/wheels /tmp/requirements-agent.txt"
+        "RUN set -- /tmp/vendor/wheels/*.whl; "
+        'if [ -e "$1" ]; then pip install --no-cache-dir "$@"; fi; '
+        "pip install --no-cache-dir -r /tmp/requirements-agent.txt; "
+        "rm -rf /tmp/vendor /tmp/requirements-agent.txt"
     )
 
     manifest_copies = [
@@ -106,6 +107,20 @@ def test_dockerfile_installs_agent_dependency_manifest() -> None:
     assert copy_instruction == manifest_copy
     assert install_run == manifest_install_run
     assert copy_index < run_index
+
+
+def test_local_wheels_are_optional_for_a_clean_checkout() -> None:
+    instructions = _dockerfile_instructions()
+
+    assert "COPY vendor/wheels/ /tmp/wheels/" not in instructions
+    vendor_copy_index = instructions.index("COPY vendor/ /tmp/vendor/")
+    install_index = next(
+        index
+        for index, instruction in enumerate(instructions)
+        if instruction.startswith("RUN set -- /tmp/vendor/wheels/*.whl;")
+    )
+    assert vendor_copy_index < install_index
+    assert 'if [ -e "$1" ]; then pip install --no-cache-dir "$@"; fi' in instructions[install_index]
 
 
 def test_dockerignore_includes_agent_dependency_manifest() -> None:

@@ -54,6 +54,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "==> offline vendor assets"
+VENDOR_ROOT="$(pwd)/volumes/vendor"
+vendor_ready=1
+[ -d "$VENDOR_ROOT/registry" ] || vendor_ready=0
+find "$VENDOR_ROOT/registry" -maxdepth 1 -type f -name '*.crate' -print -quit 2>/dev/null \
+  | grep -q . || vendor_ready=0
+[ -s "$VENDOR_ROOT/lisp/bundle.lisp" ] || vendor_ready=0
+for model_file in model.safetensors tokenizer.json config.json; do
+  [ -s "$VENDOR_ROOT/models/potion-base-8m/$model_file" ] || vendor_ready=0
+done
+if [ "$vendor_ready" -ne 1 ]; then
+  sh scripts/build_vendor.sh
+fi
+
 echo "==> sense volume host directory"
 sh scripts/create_sense_volume.sh >/dev/null
 

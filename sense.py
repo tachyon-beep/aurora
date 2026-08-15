@@ -12,6 +12,7 @@ short-lived temporaries each is atomically renamed from.
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -56,6 +57,28 @@ def validated_feed_dir(name: str) -> str:
     if not isinstance(name, str) or FEED_DIR_PATTERN.fullmatch(name) is None:
         raise ValueError(f"invalid feed dir: {name!r}")
     return name
+
+
+def reconcile_storage(root, feeds: list[dict], slots: int) -> None:
+    """Remove captures outside the configured feeds and slot range."""
+    root = Path(root)
+    configured = {validated_feed_dir(feed["dir"]) for feed in feeds}
+    for entry in root.iterdir():
+        if entry.name not in configured:
+            if entry.is_symlink():
+                entry.unlink()
+            elif entry.is_dir():
+                shutil.rmtree(entry)
+            continue
+        if entry.is_symlink():
+            entry.unlink()
+            continue
+        if not entry.is_dir():
+            continue
+        for candidate in entry.iterdir():
+            if candidate.suffix == ".jpg" and candidate.stem.isdigit():
+                if int(candidate.stem) >= slots:
+                    candidate.unlink()
 
 
 def thumbnail(path) -> list[int]:
@@ -256,6 +279,7 @@ def main() -> None:
     slots = int(os.environ.get("SENSE_RING_SLOTS", str(DEFAULT_RING_SLOTS)))
     threshold = float(os.environ.get("SENSE_STATIC_THRESHOLD", str(DEFAULT_STATIC_THRESHOLD)))
     root = Path(SENSE_DIR)
+    reconcile_storage(root, feeds, slots)
     states: dict[str, FeedState] = {}
     period = interval_minutes * 60
     while True:

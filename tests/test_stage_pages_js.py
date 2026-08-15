@@ -115,11 +115,13 @@ var out = {};
    utterances. Both must play, oldest first. */
 global.snap = { diode: { spoken: [entry(2, 1), entry(1, 2)] } };
 renderSpoken();
+audio.fire("playing");
 out.first_started = names();
 out.first_caption = caption.textContent;
 renderSpoken();
 out.caption_during_first = caption.textContent;
 audio.fire("ended");
+audio.fire("playing");
 out.after_ended = names();
 out.second_caption = caption.textContent;
 audio.fire("ended");
@@ -133,16 +135,18 @@ renderSpoken();
 var stale = audio.pending;
 audio.fire("error");
 if (stale) stale();
+audio.fire("playing");
 out.after_failure = names();
 out.still_queued = spokenQueue.length;
 
-/* A reload restores the played set from storage and replays nothing. */
+/* A reload restores the played set from storage and resumes with only the
+   queued utterance that never started. */
 reset();
 out.stored = JSON.parse(store.spokenPlayed || "[]").length;
 spokenPlayed = {};
 JSON.parse(store.spokenPlayed || "[]").forEach(function (n) { spokenPlayed[n] = true; });
 renderSpoken();
-out.replayed_after_reload = audio.played.length;
+out.resumed_after_reload = names();
 
 /* Only a planted file carries a stamp in the future; it must never play. */
 reset();
@@ -287,9 +291,9 @@ def test_playback_queue_behaviour(tmp_path):
         "20260814_120000_000000.mp3",
     ]
     assert out["still_queued"] == 1
-    # A reload finds the names already marked and plays nothing again.
+    # A reload skips started/failed names but resumes the item that was still queued.
     assert out["stored"] > 0
-    assert out["replayed_after_reload"] == 0
+    assert out["resumed_after_reload"] == ["20260815_120000_000000.mp3"]
     # A future-dated stamp is as dead as a stale one.
     assert out["future_played"] == 0
 
@@ -340,12 +344,29 @@ __BLOCK__
 var out = {};
 
 /* NotAllowedError is a refused autoplay: the recovery button is revealed,
-   and the queue still advances to the second utterance. */
+   while the current and queued utterances remain recoverable. */
 global.snap = { diode: { spoken: [entry(2, 1), entry(1, 2)] } };
 renderSpoken();
 audio.pending({ name: "NotAllowedError" });
 out.allowed_button_hidden = soundBtn.hidden;
-out.allowed_advanced_to = spokenCurrent && spokenCurrent.name;
+out.allowed_current = spokenCurrent && spokenCurrent.name;
+out.allowed_queued = spokenQueue.length;
+out.allowed_persisted = JSON.parse(store.spokenPlayed || "[]").length;
+
+/* A reload before the viewer enables sound starts with the same oldest item,
+   because refused playback was never persisted as completed. */
+reset();
+spokenPlayed = {};
+JSON.parse(store.spokenPlayed || "[]").forEach(function (n) { spokenPlayed[n] = true; });
+renderSpoken();
+out.reload_current = spokenCurrent && spokenCurrent.name;
+if (audio.pending) audio.pending({ name: "NotAllowedError" });
+if (soundBtn.clicks[0]) soundBtn.clicks[0]();
+out.after_click = audio.played.slice();
+audio.fire("playing");
+out.persisted_after_playing = JSON.parse(store.spokenPlayed || "[]").length;
+audio.fire("ended");
+out.after_enabled_advanced_to = spokenCurrent && spokenCurrent.name;
 
 /* NotSupportedError is a load failure (a missing or mid-write file), not a
    permission problem sound would fix. Revealing the button here would plant
@@ -393,11 +414,20 @@ def test_a_load_failure_never_reveals_sound_on_but_still_drains_the_queue(tmp_pa
     real reason object does. A version that called soundBlocked()
     unconditionally would reveal the button on an OBS broadcast (no pointer,
     no way to hide it again) whenever a spoken file failed to load; this
-    proves it does not, while still proving the queue drains on every
-    rejection reason, recognised or not."""
+    proves it does not. A refused autoplay is instead held for a viewer click
+    and survives reload; non-permission failures still drain."""
     out = _run(SOUND_HARNESS.replace("__BLOCK__", _spoken_block()), tmp_path)
     assert out["allowed_button_hidden"] is False
-    assert out["allowed_advanced_to"] == "20260812_120000_000000.mp3"
+    assert out["allowed_current"] == "20260811_120000_000000.mp3"
+    assert out["allowed_queued"] == 1
+    assert out["allowed_persisted"] == 0
+    assert out["reload_current"] == "20260811_120000_000000.mp3"
+    assert out["after_click"] == [
+        "/audio/20260811_120000_000000.mp3",
+        "/audio/20260811_120000_000000.mp3",
+    ]
+    assert out["persisted_after_playing"] == 1
+    assert out["after_enabled_advanced_to"] == "20260812_120000_000000.mp3"
     assert out["unsupported_button_hidden"] is True
     assert out["unsupported_advanced_to"] == "20260814_120000_000000.mp3"
     assert out["unrecognised_button_hidden"] is True

@@ -13,7 +13,8 @@ are defined by `Dockerfile*` and `docker-compose.yml`.
 
 - `.venv/bin/python -m pytest -q --ignore=tests/test_container_smoke.py` runs the host test suite.
 - `.venv/bin/ruff format . && .venv/bin/ruff check .` formats and lints all Python code.
-- `python scripts/build_garden.py && docker compose build` regenerates the garden and builds images.
+- `sh scripts/prepare_host.sh && docker compose build` provisions ignored host artifacts, regenerates
+  the garden, and builds images.
 - `docker compose up` starts the stack; run `scripts/verify_container.sh` against it to check
   containment. The container smoke test requires Docker.
 
