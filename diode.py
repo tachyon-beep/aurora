@@ -5,6 +5,7 @@ import math
 import os
 import re
 import socket
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -357,7 +358,7 @@ def load_console():
 
 
 def consume_batch():
-    """Clear the commands list in CONSOLE_FILE, preserving variables."""
+    """Atomically clear the commands list in CONSOLE_FILE, preserving variables."""
     try:
         with open(CONSOLE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -367,8 +368,22 @@ def consume_batch():
         data = {}
     data["commands"] = []
     data.setdefault("variables", {})
-    with open(CONSOLE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    try:
+        mode = os.stat(CONSOLE_FILE).st_mode & 0o777
+    except OSError:
+        mode = 0o644
+    directory = os.path.dirname(CONSOLE_FILE) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".console-", suffix=".tmp", dir=directory)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, CONSOLE_FILE)
+    finally:
+        try:
+            os.remove(tmp)
+        except FileNotFoundError:
+            pass
 
 
 def write_help(variables):
@@ -1012,6 +1027,7 @@ def run_diode():
     found = hidden_commands_run(OUTPUT_DIR)
     while True:
         commands, variables = load_console()
+        commands_valid = all(isinstance(command, str) for command in commands)
         queued = load_pending()
         due, waiting = due_pending(queued, time.time())
         if len(waiting) != len(queued):
@@ -1023,8 +1039,10 @@ def run_diode():
             fetch_history = run_command(
                 str(item.get("command", "")), variables, fetch_history, found
             )
-        for command in commands:
-            fetch_history = run_command(command, variables, fetch_history, found)
+        consume_batch()
+        if commands_valid:
+            for command in commands:
+                fetch_history = run_command(command, variables, fetch_history, found)
         write_help(variables)
         write_state(
             variables,
@@ -1033,7 +1051,6 @@ def run_diode():
             found,
             len(load_pending()),
         )
-        consume_batch()
         time.sleep(POLL_SECONDS)
 
 
