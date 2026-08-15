@@ -15,8 +15,11 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
   #list { border-right: 1px solid #303941; overflow-y: auto; padding: 8px; }
   #view { overflow: auto; padding: 12px 16px; }
   .entry { display: flex; justify-content: space-between; padding: 3px 6px;
-           cursor: pointer; border-radius: 4px; }
+           cursor: pointer; border-radius: 4px; width: 100%; text-align: left;
+           background: none; border: 0; color: inherit; font: inherit; }
   .entry:hover { background: #1f252b; }
+  .entry:focus-visible, .bar button:focus-visible, select:focus-visible {
+           outline: 2px solid #66d9c2; outline-offset: 1px; }
   .entry .size { color: #79848c; }
   .dir { color: #77bdfb; }
   pre { white-space: pre-wrap; word-break: break-all; margin: 0; }
@@ -32,7 +35,7 @@ CONSOLE_PAGE_HTML = r"""<!doctype html>
 <main>
   <div id="list">
     <div class="bar">
-      <select id="root"></select>
+      <select id="root" aria-label="browse root"></select>
       <button id="up">up</button>
       <button id="diff">agent.py diff</button>
     </div>
@@ -63,7 +66,8 @@ function load() {
     const box = document.getElementById("entries");
     box.textContent = "";
     for (const e of d.entries) {
-      const row = document.createElement("div");
+      const row = document.createElement("button");
+      row.type = "button";
       row.className = "entry" + (e.is_dir ? " dir" : "");
       const name = document.createElement("span");
       name.textContent = e.name + (e.is_dir ? "/" : "");

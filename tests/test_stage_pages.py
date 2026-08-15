@@ -405,3 +405,21 @@ def test_the_stream_page_stylesheet_declares_no_px_font_size_under_the_floor():
         if int(match.group(1)) < BROADCAST_TYPE_FLOOR
     ]
     assert too_small == [], f"below the {BROADCAST_TYPE_FLOOR}px floor: {too_small}"
+
+
+CONSOLE = pages.CONSOLE_PAGE_HTML
+
+
+def test_console_rows_are_real_buttons():
+    """The console is the one stage surface with an actual user. Rows built as divs
+    with an onclick are unreachable by keyboard and unnamed to a screen reader."""
+    assert 'const row = document.createElement("button")' in CONSOLE
+    assert 'const row = document.createElement("div")' not in CONSOLE
+
+
+def test_console_declares_a_visible_focus_state():
+    assert ":focus-visible" in CONSOLE
+
+
+def test_console_root_select_is_labelled():
+    assert 'aria-label="browse root"' in CONSOLE
