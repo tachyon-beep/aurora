@@ -2,6 +2,8 @@ import json
 import os
 import time
 
+import pytest
+
 import diode
 from stage import data
 
@@ -96,6 +98,105 @@ def test_consume_batch_clears_commands_keeps_variables(tmp_path, monkeypatch):
     after = json.loads(f.read_text(encoding="utf-8"))
     assert after["commands"] == []
     assert after["variables"] == {"enable_clock": True}
+
+
+def test_consume_batch_leaves_original_intact_when_replacement_write_fails(tmp_path, monkeypatch):
+    path = tmp_path / "console.json"
+    monkeypatch.setattr(diode, "CONSOLE_FILE", str(path))
+    original = json.dumps({"commands": ["speak paid"], "variables": {"enable_speech": True}})
+    path.write_text(original, encoding="utf-8")
+
+    def fail_during_dump(_data, target, indent=None):
+        target.write("{")
+        raise OSError("write failed")
+
+    monkeypatch.setattr(diode.json, "dump", fail_during_dump)
+
+    with pytest.raises(OSError, match="write failed"):
+        diode.consume_batch()
+
+    assert path.read_text(encoding="utf-8") == original
+    assert list(tmp_path.iterdir()) == [path]
+
+
+def test_malformed_batch_is_consumed_without_running_speech(tmp_path, monkeypatch):
+    class CycleComplete(Exception):
+        pass
+
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "DIODE_DIR", str(tmp_path))
+    monkeypatch.setattr(diode, "CONSOLE_FILE", str(tmp_path / "console.json"))
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    (tmp_path / "console.json").write_text(
+        json.dumps(
+            {
+                "commands": ["speak paid", 0],
+                "variables": {"enable_speech": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    speech_calls = []
+    monkeypatch.setattr(
+        diode,
+        "_speak_request",
+        lambda text: (speech_calls.append(text) or True, b"audio"),
+    )
+    monkeypatch.setattr(
+        diode.time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(CycleComplete()),
+    )
+
+    with pytest.raises(CycleComplete):
+        diode.run_diode()
+
+    assert speech_calls == []
+    console = json.loads((tmp_path / "console.json").read_text(encoding="utf-8"))
+    assert console["commands"] == []
+
+
+def test_batch_is_consumed_before_a_later_output_failure(tmp_path, monkeypatch):
+    _speech_env(monkeypatch)
+    monkeypatch.setattr(diode, "DIODE_DIR", str(tmp_path))
+    monkeypatch.setattr(diode, "CONSOLE_FILE", str(tmp_path / "console.json"))
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "SPOKEN_DIR", str(tmp_path / "spoken"))
+    monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
+    (tmp_path / "console.json").write_text(
+        json.dumps(
+            {
+                "commands": ["speak paid", "help"],
+                "variables": {"enable_speech": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+    speech_calls = []
+    monkeypatch.setattr(
+        diode,
+        "_speak_request",
+        lambda text: (speech_calls.append(text) or True, b"audio"),
+    )
+
+    def fail_on_second_output(command, _text):
+        if command == "help":
+            raise OSError("output failed")
+
+    monkeypatch.setattr(diode, "write_output", fail_on_second_output)
+
+    with pytest.raises(OSError, match="output failed"):
+        diode.run_diode()
+
+    assert speech_calls == ["paid"]
+    console = json.loads((tmp_path / "console.json").read_text(encoding="utf-8"))
+    assert console["commands"] == []
 
 
 def test_write_help_lists_available_commands(tmp_path, monkeypatch):
