@@ -350,7 +350,8 @@ def test_the_containment_facts_hold_the_masthead_slot():
     premise sentence is the secondary line (#provenance, faint). The behavioural
     half of this — rotation, offline handling, the death-announcement beat — is
     executed in tests/test_stage_pages_js.py."""
-    assert 'setText($("premise"), PROVENANCE_LINES[' in HTML
+    assert "var lines = provenanceLines();" in HTML
+    assert 'setText($("premise"), lines[provenanceAt % lines.length]);' in HTML
     assert 'setText($("provenance"), PREMISE_LINE);' in HTML
     block = HTML[HTML.index("\n#premise {") :]
     block = block[: block.index("}")]
@@ -393,14 +394,15 @@ def test_the_stream_page_names_the_repository():
     assert 'href="http://github.com' not in HTML
 
 
-def test_the_provenance_rotation_still_states_the_containment_when_paused():
-    """prefers-reduced-motion stops the rotation, so whichever line is showing must
-    be one that still carries a containment fact — not a bare refresh notice.
-    Scoped to showProvenance/rotateProvenance themselves (not the wider script,
-    which uses REDUCED elsewhere for unrelated reasons) so deleting the
-    rotation's own `if (!REDUCED)` guard is what makes this fail."""
-    rotation = HTML[HTML.index("function showProvenance()") : HTML.index("function fmt(n)")]
-    assert "REDUCED" in rotation
+def test_the_provenance_rotation_keeps_rotating_under_reduced_motion():
+    """The rotation is content, not decoration: prefers-reduced-motion drops only
+    the crossfade (swapProvenance falls back to an instant setText) while the
+    20s interval keeps running ungated. A viewer who asked for less motion still
+    gets every containment fact."""
+    assert "if (!REDUCED) setInterval(rotateProvenance" not in HTML
+    assert "setInterval(rotateProvenance, 20000);" in HTML
+    swap = HTML[HTML.index("function swapProvenance()") : HTML.index("function rotateProvenance()")]
+    assert "if (REDUCED) { setText(p, text); return; }" in swap
     # anchored on the declaration, not the bare name, which a CSS comment
     # naming the array would otherwise shadow
     first = HTML[HTML.index("var PROVENANCE_LINES") :]
@@ -408,16 +410,28 @@ def test_the_provenance_rotation_still_states_the_containment_when_paused():
     assert "no network interface" in first, first
 
 
+def test_the_rotation_swaps_crossfade_and_answer_beats():
+    """A beat with a matching containment line pulls the next rotation to it
+    once; a fresh generated colour line joins the rotation as one slot, bylined
+    as the stage's. The behavioural half runs in tests/test_stage_pages_js.py."""
+    assert "BEAT_PREFERRED" in HTML
+    assert "reached_out: 0" in HTML
+    assert "self_edit: 2" in HTML
+    assert "published: 1, spoke: 1" in HTML
+    assert '" — the stage"' in HTML
+    assert "function noteColour()" in HTML
+    assert "< 120000" in HTML
+
+
 BROADCAST_TYPE_FLOOR = 13
 
-# Every rule that declares a px font size under 13px in STREAM_PAGE_HTML's stylesheet,
-# enumerated by grepping the source directly (not the stale table from the original
-# plan, which missed six of these: `.chip b`, `.chip em`, `.chip.c-think em`,
-# `.divider span`, `.rrow .rid`, and `.grave .blk-tomb .more`). The descendants that
-# only inherit these sizes (#byline-text, .more-label, #play-tag, .g-id, #dead-count
-# and the rest) are covered by their parent and are deliberately not listed.
-# `#subj-strip` and `#stream-foot` are already at the 13px floor; kept here to confirm
-# rather than because they were found under it.
+# Every rule that declares its px font size at the 13px floor in
+# STREAM_PAGE_HTML's stylesheet, enumerated by grepping the source directly.
+# The descendants that only inherit these sizes (#byline-text, .more-label,
+# #play-tag, .g-id, #dead-count and the rest) are covered by their parent and
+# are deliberately not listed. The rebuild removed `#if-row`, `.chip em`, and
+# `.chip.c-think em` (the strip and the chip captions died) and added the
+# pulse strip, the return chip, the eye caption, and the desk rows.
 BROADCAST_SMALL_TYPE = (
     "#now-by",
     "#state-word",
@@ -428,7 +442,10 @@ BROADCAST_SMALL_TYPE = (
     ".more",
     ".gutter",
     ".gutter .g-mark.end",
-    "#if-row",
+    "#pulse-left",
+    "#pulse-rate",
+    "#return-live",
+    "#eye-cap",
     ".subrow",
     "#strip-glyph",
     "#subj-strip",
@@ -437,6 +454,9 @@ BROADCAST_SMALL_TYPE = (
     ".grave .g-eyebrow",
     ".grave .blk-tomb .more",
     "#dead-foot",
+    ".verdict .v-ord",
+    ".verdict .v-evidence",
+    "#desk-by",
     ".rrow .rmeta",
     ".rrow .rid",
     "#said-stamp",
@@ -445,8 +465,6 @@ BROADCAST_SMALL_TYPE = (
     "#stream-foot",
     ".clamp.say::before",
     ".chip b",
-    ".chip em",
-    ".chip.c-think em",
     ".divider span",
     "#repo",
     "#pull-attrib",
@@ -529,6 +547,291 @@ def test_a_refused_autoplay_offers_sound_instead_of_only_advancing():
     assert "soundBlocked" in HTML
     # the control is revealed by the refusal path, not rendered unconditionally
     assert HTML.index("soundBlocked") > HTML.index('id="sound-on"')
+
+
+# ---------- the rebuild: pacing over clicking ----------
+
+
+def test_the_typewriter_reveals_only_text_that_already_landed():
+    """The reveal engine is a delivery mechanism, never a claim: it types out
+    reasoning and speech that already arrived, gates on the 90s staleness rule
+    (a reload never fakes liveness), skips under reduced motion, and paces to
+    the measured cadence clamped to 3-30s. The engine itself is executed in
+    tests/test_stage_pages_js.py."""
+    assert "function maybeStartReveal()" in HTML
+    assert "\n  maybeStartReveal();\n" in HTML, "the call site in reconcileFeed"
+    assert "clock() / 1000 - newest.epoch >= 90" in HTML
+    assert "Math.max(3000, Math.min(30000, 600 * (g || 0)))" in HTML
+    reveal = HTML[HTML.index("function maybeStartReveal()") : HTML.index("/* ---------- feed")]
+    assert "if (REDUCED) return;" in reveal
+
+
+def test_the_reveal_routes_around_the_keyed_reconciliation():
+    """updateTurn's setText on a block the engine is animating would jump the
+    typewriter to the end on the next poll; the newest turn's think/say text
+    goes through the engine while a reveal is active for that key."""
+    assert "var revealing = revealActiveFor(key);" in HTML
+    assert "if (!revealing) setText(tb.__clamp, reasoning);" in HTML
+    assert "if (!revealing) setText(sb.__clamp, content);" in HTML
+
+
+def test_the_think_block_keeps_tail_mode_until_eviction():
+    block = HTML[HTML.index("\n.blk-think.tail .clamp {") :]
+    block = block[: block.index("}")]
+    assert "display: block" in block
+    assert "max-height: 406px" in block
+    assert "overflow: hidden" in block
+    assert "c.scrollTop = c.scrollHeight;" in HTML
+
+
+def test_the_metabolism_strip_replaces_the_inflight_row():
+    """#inflight narrated absence; #pulse states measured facts: the real
+    in-flight request, a 20-bucket token sparkline, tokens per minute. Every
+    figure comes from snap.pulse (the recorder's own events)."""
+    assert 'id="inflight"' not in HTML
+    assert "setInflight" not in HTML
+    assert 'id="pulse"' in HTML
+    assert 'id="pulse-spark"' in HTML
+    assert "snap && snap.pulse" in HTML
+    assert "tokens_window" in HTML
+    # twenty fixed bars, built once, updated in place — bounded DOM for a
+    # page that runs for days
+    assert 'for (var i = 0; i < 20; i++) el("div", "bar", spark);' in HTML
+
+
+def test_the_pulse_strip_shows_only_while_anything_is_alive():
+    pulse = HTML[HTML.index("function setPulse(state)") : HTML.index("/* ---------- tick")]
+    assert '"live"' in pulse and '"thinking"' in pulse
+    assert '"quiet"' in pulse and '"nosignal"' in pulse
+    tick = HTML[HTML.index("function tick()") :]
+    tick = tick[: tick.index("\n}")]
+    assert "setPulse(state);" in tick
+
+
+def test_programmatic_scrolls_never_unpin_the_feed():
+    """The monologue must never silently freeze for the life of an unattended
+    browser source: scripted scrolls are flagged and the listener consumes the
+    flag; an unpinned feed shows the chip; auto-repin after three minutes."""
+    assert "if (programmatic) { programmatic = false; return; }" in HTML
+    assert 'id="return-live"' in HTML
+    assert "RETURN TO LIVE" in HTML
+    assert "Date.now() - lastUserScrollMs <= 180000" in HTML
+    assert "expanded.size !== 0" in HTML
+    toggle = HTML[HTML.index("function toggle(box)") : HTML.index("function bind(box)")]
+    assert "flagProgrammatic(); box.scrollIntoView(" in toggle
+    repin = HTML[HTML.index("function repin()") : HTML.index("function updateReturnChip()")]
+    assert "flagProgrammatic();" in repin
+
+
+def test_the_self_ending_turn_is_the_loudest_moment():
+    """The premise is a model that can end itself; the page must not render
+    self-editing louder than self-termination."""
+    assert ".turn.is-edit, .turn.is-error, .turn.is-end {" in HTML
+    block = HTML[HTML.index("\n.turn.is-end {") :]
+    block = block[: block.index("}")]
+    assert "rgba(127,215,182,.10)" in block
+    assert "inset 3px 0 0 var(--chosen)" in block
+
+
+def test_speech_enters_and_evicted_turns_leave_visibly():
+    assert "sayin 600ms" in HTML
+    assert "@keyframes sayin" in HTML
+    assert ".turn.depart" in HTML
+    assert "@keyframes depart" in HTML
+    # removal on animationend with a fallback timeout, skipped under REDUCED
+    evict = HTML[HTML.index("turnNodes.forEach") : HTML.index("dividers.forEach")]
+    assert "if (REDUCED) { node.remove(); return; }" in evict
+    assert 'node.addEventListener("animationend", drop, { once: true });' in evict
+    assert "setTimeout(drop, 400);" in evict
+
+
+def test_the_death_beat_survives_a_reload():
+    """An OBS refresh drops the previous-poll comparison; the beat also fires
+    off lineage recency plus a stored marker, every storage access inside
+    try/catch. The gate is executed in tests/test_stage_pages_js.py."""
+    assert 'window.localStorage.getItem("mournedEpoch")' in HTML
+    assert 'window.localStorage.setItem("mournedEpoch"' in HTML
+    assert "var mournedMem" in HTML, "the in-memory backstop for broken storage"
+    assert "saturate(.2) brightness(.55)" in HTML
+    sweep = HTML[HTML.index("\n#death-sweep {") :]
+    sweep = sweep[: sweep.index("}")]
+    assert "height: 3px" in sweep
+
+
+def test_the_subject_panel_slimmed_to_five_rows():
+    """memory file and self-calls were ops telemetry with no audience; the
+    metabolism strip carries tempo now, so the rate span dies too."""
+    assert 'id="row-mem"' not in HTML
+    assert 'id="row-self"' not in HTML
+    assert "repeat(5, 20px)" in HTML
+    assert ".srow .v .rate" not in HTML
+    assert '.toFixed(1) + "/min"' not in HTML
+
+
+def test_a_fresh_edit_shows_the_diff_itself():
+    """The show's premise is a model rewriting its own file; for ~45s after
+    the stage first sees an edit the panel shows the capped excerpt of the
+    actual diff, lines coloured only by their first character and rendered
+    via textContent — the text is the agent's."""
+    assert 'id="selfmod-diff"' in HTML
+    assert "editAge < 45" in HTML
+    assert "WHAT IT JUST CHANGED · seen " in HTML
+    assert 'el("div", dcls, diffHost).textContent = ln;' in HTML
+    for cls in ("d-add", "d-rem", "d-hunk"):
+        assert cls in HTML, cls
+
+
+def test_the_diff_caption_claims_sight_not_authorship():
+    """codewatch records when the stage first observed the change; the page
+    must not present that as when the agent made it. The caption counts up
+    from that first sighting ("seen Ns ago", measured in a real browser at
+    1920x1080: "first seen" plus the count overran the 471px title bar by 2px
+    and wrapped out of its 24px box) and never wraps."""
+    assert "· seen " in HTML
+    assert "cannot truthfully claim when the agent made it" in HTML
+    title = HTML[HTML.index("\n#selfmod-title {") :]
+    title = title[: title.index("}")]
+    assert "white-space: nowrap" in title
+    assert "text-overflow: ellipsis" in title
+    count = HTML[HTML.index("\n#selfmod-count {") :]
+    count = count[: count.index("}")]
+    assert "flex: none" in count
+
+
+def test_the_selfmod_title_keeps_its_count_in_both_views():
+    assert 'id="selfmod-title"' in HTML
+    assert 'id="selfmod-count"' in HTML
+    assert '"WHAT IT DID TO ITSELF"' in HTML
+
+
+def test_the_lane_rows_show_magnitude_not_digit_strings():
+    """Per-lane activity bars replace the `12/h · 3.4k tok` strings a casual
+    viewer cannot read; a nonzero lane never renders under 4%."""
+    assert "l-track" in HTML
+    assert "l-fill" in HTML
+    assert "Math.max(4, pct)" in HTML
+    assert '"/h · "' not in HTML
+    assert "laneCount(tok)" in HTML
+
+
+def test_the_legend_chips_dropped_their_captions():
+    assert "private reasoning" not in HTML
+    assert "said out loud" not in HTML
+    assert "tool calls" not in HTML
+    assert ".chip em" not in HTML
+
+
+def test_the_eye_shows_only_fresh_sense_frames_and_never_blocks_the_feed():
+    """Shown only when snap.sense is non-null (the server already gates on
+    frame freshness); the img re-sets src only when the url changes; the card
+    never intercepts feed scrolling; the caption claims only the ring and the
+    capture age. alt is empty — the caption carries the fact."""
+    assert 'id="eye"' in HTML
+    assert '<img id="eye-img" alt="">' in HTML
+    assert '"THE EYE · slot "' in HTML
+    assert "img.__src !== sense.url" in HTML
+    eye = HTML[HTML.index("\n#eye {") :]
+    eye = eye[: eye.index("}")]
+    assert "position: absolute" in eye
+    assert "pointer-events: none" in eye
+
+
+def test_the_desk_keeps_judgment_and_evidence_distinct_and_bylined():
+    """The split between loud judgment and factual evidence is the design; the
+    verdict is an opinion and is bylined as one. Stars are built from the
+    verdict's integer, never from model text."""
+    assert 'id="desk"' in HTML
+    assert "the stage's read, not a measurement" in HTML
+    assert "function starGlyphs(n)" in HTML
+    assert '"★"' in HTML and '"☆"' in HTML
+    assert "v-stars" in HTML and "v-evidence" in HTML
+    assert '"partial record"' in HTML and '"tombstone only"' in HTML
+    assert '"THE DESK"' in HTML
+
+
+def test_the_desk_rows_fit_the_space_the_graves_leave():
+    """#dead's middle region is ~166px (244 minus border, padding, title and
+    foot); the desk spends 18px on its byline, leaving 148px. Each verdict is
+    an explicit 34px plus a 3px gap, so DESK_ROWS rows must sum inside 148."""
+    verdict = HTML[HTML.index("\n.verdict {") :]
+    verdict = verdict[: verdict.index("}")]
+    height = int(re.search(r"height:\s*(\d+)px", verdict).group(1))
+    gap = int(re.search(r"margin-bottom:\s*(\d+)px", verdict).group(1))
+    rows = int(re.search(r"var DESK_ROWS = (\d+);", HTML).group(1))
+    assert rows * height + (rows - 1) * gap <= 148
+    assert "slice(0, DESK_ROWS)" in HTML
+
+
+def test_the_desk_and_graves_share_the_panel_on_a_timer():
+    assert "function deskViewFor(nowSec)" in HTML
+    assert "nowSec % 90" in HTML
+    # REDUCED gets a hard swap, not a withheld view
+    cycle = HTML[HTML.index("function deskCycle(nowSec)") : HTML.index("function rotateDeadFoot")]
+    assert "if (REDUCED) { applyDeadView(which); return; }" in cycle
+
+
+def test_the_record_book_foot_rotates_cross_life_records():
+    assert "longest life: incarnation " in HTML
+    assert "function rotateDeadFoot(nowMs)" in HTML
+    assert "deadFootLines" in HTML
+    assert "snap.records" in HTML
+
+
+def _srgb_luminance(hex_colour):
+    channels = []
+    for i in (0, 2, 4):
+        c = int(hex_colour[i : i + 2], 16) / 255
+        channels.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+    r, g, b = channels
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def test_paper_faint_clears_six_to_one_on_panel_ink():
+    """--paper-faint carries 13px chrome everywhere; it was on the AA floor.
+    #97a2ab on the panel ink #12171b measures ~6.93:1."""
+    assert "--paper-faint: #97a2ab" in HTML
+    lighter = _srgb_luminance("97a2ab")
+    darker = _srgb_luminance("12171b")
+    ratio = (lighter + 0.05) / (darker + 0.05)
+    assert ratio >= 6.0, ratio
+
+
+def test_focus_outlines_are_visible():
+    assert (
+        ".blk.is-expandable:focus-visible { outline: 2px solid var(--vital); outline-offset: 4px; }"
+        in HTML
+    )
+    assert "#sound-on:focus-visible { outline: 2px solid var(--vital)" in HTML
+    assert "#return-live:focus-visible { outline: 2px solid var(--vital)" in HTML
+
+
+def test_spoken_renders_before_the_ribbon_measures_sparseness():
+    body = HTML[HTML.index("function render(prev)") : HTML.index("function poll()")]
+    assert body.index("renderSpoken();") < body.index("renderRibbon();")
+
+
+def test_the_rings_are_uniform():
+    """The filled/hollow distinction was never explained on any surface."""
+    assert ".ring.filled" not in HTML
+    assert '" filled"' not in HTML
+
+
+def test_the_said_block_announces_politely():
+    assert '<div id="reached-said" aria-live="polite">' in HTML
+
+
+def test_the_selfmod_row_flashes_with_the_subject_cut():
+    cut = HTML[HTML.index("function maybeCut()") : HTML.index("function deathBeat")]
+    assert "rowflash" in cut
+    assert ".rrow.rowflash" in HTML
+
+
+def test_ellipsized_surfaces_carry_their_full_value_in_a_title():
+    assert '$("subj-model").title' in HTML
+    assert "node.__name.title" in HTML
+    assert "v.title = norm(o.verb" in HTML
+    assert "argEl.title = arg;" in HTML
+    assert "row.__text.title = prompt;" in HTML
 
 
 CONSOLE = pages.CONSOLE_PAGE_HTML

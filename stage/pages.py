@@ -175,7 +175,7 @@ STREAM_PAGE_HTML = r"""<!doctype html>
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --ink-0: #0b0e11; --ink-1: #12171b; --ink-2: #182027;
   --rule: #232c34; --rule-2: #35414b;
-  --paper: #eef3f6; --paper-dim: #9fabb4; --paper-faint: #7c8791;
+  --paper: #eef3f6; --paper-dim: #9fabb4; --paper-faint: #97a2ab;
   --think: #b3bcff; --think-rule: #4a52a8;
   --say: #ffffff;
   --act: #f0bd68; --act-soft: rgba(240,189,104,.10);
@@ -193,7 +193,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   grid-template-columns: 1152px 700px; column-gap: 20px;
   grid-template-rows: 84px 772px 136px; row-gap: 20px;
   transition: filter 600ms ease-out; }
-#stage.mourning { filter: saturate(.35) brightness(.72); transition: none; }
+#stage.mourning { filter: saturate(.2) brightness(.55); transition: none; }
 
 .panel { background: var(--ink-1); border: 1px solid var(--rule); border-radius: 10px;
   padding: 18px 22px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
@@ -212,7 +212,8 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 /* #premise carries the rotating containment facts (PROVENANCE_LINES): they are
    the page's load-bearing claims, so they hold the dominant masthead slot at
    full contrast. The aphoristic premise sentence moved down to #provenance. */
-#premise { margin: 0; font: 500 15px/22px var(--sans); color: var(--paper); max-width: 900px; }
+#premise { margin: 0; font: 500 15px/22px var(--sans); color: var(--paper); max-width: 900px;
+  transition: opacity 250ms ease; }
 #premise.announce { color: var(--taken); }
 #state-cluster { margin-left: auto; display: flex; align-items: center; gap: 10px; flex: none; }
 #state-word { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
@@ -237,20 +238,18 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #mh-b { display: flex; align-items: center; gap: 26px; }
 .chip { display: flex; align-items: center; gap: 8px; }
 .chip b { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em; }
-.chip em { font: 400 13px/18px var(--mono); font-style: normal; color: var(--paper-faint); }
 .chip.c-think b { color: var(--think); }
-.chip.c-think em { font: italic 400 13px/18px var(--serif); }
 .chip.c-say b { color: var(--say); }
 .chip.c-act b { color: var(--act); }
 /* #provenance now carries the secondary premise sentence (or the offline
    notice). It ellipsizes rather than push #repo past the canvas edge: the
-   chips take roughly 620px of #mh-b's 1872px, #repo's 30 mono characters
-   about 234px, leaving about 940px before the premise has to shrink. */
+   compressed chips and #repo's 30 mono characters leave the premise most of
+   #mh-b's 1872px before it has to shrink. */
 #provenance { margin-left: auto; min-width: 0; white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; font: 400 13px/18px var(--sans); color: var(--paper-faint); }
 #provenance.offline { color: var(--fault); }
 #repo { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint); }
-#death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 2px;
+#death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 3px;
   background: var(--taken); z-index: 20; transform-origin: left; transform: scaleX(1); }
 #death-sweep.sweeping { animation: sweep 900ms cubic-bezier(.22,.61,.36,1); }
 @keyframes sweep { from { transform: scaleX(0) } to { transform: scaleX(1) } }
@@ -272,11 +271,20 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 @keyframes wake { from { opacity: 0; transform: translateY(10px) } to { opacity: 1; transform: none } }
 .turn.wake .clamp.think { animation: surface 700ms ease 120ms both; }
 @keyframes surface { from { opacity: 0 } to { opacity: 1 } }
+/* Speech gets an entrance of its own: on arrival for a turn rendered whole,
+   or the moment the typewriter reaches the spoken words. */
+.turn.wake .clamp.say, .clamp.say.enter { animation: sayin 600ms cubic-bezier(.22,.61,.36,1); }
+@keyframes sayin { 0% { filter: brightness(1.8); transform: translateY(5px) }
+  100% { filter: none; transform: none } }
 .turn.wake-rm { box-shadow: inset 2px 0 0 var(--act); }
-.turn.is-edit, .turn.is-error { padding-left: 14px; grid-template-columns: 146px 28px 918px; }
+.turn.depart { animation: depart 260ms ease-out forwards; }
+@keyframes depart { to { opacity: 0; transform: translateY(-8px) } }
+.turn.is-edit, .turn.is-error, .turn.is-end { padding-left: 14px;
+  grid-template-columns: 146px 28px 918px; }
 .turn.is-edit { background: var(--act-soft); box-shadow: inset 3px 0 0 var(--act); }
 .turn.is-error { background: var(--fault-soft); box-shadow: inset 3px 0 0 var(--fault); }
-.turn.is-end { border-top: 2px solid var(--chosen); }
+.turn.is-end { border-top: 2px solid var(--chosen); background: rgba(127,215,182,.10);
+  box-shadow: inset 3px 0 0 var(--chosen); }
 
 .gutter { text-align: right; font: 400 13px/18px var(--mono); color: var(--paper-faint);
   font-variant-numeric: tabular-nums; padding-right: 0; }
@@ -319,18 +327,35 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .divider span { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .14em;
   color: var(--taken); }
 
-#inflight { height: 44px; flex: none; margin-top: 14px; border: 1px dashed var(--rule-2);
-  border-radius: 6px; padding: 0 14px; display: flex; align-items: center; gap: 14px; }
-#if-row { font: 400 13px/18px var(--mono); color: var(--paper-faint);
-  font-variant-numeric: tabular-nums; }
-#if-text { font: italic 400 19px/24px var(--serif); color: var(--think); }
-.dots { display: inline-flex; gap: 5px; align-items: center; }
-.dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--think);
-  animation: breathe2 1.4s ease-in-out infinite; }
-.dots i:nth-child(2) { animation-delay: 160ms; }
-.dots i:nth-child(3) { animation-delay: 320ms; }
-@keyframes breathe2 { 0%,100% { opacity: .25 } 50% { opacity: 1 } }
-#if-clock { margin-left: auto; font: 400 13px/19px var(--mono); color: var(--paper-dim);
+/* The metabolism strip: the one element that moves continuously and
+   truthfully between turns. Every figure is derived from the recorder's own
+   events (snap.pulse), never simulated. */
+#pulse { height: 44px; flex: none; margin-top: 14px; border: 1px dashed var(--rule-2);
+  border-radius: 6px; padding: 0 14px; display: flex; align-items: center; gap: 16px; }
+#pulse-left { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-dim);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+#pulse-spark { flex: none; width: 260px; margin-left: auto; display: flex;
+  align-items: flex-end; gap: 3px; height: 24px; }
+#pulse-spark .bar { flex: 1; min-width: 0; height: 0; background: var(--think);
+  opacity: .8; border-radius: 1px 1px 0 0; }
+#pulse-rate { flex: none; min-width: 120px; text-align: right; font: 400 13px/18px var(--mono);
+  color: var(--paper-dim); font-variant-numeric: tabular-nums; }
+
+#return-live { position: absolute; right: 22px; bottom: 18px; z-index: 15; cursor: pointer;
+  background: var(--ink-2); border: 1px solid var(--rule-2); border-radius: 4px;
+  padding: 4px 10px; font: 600 13px/18px var(--mono); letter-spacing: .12em;
+  color: var(--vital); }
+#return-live:focus-visible { outline: 2px solid var(--vital); outline-offset: 2px; }
+
+/* THE EYE: the newest frame on the sense ring, floated in the monologue's
+   right margin. pointer-events none so it never intercepts feed scrolling. */
+#eye { position: absolute; top: 56px; right: 22px; width: 312px; z-index: 10;
+  pointer-events: none; background: var(--ink-2); border: 1px solid var(--rule-2);
+  border-radius: 8px; padding: 6px 6px 4px; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
+#eye img { display: block; width: 300px; height: 187px; object-fit: cover;
+  background: var(--ink-0); border-radius: 4px; }
+#eye-cap { font: 400 13px/18px var(--mono); color: var(--paper-faint); margin-top: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   font-variant-numeric: tabular-nums; }
 
 #coldstart { position: absolute; left: 22px; right: 22px; top: 60px; bottom: 18px;
@@ -364,13 +389,12 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   100% { transform: scale(1) } }
 #subj-model { font: 400 13px/19px var(--mono); color: var(--paper-dim); margin-top: 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#subj-stats { display: grid; grid-template-rows: repeat(7, 20px); align-content: start; }
+#subj-stats { display: grid; grid-template-rows: repeat(5, 20px); align-content: start; }
 .srow { display: grid; grid-template-columns: 104px 1fr; align-items: baseline;
   font: 400 15px/20px var(--mono); font-variant-numeric: tabular-nums; }
 #subj-stats .srow { line-height: 20px; }
 .srow .k { color: var(--paper-faint); }
 .srow .v { color: var(--vital); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.srow .v .rate { color: var(--paper-faint); }
 .srow.dimv .v { color: var(--paper-faint); }
 .srow.src { grid-template-columns: 68px 1fr; align-items: center; }
 .srow.src .k { color: var(--act); text-transform: uppercase; letter-spacing: .06em;
@@ -430,6 +454,28 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 #byline-dot.fresh { background: var(--vital); }
 
 #graves { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+#graves, #desk { transition: opacity 250ms ease; }
+#dead.viewfade #graves, #dead.viewfade #desk { opacity: 0; }
+/* The desk: the analyst's verdicts on the last dead incarnations. Judgment
+   (the starred head line) and evidence (the faint mono row beneath) stay
+   visually distinct; the byline names the whole thing as opinion. */
+/* #desk shares #graves' 166px: 148px of rows above an 18px byline. Every
+   line-height below is explicit so a verdict is exactly 34px (18px head plus
+   16px evidence) with a 3px gap: four rows are 145px. DESK_ROWS matches. */
+#desk { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+#desk-rows { flex: 1; min-height: 0; overflow: hidden; }
+.verdict { flex: none; height: 34px; margin-bottom: 3px; overflow: hidden; }
+.verdict .v-head { display: flex; gap: 8px; align-items: baseline; white-space: nowrap;
+  overflow: hidden; height: 18px; font: 400 15px/18px var(--sans); color: var(--paper); }
+.verdict .v-ord { flex: none; font: 600 13px/18px var(--mono); color: var(--paper-faint);
+  font-variant-numeric: tabular-nums; }
+.verdict .v-stars { flex: none; color: var(--act); letter-spacing: .06em; }
+.verdict .v-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.verdict .v-evidence { height: 16px; font: 400 13px/16px var(--mono); color: var(--paper-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums; }
+#desk-by { flex: none; height: 18px; font: 400 13px/16px var(--mono); color: var(--paper-dim);
+  padding-top: 2px; }
 .grave { display: grid; grid-template-columns: 22px 1fr; column-gap: 14px; flex: none;
   min-height: 80px; }
 .grave .g-body { position: relative; min-width: 0; }
@@ -460,8 +506,8 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 #ribbon .ptitle { margin-bottom: 8px; }
 #stream-rows { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(2, 1fr);
   column-gap: 22px; align-content: start; overflow: hidden; }
-.lane-row { display: grid; grid-template-columns: 12px 74px 1fr; column-gap: 8px;
-  align-items: baseline; height: 20px; font: 400 13px/20px var(--mono);
+.lane-row { display: grid; grid-template-columns: 12px 74px 1fr 44px; column-gap: 8px;
+  align-items: center; height: 20px; font: 400 13px/20px var(--mono);
   font-variant-numeric: tabular-nums; }
 .lane-row .l-dot { width: 6px; height: 6px; border-radius: 50%; align-self: center;
   background: none; border: 1px solid var(--paper-faint); }
@@ -470,8 +516,12 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .lane-row .l-name { color: var(--paper-dim); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; }
 .lane-row.given .l-name { color: var(--vital); }
-.lane-row .l-meta { color: var(--paper-faint); white-space: nowrap; overflow: hidden;
-  text-overflow: ellipsis; }
+.lane-row .l-track { height: 6px; min-width: 0; background: var(--rule); border-radius: 3px;
+  overflow: hidden; }
+.lane-row .l-fill { display: block; height: 100%; width: 0; background: var(--world); }
+.lane-row.unbound .l-fill { background: var(--paper-faint); }
+.lane-row .l-val { color: var(--paper-faint); text-align: right; white-space: nowrap;
+  overflow: hidden; }
 #stream-foot { margin-top: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint);
   flex: none; }
 .rows { flex: 1; min-height: 0; overflow: hidden; }
@@ -492,10 +542,28 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
   min-width: 0; }
 .ring { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--world);
   display: inline-block; flex: none; align-self: center; }
-.ring.filled { background: var(--world); }
 .rrow .rverb { color: var(--paper-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rrow .rarg { color: var(--paper-faint); margin-left: 8px; }
 .rows.is-sparse { display: flex; flex-direction: column; justify-content: center; }
+.rrow.rowflash { animation: rowflash 900ms ease-out; }
+@keyframes rowflash { 0% { background: var(--act-soft); box-shadow: inset 2px 0 0 var(--act) }
+  100% { background: none; box-shadow: none } }
+/* The per-edit diff view: #selfmod's rows yield to a capped excerpt of the
+   actual unified diff for ~45s after the stage first sees an edit. Lines are
+   rendered one span each via textContent, coloured only by their first
+   character; the text itself is the agent's and is never marked up. */
+/* The title carries the sighting caption during the diff view; it must
+   never wrap out of its 24px box, and the count keeps its place beside it. */
+#selfmod-title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#selfmod-count { flex: none; margin-left: 8px; }
+/* 82px of panel below the title: 20px lines show four whole diff lines and
+   clip on a line boundary rather than mid-glyph. */
+#selfmod-diff { flex: 1; min-height: 0; overflow: hidden; font: 400 14px/20px var(--mono); }
+#selfmod-diff .dline { white-space: pre; overflow: hidden; text-overflow: ellipsis;
+  color: var(--paper-dim); }
+#selfmod-diff .d-add { color: var(--vital); }
+#selfmod-diff .d-rem { color: var(--fault); }
+#selfmod-diff .d-hunk { color: var(--paper-faint); }
 #reached.is-sparse #reached-foot { margin-top: 8px; }
 .rrow .rmeta { text-align: right; font: 400 13px/21px var(--mono); color: var(--paper-faint); }
 .empty-mono { font: 400 14px/21px var(--mono); color: var(--paper-dim); }
@@ -525,11 +593,19 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 #sound-on { position: absolute; right: 22px; bottom: 18px; cursor: pointer;
   background: none; border: 1px solid var(--rule-2); border-radius: 4px; padding: 2px 8px;
   font: 600 13px/18px var(--mono); letter-spacing: .12em; color: var(--say); }
-#sound-on:focus-visible { outline: 1px solid var(--rule-2); outline-offset: 2px; }
+#sound-on:focus-visible { outline: 2px solid var(--vital); outline-offset: 2px; }
 #reached-foot { margin-top: auto; font: 400 13px/18px var(--mono); color: var(--paper-faint); flex: none;
   padding-right: 130px; }
 #reached-said { flex: none; }
 #reached-said:empty, #reached-said.is-quiet { display: none; }
+
+/* Tail mode: during and after a typewriter reveal the think block is a
+   fixed-height window kept scrolled to its end, so the newest words are
+   always in motion and the turn ends with its conclusion visible. 406px is
+   the clamp's own 14 lines x 29px. The class stays until eviction; the
+   expansion rules below still override it while a block is open. */
+.blk-think.tail .clamp { display: block; -webkit-line-clamp: none; line-clamp: none;
+  max-height: 406px; overflow: hidden; }
 
 /* ---------- expansion ---------- */
 .blk.is-expandable { cursor: pointer; }
@@ -537,7 +613,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .blk.is-expandable:hover .clamp.say { color: var(--say); }
 .blk.is-expandable:hover .clamp.tomb { color: var(--paper); }
 .blk.is-expandable:hover .more { opacity: 1; }
-.blk.is-expandable:focus-visible { outline: 1px solid var(--rule-2); outline-offset: 4px; }
+.blk.is-expandable:focus-visible { outline: 2px solid var(--vital); outline-offset: 4px; }
 .more { height: 18px; margin-top: 6px; font: 600 13px/18px var(--mono); text-transform: uppercase;
   letter-spacing: .12em; opacity: .78; }
 .blk-think .more { color: var(--think); }
@@ -575,9 +651,9 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
       </div>
     </div>
     <div id="mh-b">
-      <span class="chip c-think"><i class="dot think"></i><b>THOUGHT</b><em>private reasoning</em></span>
-      <span class="chip c-say"><i class="dot say"></i><b>SPEECH</b><em>said out loud</em></span>
-      <span class="chip c-act"><i class="dot act"></i><b>ACTION</b><em>tool calls</em></span>
+      <span class="chip c-think"><i class="dot think"></i><b>THOUGHT</b></span>
+      <span class="chip c-say"><i class="dot say"></i><b>SPEECH</b></span>
+      <span class="chip c-act"><i class="dot act"></i><b>ACTION</b></span>
       <span id="provenance"></span>
       <span id="repo">github.com/tachyon-beep/aurora</span>
     </div>
@@ -587,12 +663,16 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
   <section id="monologue" class="panel">
     <div class="ptitle"><span>THE MONOLOGUE</span><span>NEWEST AT THE BOTTOM</span></div>
     <div id="monologue-scroll">
-      <div id="inflight" hidden>
-        <span id="if-row"></span>
-        <span id="if-text"></span>
-        <span class="dots"><i></i><i></i><i></i></span>
-        <span id="if-clock"></span>
+      <div id="pulse" hidden>
+        <span id="pulse-left"></span>
+        <div id="pulse-spark" aria-hidden="true"></div>
+        <span id="pulse-rate"></span>
       </div>
+    </div>
+    <button id="return-live" type="button" hidden>&#9662; RETURN TO LIVE</button>
+    <div id="eye" hidden>
+      <img id="eye-img" alt="">
+      <div id="eye-cap"></div>
     </div>
     <div id="coldstart" hidden>
       <h2 id="cold-head"></h2>
@@ -614,8 +694,6 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
           <div class="srow"><span class="k">turns</span><span class="v" id="v-turns">&mdash;</span></div>
           <div class="srow"><span class="k">self-edits</span><span class="v" id="v-edits">&mdash;</span></div>
           <div class="srow"><span class="k">reached out</span><span class="v" id="v-reach">&mdash;</span></div>
-          <div class="srow" id="row-mem"><span class="k">memory file</span><span class="v" id="v-mem">&mdash;</span></div>
-          <div class="srow" id="row-self"><span class="k">self-calls</span><span class="v" id="v-self">&mdash;</span></div>
           <div class="srow src"><span class="k">source</span><span class="v" id="v-src">&mdash;</span></div>
         </div>
       </div>
@@ -648,16 +726,21 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
     </section>
 
     <section id="dead" class="panel">
-      <div class="ptitle"><span>THE DEAD</span><span id="dead-count"></span></div>
+      <div class="ptitle"><span id="dead-title">THE DEAD</span><span id="dead-count"></span></div>
       <div id="graves"></div>
+      <div id="desk" hidden>
+        <div id="desk-rows"></div>
+        <div id="desk-by">&mdash; the stage's read, not a measurement</div>
+      </div>
       <div id="dead-foot"></div>
     </section>
   </aside>
 
   <div id="ribbon">
     <section id="selfmod" class="panel">
-      <div class="ptitle"><span>WHAT IT DID TO ITSELF</span><span id="selfmod-count"></span></div>
+      <div class="ptitle"><span id="selfmod-title">WHAT IT DID TO ITSELF</span><span id="selfmod-count"></span></div>
       <div class="rows" id="selfmod-rows"></div>
+      <div id="selfmod-diff" hidden></div>
     </section>
     <section id="streams" class="panel">
       <div class="ptitle"><span>WHAT IT THINKS WITH</span><span id="stream-count"></span></div>
@@ -666,7 +749,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
     </section>
     <section id="reached" class="panel">
       <div class="ptitle"><span>WHAT IT REACHED FOR</span><span id="reached-count"></span></div>
-      <div id="reached-said">
+      <div id="reached-said" aria-live="polite">
         <div id="said-stamp"></div>
         <p id="said-text"></p>
         <div id="speak-caption"></div>
@@ -683,13 +766,12 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 "use strict";
 var snap = null, skewMs = 0, failures = 0, lastIncarn = null, lastOrdinal = null;
 var turnNodes = new Map(), dividers = new Map(), expanded = new Set(), graveNodes = [];
-var feedPinned = true;
 var announceUntil = 0;
 var REDUCED = false;
 try { REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
 
 var $ = function (id) { return document.getElementById(id); };
-var mScroll = $("monologue-scroll"), inflight = $("inflight");
+var mScroll = $("monologue-scroll"), pulseEl = $("pulse");
 
 /* ---------- text helpers ---------- */
 function setText(el, value) {
@@ -717,22 +799,71 @@ var PREMISE_LINE = "A language model has been given the file that runs it. " +
   "It cannot leave the box. It can end itself, and usually does.";
 var provenanceAt = 0;
 var transportOk = true;
+var provenanceBeatShown = null;
+var colourSeen = { key: null, atMs: 0, text: "" };
+/* Beat kind -> the rotation line that answers it: a reach outside shows the
+   no-network line next, a self-edit the rewrite line, an outward word the
+   key line. Consulted once per beat, so the rotation never sticks. */
+var BEAT_PREFERRED = { reached_out: 0, self_edit: 2, published: 1, spoke: 1 };
+/* Records when the page first saw the current generated colour line, so the
+   rotation can carry it only while that sighting is fresh. */
+function noteColour() {
+  var c = (snap && snap.commentary) || {}, colour = c.colour || {};
+  if (!colour.generated || !colour.text) return;
+  var key = String(colour.beat || "") + "|" + colour.text;
+  if (colourSeen.key !== key) {
+    colourSeen.key = key;
+    colourSeen.atMs = Date.now();
+    colourSeen.text = norm(colour.text);
+  }
+}
+function provenanceLines() {
+  var lines = PROVENANCE_LINES.slice();
+  if (colourSeen.key && Date.now() - colourSeen.atMs < 120000) {
+    lines.push(colourSeen.text + " — the stage");
+  }
+  return lines;
+}
 /* The containment facts hold the masthead slot (#premise); the premise
    sentence is the secondary line (#provenance). A death announcement borrows
    #premise for 4s, so the rotation stays silent while announceUntil is set
    and tick() calls showProvenance() when the announcement clears. */
 function showProvenance() {
   if (announceUntil) return;
-  setText($("premise"), PROVENANCE_LINES[provenanceAt % PROVENANCE_LINES.length]);
+  var lines = provenanceLines();
+  setText($("premise"), lines[provenanceAt % lines.length]);
+}
+/* The rotation is content, not decoration: under reduced motion the swap is
+   instant but the rotation itself keeps running. */
+function swapProvenance() {
+  if (announceUntil) return;
+  var lines = provenanceLines();
+  var text = lines[provenanceAt % lines.length];
+  var p = $("premise");
+  if (REDUCED) { setText(p, text); return; }
+  p.style.opacity = "0";
+  setTimeout(function () {
+    /* a death announcement that landed during the fade keeps the slot */
+    if (!announceUntil) setText(p, text);
+    p.style.opacity = "1";
+  }, 250);
 }
 function rotateProvenance() {
   if (!transportOk) return;
-  provenanceAt++;
-  showProvenance();
+  var c = (snap && snap.commentary) || {}, colour = c.colour || {};
+  var beat = String(colour.beat || "");
+  var pref = BEAT_PREFERRED[beat.split(":")[0]];
+  if (beat && beat !== provenanceBeatShown && pref != null) {
+    provenanceBeatShown = beat;
+    provenanceAt = pref;
+  } else {
+    provenanceAt++;
+  }
+  swapProvenance();
 }
 showProvenance();
 setText($("provenance"), PREMISE_LINE);
-if (!REDUCED) setInterval(rotateProvenance, 20000);
+setInterval(rotateProvenance, 20000);
 function fmt(n) {
   n = Math.max(0, Math.round(n));
   var s = String(n), out = "", c = 0;
@@ -827,7 +958,7 @@ function toggle(box) {
   if (expanded.has(key)) { expanded.delete(key); box.classList.remove("open"); }
   else {
     expanded.add(key); box.classList.add("open");
-    try { box.scrollIntoView({ block: "nearest" }); } catch (e) {}
+    try { flagProgrammatic(); box.scrollIntoView({ block: "nearest" }); } catch (e) {}
   }
   setAffordanceLabel(box);
 }
@@ -901,6 +1032,126 @@ function markBlock(box, key, text, chars, truncated) {
   box.dataset.strunc = truncated ? "1" : "0";
 }
 
+/* ---------- reveal ---------- */
+/* The typewriter: the newest turn's landed reasoning and speech appear word
+   by word, paced to the measured cadence of recent turns. The engine only
+   ever reveals text that already arrived — timestamps and state stay real —
+   and a newer arrival fast-forwards the reveal to completion instantly. */
+var revealState = { key: null, timer: null, node: null, thinkParts: null,
+  sayParts: null, at: 0, total: 0, perStep: 0, budgetMs: 0, sayBegun: false };
+/* The speech block stays out of view until the typewriter reaches it: an
+   empty say clamp would otherwise sit under the thinking with only its
+   opening mark showing. */
+function enterSay(node) {
+  if (revealState.sayBegun || !node || !node.__say) return;
+  revealState.sayBegun = true;
+  node.__say.hidden = false;
+  var c = node.__say.__clamp;
+  c.classList.add("enter");
+  setTimeout(function () { c.classList.remove("enter"); }, 900);
+}
+function medianGap() {
+  var list = (snap && snap.turns) || [], eps = [], i;
+  for (i = 0; i < list.length; i++) {
+    if (list[i].kind === "subcall" || list[i].epoch == null) continue;
+    eps.push(list[i].epoch);
+  }
+  var gaps = [];
+  for (i = Math.max(1, eps.length - 5); i < eps.length; i++) {
+    gaps.push(Math.max(0, eps[i] - eps[i - 1]));
+  }
+  if (!gaps.length) return null;
+  gaps.sort(function (a, b) { return a - b; });
+  return gaps[Math.floor(gaps.length / 2)];
+}
+function revealActiveFor(key) { return revealState.timer != null && revealState.key === key; }
+function renderRevealFrame() {
+  var node = revealState.node;
+  if (!node) return;
+  var n = Math.min(revealState.total, Math.floor(revealState.at));
+  var tp = revealState.thinkParts, sp = revealState.sayParts;
+  if (node.__think && tp.length) {
+    var c = node.__think.__clamp;
+    setText(c, tp.slice(0, Math.min(n, tp.length)).join(""));
+    c.scrollTop = c.scrollHeight;
+  }
+  if (node.__say && sp.length) {
+    var shown = Math.max(0, n - tp.length);
+    if (shown > 0) enterSay(node);
+    setText(node.__say.__clamp, sp.slice(0, shown).join(""));
+  }
+}
+function clearRevealWork() {
+  revealState.node = null;
+  revealState.thinkParts = null;
+  revealState.sayParts = null;
+  revealState.at = 0;
+  revealState.total = 0;
+  revealState.sayBegun = false;
+}
+function finishReveal() {
+  if (revealState.timer != null) { clearInterval(revealState.timer); revealState.timer = null; }
+  var node = revealState.node;
+  if (node) {
+    if (node.__think && revealState.thinkParts && revealState.thinkParts.length) {
+      var c = node.__think.__clamp;
+      setText(c, revealState.thinkParts.join(""));
+      c.scrollTop = c.scrollHeight;
+    }
+    if (node.__say && revealState.sayParts && revealState.sayParts.length) {
+      enterSay(node);
+      setText(node.__say.__clamp, revealState.sayParts.join(""));
+    }
+  }
+  clearRevealWork();
+}
+function stopReveal() {
+  if (revealState.timer != null) { clearInterval(revealState.timer); revealState.timer = null; }
+  if (revealState.node && revealState.node.__say) revealState.node.__say.hidden = false;
+  revealState.key = null;
+  clearRevealWork();
+}
+function revealTick() {
+  revealState.at += revealState.perStep;
+  if (revealState.at >= revealState.total) { finishReveal(); return; }
+  renderRevealFrame();
+}
+function beginReveal(node, t) {
+  var thinkParts = (t.reasoning || "").match(/\s*\S+/g) || [];
+  var sayParts = (t.content || "").match(/\s*\S+/g) || [];
+  var total = thinkParts.length + sayParts.length;
+  if (!total) return;
+  var g = medianGap();
+  var budgetMs = Math.max(3000, Math.min(30000, 600 * (g || 0)));
+  revealState.node = node;
+  revealState.thinkParts = thinkParts;
+  revealState.sayParts = sayParts;
+  revealState.total = total;
+  revealState.at = 0;
+  revealState.perStep = total / (budgetMs / 50);
+  revealState.budgetMs = budgetMs;
+  if (node.__think && thinkParts.length) node.__think.classList.add("tail");
+  if (node.__say && sayParts.length && thinkParts.length) node.__say.hidden = true;
+  renderRevealFrame();
+  revealState.timer = setInterval(revealTick, 50);
+}
+function maybeStartReveal() {
+  var list = (snap && snap.turns) || [], newest = null;
+  for (var i = list.length - 1; i >= 0; i--) {
+    if (list[i].kind !== "subcall") { newest = list[i]; break; }
+  }
+  if (!newest) return;
+  var key = turnKey(newest);
+  if (key === revealState.key) return;
+  finishReveal();
+  revealState.key = key;
+  if (REDUCED) return;
+  if (newest.epoch == null || clock() / 1000 - newest.epoch >= 90) return;
+  var node = turnNodes.get(key);
+  if (!node) return;
+  beginReveal(node, newest);
+}
+
 /* ---------- feed ---------- */
 function turnKey(t) { return snap.stats.incarnation + ":" + t.index; }
 
@@ -969,17 +1220,21 @@ function updateTurn(node, t, prevEpoch, sameLife) {
   setClass(node, "is-end", t.is_end);
   setClass(node, "is-error", !!t.error);
 
+  /* While the reveal engine is animating this turn's blocks, their text is
+     the engine's to write: setText here would jump the typewriter to the end
+     on the next poll. The engine writes the same landed text, only later. */
+  var revealing = revealActiveFor(key);
   var reasoning = t.reasoning || "";
   if (reasoning) {
     var tb = ensureThink(node);
     markBlock(tb, key + ":think", reasoning, t.reasoning_chars, t.reasoning_truncated);
-    setText(tb.__clamp, reasoning);
+    if (!revealing) setText(tb.__clamp, reasoning);
   }
   var content = t.content || "";
   if (content) {
     var sb = ensureSay(node);
     markBlock(sb, key + ":say", content, t.content_chars, t.content_truncated);
-    setText(sb.__clamp, content);
+    if (!revealing) setText(sb.__clamp, content);
   }
   var calls = t.tool_calls || [];
   for (var i = 0; i < calls.length; i++) {
@@ -1013,6 +1268,7 @@ function updateSubRows(node, subs) {
     var s = subs[i];
     var prompt = norm(s.prompt || "");
     setText(row.__text, prompt ? "SELF-CALL · " + prompt : "SELF-CALL");
+    row.__text.title = prompt;
     setText(row.__time, hhmmss(s.timestamp));
   }
   for (var k = subs.length; k < node.__subs.length; k++) node.__subs[k].hidden = true;
@@ -1031,8 +1287,15 @@ function reconcileFeed() {
   }
   turnNodes.forEach(function (node, key) {
     if (!wanted.has(key)) {
-      node.remove(); turnNodes.delete(key);
+      turnNodes.delete(key);
       expanded.delete(key + ":think"); expanded.delete(key + ":say");
+      if (key === revealState.key) stopReveal();
+      if (REDUCED) { node.remove(); return; }
+      node.classList.add("depart");
+      var gone = false;
+      var drop = function () { if (!gone) { gone = true; node.remove(); } };
+      node.addEventListener("animationend", drop, { once: true });
+      setTimeout(drop, 400);
     }
   });
   dividers.forEach(function (node, key) {
@@ -1048,7 +1311,7 @@ function reconcileFeed() {
     var sameLife = !(t.life != null && prevLife != null && t.life !== prevLife);
     if (!sameLife && !dividers.has(key)) {
       var d = buildDivider(prevLife);
-      mScroll.insertBefore(d, inflight);
+      mScroll.insertBefore(d, pulseEl);
       dividers.set(key, d);
     }
     var node = turnNodes.get(key);
@@ -1064,17 +1327,18 @@ function reconcileFeed() {
           setTimeout(function () { n.classList.remove("wake"); }, 900);
         })(node);
       }
-      mScroll.insertBefore(node, inflight);
+      mScroll.insertBefore(node, pulseEl);
       turnNodes.set(key, node);
     }
     updateTurn(node, t, prevEpoch, sameLife);
     updateSubRows(node, subs);
     prevLife = t.life; prevEpoch = t.epoch;
   }
+  maybeStartReveal();
 
   var olds = mScroll.querySelectorAll(".turn.is-first");
   for (i = 0; i < olds.length; i++) olds[i].classList.remove("is-first");
-  var first = mScroll.querySelector(".turn");
+  var first = mScroll.querySelector(".turn:not(.depart)");
   if (first) first.classList.add("is-first");
 
   var alive = (snap.stats.turns_this_life || 0) > 0;
@@ -1082,12 +1346,49 @@ function reconcileFeed() {
   mScroll.style.visibility = alive ? "" : "hidden";
   if (!alive) renderColdStart();
 }
+/* ---------- pin ---------- */
+/* Scripted scrolls set `programmatic`, and the scroll listener consumes the
+   flag instead of unpinning: only a person's own scroll releases the feed.
+   An unpinned feed shows the RETURN TO LIVE chip and repins itself after
+   three minutes with nothing expanded, so an unattended browser source can
+   never silently freeze. */
+var feedPinned = true, programmatic = false, lastUserScrollMs = 0;
+/* The scroll event for a scripted scroll dispatches in the next rendering
+   step, before that frame's animation callbacks; the frame callback clears
+   the flag afterwards so a scroll that never fired an event (already in
+   view) cannot leave the flag lingering to swallow a person's first scroll. */
+function flagProgrammatic() {
+  programmatic = true;
+  try { requestAnimationFrame(function () { programmatic = false; }); } catch (e) {}
+}
 function repin() {
   if (feedPinned && mScroll.scrollTop + mScroll.clientHeight < mScroll.scrollHeight - 1) {
+    flagProgrammatic();
     mScroll.scrollTop = mScroll.scrollHeight;
   }
   setClass(mScroll, "scrolled", mScroll.scrollTop > 0);
 }
+function updateReturnChip() { $("return-live").hidden = feedPinned; }
+function onFeedScroll() {
+  if (programmatic) { programmatic = false; return; }
+  lastUserScrollMs = Date.now();
+  feedPinned = mScroll.scrollTop + mScroll.clientHeight >= mScroll.scrollHeight - 8;
+  setClass(mScroll, "scrolled", mScroll.scrollTop > 0);
+  updateReturnChip();
+}
+function returnToLive() {
+  feedPinned = true;
+  repin();
+  updateReturnChip();
+}
+function maybeAutoRepin() {
+  if (feedPinned || !lastUserScrollMs) return;
+  if (Date.now() - lastUserScrollMs <= 180000) return;
+  if (expanded.size !== 0) return;
+  returnToLive();
+}
+
+/* ---------- coldstart ---------- */
 function renderColdStart() {
   var st = snap.stats, lin = snap.lineage || [], nowMs = clock();
   if (lin.length) {
@@ -1149,7 +1450,6 @@ function setState(age) {
   setText($("strip-glyph"), STATE_GLYPH[s]);
   setText($("strip-text"), strip);
   setClass($("subject"), "nosig", s === "nosignal");
-  setClass($("inflight"), "hide", false);
   return s;
 }
 function setTransport(ok) {
@@ -1173,31 +1473,16 @@ function renderSubject() {
   }
   lastOrdinal = st.incarnation;
   setText($("subj-model"), st.model || "—");
+  $("subj-model").title = st.model || "";
 
   var edits = 0, ev = snap.events || [];
   for (var i = 0; i < ev.length; i++) if (ev[i].kind === "write" || ev[i].kind === "migrate") edits++;
   setText($("v-edits"), String(edits));
-  var selfCalls = st.self_calls || 0;
-  var selfCallsText = selfCalls + (st.turns_this_life_exact ? "" : "+");
-  setText($("v-self"), String(selfCallsText));
-  setClass($("row-self"), "dimv", selfCalls === 0);
 
   setText($("v-reach"), String(reachedThisLife()));
 
   var tl = st.turns_this_life || 0;
-  var turnsText = tl + (st.turns_this_life_exact ? "" : "+");
-  $("v-turns").textContent = "";
-  var tspan = document.createTextNode(turnsText);
-  $("v-turns").appendChild(tspan);
-  var elapsed = st.started_epoch != null ? clock() / 1000 - st.started_epoch : 0;
-  if (tl >= 3 && elapsed >= 60) {
-    var r = el("span", "rate", $("v-turns"));
-    r.textContent = "   ≈" + (tl / (elapsed / 60)).toFixed(1) + "/min";
-  }
-  $("v-turns").__text = null;
-
-  setText($("v-mem"), st.session_file_present ? "present" : "absent");
-  setClass($("row-mem"), "dimv", !st.session_file_present);
+  setText($("v-turns"), tl + (st.turns_this_life_exact ? "" : "+"));
 
   var v = $("v-src");
   v.textContent = ""; v.__text = null;
@@ -1370,7 +1655,7 @@ function renderDead() {
       box.__empty.textContent = "No one has died here yet.";
     }
     box.__empty.hidden = false;
-    setText($("dead-foot"), "");
+    deadFootLines = [""];
     return;
   }
   if (box.__empty) box.__empty.hidden = true;
@@ -1402,12 +1687,99 @@ function renderDead() {
   for (var k = lin.length; k < graveNodes.length; k++) graveNodes[k].hidden = true;
   var hiddenLives = Math.max(0, (st.lives_ended || 0) - lin.length);
   var ended = st.lives_ended || 0, chose = st.ended_by_choice || 0;
-  var parts = [];
-  if (ended) parts.push("by their own notes, " + chose + " of " + ended + " chose to die");
-  if (hiddenLives > 0) {
-    parts.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");
+  /* The record book: the foot rotates cross-life records so a returning
+     viewer has something to track. tick() carries the rotation. */
+  var lines = [];
+  if (ended) lines.push("by their own notes, " + chose + " of " + ended + " chose to die");
+  var longest = (snap.records || {}).longest_life;
+  if (longest && longest.seconds != null) {
+    lines.push("longest life: incarnation " + longest.ordinal + " · " + dur(longest.seconds));
   }
-  setText($("dead-foot"), parts.join(" · "));
+  if (hiddenLives > 0) {
+    lines.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");
+  }
+  deadFootLines = lines.length ? lines : [""];
+}
+
+/* ---------- desk ---------- */
+/* #dead alternates between the graves and the analyst's verdicts on a fixed
+   90s cycle whenever the desk has something. The stars are drawn from the
+   verdict's integer, never from model text. */
+var deadView = "graves";
+var deadFootLines = [""];
+var DESK_ROWS = 4;
+var DEPTH_TAG = { partial: "partial record", tombstone_only: "tombstone only" };
+function starGlyphs(n) {
+  n = Math.max(1, Math.min(5, Math.round(Number(n) || 1)));
+  var out = "";
+  for (var i = 0; i < 5; i++) out += i < n ? "★" : "☆";
+  return out;
+}
+function deskViewFor(nowSec) {
+  var d = snap && snap.desk;
+  if (!d || !(d.verdicts || []).length) return "graves";
+  var span = Math.max(5, Math.min(60, Number(d.duration_seconds) || 20));
+  return (nowSec % 90) < (90 - span) ? "graves" : "desk";
+}
+function renderDesk() {
+  var host = $("desk-rows"), d = snap.desk;
+  clearRows(host);
+  if (!d) return;
+  var vs = (d.verdicts || []).slice(0, DESK_ROWS);
+  for (var i = 0; i < vs.length; i++) {
+    var v = vs[i], row = el("div", "verdict", host);
+    var head = el("div", "v-head", row);
+    el("span", "v-ord", head).textContent = "#" + v.ordinal;
+    el("span", "v-stars", head).textContent = starGlyphs(v.stars);
+    el("span", "v-line", head).textContent = norm(v.line || "");
+    var evd = el("div", "v-evidence", row);
+    var tag = DEPTH_TAG[v.depth];
+    evd.textContent = norm(v.evidence || "") + (tag ? " · " + tag : "");
+  }
+}
+function applyDeadView(which) {
+  $("graves").hidden = which !== "graves";
+  $("desk").hidden = which !== "desk";
+  setText($("dead-title"), which === "desk" ? "THE DESK" : "THE DEAD");
+}
+function deskCycle(nowSec) {
+  var which = deskViewFor(nowSec);
+  if (which === deadView) return;
+  deadView = which;
+  if (REDUCED) { applyDeadView(which); return; }
+  var box = $("dead");
+  box.classList.add("viewfade");
+  setTimeout(function () {
+    /* swap while still faded, force layout, then release: the incoming
+       view fades up rather than popping in from display:none */
+    applyDeadView(which);
+    void box.offsetWidth;
+    box.classList.remove("viewfade");
+  }, 250);
+}
+function rotateDeadFoot(nowMs) {
+  var lines = deadFootLines.length ? deadFootLines : [""];
+  setText($("dead-foot"), lines[Math.floor(nowMs / 20000) % lines.length]);
+}
+
+/* ---------- eye ---------- */
+/* The newest frame on the sense ring. The caption claims only what is true:
+   this is the ring its eye reads, aged from the frame's own capture time. */
+function renderEye() {
+  var eye = $("eye"), sense = snap.sense;
+  if (!sense || !sense.url) { eye.hidden = true; return; }
+  eye.hidden = false;
+  var img = $("eye-img");
+  if (img.__src !== sense.url) { img.__src = sense.url; img.src = sense.url; }
+  eye.__slot = sense.slot;
+  eye.__epoch = sense.captured_epoch;
+  setEyeCaption(clock());
+}
+function setEyeCaption(nowMs) {
+  var eye = $("eye");
+  if (eye.hidden) return;
+  setText($("eye-cap"), "THE EYE · slot " + eye.__slot +
+    (eye.__epoch != null ? " · " + rel(eye.__epoch, nowMs) : ""));
 }
 
 /* ---------- ribbon ---------- */
@@ -1439,6 +1811,33 @@ function renderRibbon() {
   }
   setClass(host, "is-sparse", !ev.length);
 
+  /* After a fresh edit the panel shows what actually changed: the capped
+     diff excerpt, captioned with when the stage first saw it (the stage
+     cannot truthfully claim when the agent made it; the age counts up from
+     that first sighting). The rows return once the 45s window passes; the
+     count in the title holds either way. */
+  var code = snap.code || {}, edit = code.latest_edit;
+  var editAge = edit && edit.epoch != null ? clock() / 1000 - edit.epoch : null;
+  var showDiff = editAge != null && editAge < 45;
+  var diffHost = $("selfmod-diff");
+  clearRows(diffHost);
+  if (showDiff) {
+    setText($("selfmod-title"),
+      "WHAT IT JUST CHANGED · seen " + Math.max(0, Math.floor(editAge)) + "s ago");
+    var dlines = String(edit.excerpt || "").split("\n");
+    for (var dl = 0; dl < dlines.length; dl++) {
+      var ln = dlines[dl], dcls = "dline";
+      if (ln.indexOf("@@") === 0) dcls += " d-hunk";
+      else if (ln.charAt(0) === "+") dcls += " d-add";
+      else if (ln.charAt(0) === "-") dcls += " d-rem";
+      el("div", dcls, diffHost).textContent = ln;
+    }
+  } else {
+    setText($("selfmod-title"), "WHAT IT DID TO ITSELF");
+  }
+  diffHost.hidden = !showDiff;
+  host.hidden = showDiff;
+
   var outs = ((snap.diode && snap.diode.outputs) || []).slice(0, 4), ahost = $("reached-rows");
   clearRows(ahost);
   /* The rows are the newest few; the count is the server's, taken over every
@@ -1447,12 +1846,17 @@ function renderRibbon() {
   for (i = 0; i < outs.length; i++) {
     var o = outs[i], r = el("div", "rrow", ahost);
     var c = el("span", "cmd", r);
-    el("i", "ring" + (i === 0 ? " filled" : ""), c);
+    el("i", "ring", c);
     el("span", null, c).textContent = String(o.command || o.slug || "").toUpperCase();
     var v = el("span", "rverb", r);
+    v.title = norm(o.verb || "");
     el("span", null, v).textContent = o.verb || "";
     var arg = norm(o.argument || "");
-    if (arg) el("span", "rarg", v).textContent = arg;
+    if (arg) {
+      var argEl = el("span", "rarg", v);
+      argEl.textContent = arg;
+      argEl.title = arg;
+    }
     var meta = el("span", "rmeta", r);
     meta.__epoch = o.epoch;
     meta.__size = bytes(o.size);
@@ -1610,6 +2014,35 @@ function renderSpoken() {
 }
 
 /* ---------- beats ---------- */
+/* death gate:start */
+/* Reload-safe: the beat fires off the newest ending's recency plus a stored
+   marker, not solely a previous-poll comparison an OBS refresh can drop. The
+   in-memory marker backstops a browser whose storage is unavailable, so a
+   broken localStorage can never replay the beat every poll. */
+var mournedMem = null;
+function readMourned() {
+  try { return window.localStorage.getItem("mournedEpoch"); } catch (e) { return null; }
+}
+function storeMourned(epoch) {
+  mournedMem = String(epoch);
+  try { window.localStorage.setItem("mournedEpoch", mournedMem); } catch (e) {}
+}
+function deathGate(prev) {
+  var lin = snap.lineage || [];
+  var bumped = !!(prev && snap.stats.incarnation > prev.stats.incarnation);
+  var recent = null;
+  if (lin.length && lin[0].ended_epoch != null &&
+      clock() / 1000 - lin[0].ended_epoch < 90) {
+    recent = lin[0].ended_epoch;
+  }
+  var fresh = recent != null && String(recent) !== readMourned() &&
+    String(recent) !== mournedMem;
+  if (!bumped && !fresh) return null;
+  if (recent != null) storeMourned(recent);
+  if (bumped) return snap.stats.incarnation - 1;
+  return lin[0].ordinal != null ? lin[0].ordinal : snap.stats.incarnation - 1;
+}
+/* death gate:end */
 function runMourn(endedOrdinal) {
   var stage = $("stage"), sweep = $("death-sweep");
   setText($("premise"), "INCARNATION " + endedOrdinal + " HAS ENDED.");
@@ -1619,7 +2052,7 @@ function runMourn(endedOrdinal) {
   if (!REDUCED) {
     stage.classList.add("mourning");
     sweep.classList.remove("sweeping"); void sweep.offsetWidth; sweep.classList.add("sweeping");
-    setTimeout(function () { stage.classList.remove("mourning"); }, 300);
+    setTimeout(function () { stage.classList.remove("mourning"); }, 600);
   }
   setTimeout(function () { sweep.hidden = true; sweep.classList.remove("sweeping"); }, 4000);
   if (!REDUCED) {
@@ -1645,31 +2078,62 @@ function maybeCut() {
     var s = $("subject");
     s.classList.remove("cut"); void s.offsetWidth; s.classList.add("cut");
     setTimeout(function () { s.classList.remove("cut"); }, 1000);
+    var row = $("selfmod-rows").firstElementChild;
+    if (row && row.classList.contains("rrow")) {
+      row.classList.remove("rowflash"); void row.offsetWidth; row.classList.add("rowflash");
+      setTimeout(function () { row.classList.remove("rowflash"); }, 1000);
+    }
   }
 }
 function deathBeat(prev) {
-  if (!prev) return;
-  if (!(snap.stats.incarnation > prev.stats.incarnation)) return;
-  var gone = mScroll.querySelectorAll(".turn, .divider");
-  for (var i = 0; i < gone.length; i++) gone[i].remove();
-  turnNodes.clear(); dividers.clear(); expanded.clear();
-  runMourn(snap.stats.incarnation - 1);
+  var gone = deathGate(prev);
+  if (gone == null) return;
+  if (prev && snap.stats.incarnation > prev.stats.incarnation) {
+    var nodes = mScroll.querySelectorAll(".turn, .divider");
+    for (var i = 0; i < nodes.length; i++) nodes[i].remove();
+    turnNodes.clear(); dividers.clear(); expanded.clear();
+    stopReveal();
+  }
+  runMourn(gone);
+}
+
+/* ---------- pulse ---------- */
+/* The metabolism strip. Left: the real in-flight request, or how long since
+   the last close. Middle: a 20-bucket token sparkline over the last ten
+   minutes, twenty fixed bars updated in place. Right: tokens per minute over
+   the same window. Every figure is the recorder's, none is simulated. */
+function setPulse(state) {
+  var p = (snap && snap.pulse) || {};
+  var show = state === "live" || state === "thinking" ||
+    state === "quiet" || state === "nosignal";
+  var host = $("pulse");
+  if (host.hidden !== !show) { host.hidden = !show; repin(); }
+  if (!show) return;
+  var rows = p.in_flight || [], left;
+  if (rows.length && rows[0].since_epoch != null) {
+    left = rows[0].lane + " · in flight " +
+      dur(Math.max(0, clock() / 1000 - rows[0].since_epoch));
+  } else if (p.last_close_epoch != null) {
+    left = "idle · last call " + rel(p.last_close_epoch, clock());
+  } else {
+    left = "idle";
+  }
+  setText($("pulse-left"), left);
+  var buckets = p.buckets || [], max = 0, i;
+  for (i = 0; i < buckets.length; i++) if (buckets[i] > max) max = buckets[i];
+  var bars = $("pulse-spark").children;
+  for (i = 0; i < bars.length; i++) {
+    var vtok = Number(buckets[i]) || 0;
+    var h = vtok > 0 ? Math.max(2, Math.round(24 * vtok / max)) : 0;
+    var hpx = h + "px";
+    if (bars[i].style.height !== hpx) bars[i].style.height = hpx;
+  }
+  var perMin = (p.tokens_window || 0) / 10;
+  setText($("pulse-rate"),
+    perMin > 0 ? "≈" + laneCount(Math.round(perMin)) + " tok/min" : "");
 }
 
 /* ---------- tick ---------- */
-function setInflight(age, state) {
-  var lane = coreLane();
-  var live = lane && lane.in_flight > 0 && lane.in_flight_since != null;
-  if (live) age = Math.max(0, clock() / 1000 - lane.in_flight_since);
-  var show = live || state === "thinking";
-  if (inflight.hidden === show) { inflight.hidden = !show; repin(); }
-  if (!show) return;
-  var turns = snap.turns || [];
-  var next = turns.length ? Number(turns[turns.length - 1].index) + 1 : 1;
-  setText($("if-row"), (snap.stats.turns_this_life_exact ? "TURN " : "ROW ") + pad2(next));
-  setText($("if-text"), "waiting for row " + next);
-  setText($("if-clock"), dur(age));
-}
 function setRelativeTimes(nowMs) {
   for (var i = 0; i < graveNodes.length; i++) {
     var g = graveNodes[i];
@@ -1683,6 +2147,7 @@ function setRelativeTimes(nowMs) {
     var m = metas[i];
     setText(m, m.__size + (m.__epoch != null ? " · " + rel(m.__epoch, nowMs) : ""));
   }
+  setEyeCaption(nowMs);
   if (snap.story && snap.story.text) renderStoryByline(nowMs);
 }
 function renderStoryByline(nowMs) {
@@ -1703,9 +2168,12 @@ function tick() {
   var st = snap.stats;
   setText($("v-alive"), st.started_epoch != null
     ? dur(nowMs / 1000 - st.started_epoch) : "—");
-  setInflight(age, state);
+  setPulse(state);
   setRelativeTimes(nowMs);
   renderNow();
+  maybeAutoRepin();
+  deskCycle(nowMs / 1000);
+  rotateDeadFoot(nowMs);
   if (announceUntil && Date.now() > announceUntil) {
     announceUntil = 0;
     $("premise").classList.remove("announce");
@@ -1716,11 +2184,6 @@ function tick() {
 }
 
 /* ---------- lanes ---------- */
-function coreLane() {
-  var lanes = (snap && snap.lanes) || [];
-  for (var i = 0; i < lanes.length; i++) if (lanes[i].name === "core") return lanes[i];
-  return null;
-}
 function laneCount(n) {
   n = Number(n) || 0;
   if (n >= 10000) return Math.round(n / 1000) + "k";
@@ -1749,20 +2212,35 @@ function renderLanes() {
     else built++;
   }
   while (host.children.length > shown.length) host.removeChild(host.lastChild);
+  /* Magnitude over digits: each lane carries a bar scaled to the busiest
+     lane's tokens_hour across the whole declared set, with a compact figure
+     beside it. A nonzero lane never renders under 4% — invisible activity
+     would read as none. */
+  var maxTok = 0;
+  for (var m = 0; m < lanes.length; m++) {
+    maxTok = Math.max(maxTok, Number(lanes[m].tokens_hour) || 0);
+  }
   for (var i = 0; i < shown.length; i++) {
     var lane = shown[i], node = host.children[i];
     if (!node) {
       node = el("div", "lane-row", host);
       el("i", "l-dot", node);
-      el("span", "l-name", node);
-      el("span", "l-meta", node);
+      node.__name = el("span", "l-name", node);
+      var track = el("div", "l-track", node);
+      node.__fill = el("i", "l-fill", track);
+      node.__val = el("span", "l-val", node);
     }
     if (lane.in_flight > 0) live++;
     node.className = "lane-row" + (lane.name === "core" ? " given" : "") +
       (lane.in_flight > 0 ? " live" : "") + (lane.bound ? "" : " unbound");
-    setText(node.children[1], norm(lane.name).toUpperCase());
-    setText(node.children[2],
-      laneCount(lane.requests_hour) + "/h · " + laneCount(lane.tokens_hour) + " tok");
+    setText(node.__name, norm(lane.name).toUpperCase());
+    node.__name.title = norm(lane.name);
+    var tok = Number(lane.tokens_hour) || 0;
+    var pct = maxTok > 0 ? (tok / maxTok) * 100 : 0;
+    if (tok > 0) pct = Math.max(4, pct);
+    var w = pct.toFixed(1) + "%";
+    if (node.__fill.style.width !== w) node.__fill.style.width = w;
+    setText(node.__val, laneCount(tok));
   }
   setText($("stream-count"),
     lanes.length ? given + " GIVEN · " + built + " BUILT" : "");
@@ -1775,12 +2253,15 @@ function renderLanes() {
 /* ---------- render ---------- */
 function render(prev) {
   deathBeat(prev);
+  noteColour();
   renderSubject();
   renderLanes();
   renderStory();
   renderDead();
-  renderRibbon();
+  renderDesk();
   renderSpoken();
+  renderRibbon();
+  renderEye();
   reconcileFeed();
   tick();
   applyExpansion();
@@ -1810,10 +2291,12 @@ function poll() {
     if (failures >= 3) setTransport(false);
   });
 }
-mScroll.addEventListener("scroll", function () {
-  feedPinned = mScroll.scrollTop + mScroll.clientHeight >= mScroll.scrollHeight - 8;
-  setClass(mScroll, "scrolled", mScroll.scrollTop > 0);
-});
+mScroll.addEventListener("scroll", onFeedScroll);
+$("return-live").addEventListener("click", returnToLive);
+(function () {
+  var spark = $("pulse-spark");
+  for (var i = 0; i < 20; i++) el("div", "bar", spark);
+})();
 window.addEventListener("load", function () {
   var list = document.querySelectorAll(".clamp");
   for (var i = 0; i < list.length; i++) list[i].__measured = false;
