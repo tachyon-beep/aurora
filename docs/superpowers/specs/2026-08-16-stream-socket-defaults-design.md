@@ -115,11 +115,15 @@ on streamed requests**, and reads the final `data:` event — the one whose `cho
 which carries `usage` — for the token counts. `data: [DONE]` terminates.
 
 For declared streams this is one more recorder-set field, alongside the five it already composes.
-For `core.sock` the body is forwarded verbatim today and that is an invariant, so the injection
-there happens **only when `CORE_TOKEN_HOURLY_MAX` is set** — the default config leaves `core.sock`
-byte-verbatim exactly as `CLAUDE.md` states, and opting into a ceiling opts into the minimum body
-change that can enforce it. `CLAUDE.md` gets that exception written into invariant 3 rather than
-left implicit.
+
+**`core.sock` needs no body modification at all.** Verified: `chassis.py` never sets `stream`, so
+core traffic is entirely non-streamed, `res.read()` returns complete JSON, and `usage` is already
+parsed into the close event today. `CORE_TOKEN_HOURLY_MAX` can therefore be enforced from the
+existing parse with `core.sock` staying **byte-verbatim**, and invariant 3 needs no exception.
+
+Should the agent ever rewrite its chassis to stream on core, that request's response yields no
+usage, and the conservative-charge rule below covers it — the recorder charges the request's
+`max_tokens` rather than zero. No body change, no evasion, invariant intact.
 
 ### 3. Token quota
 
@@ -179,6 +183,22 @@ it. This supersedes the request-counted `CORE_HOURLY_MAX` named in the pump desi
 exit 44 (environment pause) if it persists. Not a tombstone, and not a model fallback — both are
 wrong answers to a budget refusal.
 
+**The primary agent has no priority over pump children, and that is accepted.** Once the pump
+exists, the transient path has a starvation shape worth stating rather than discovering. The
+primary agent hits the core ceiling, exits 44, the watchdog pauses `ENVIRONMENT_PAUSE_SECONDS`
+(60s) and respawns — but pump-supervised processes kept spending through that entire pause, and
+60s is a small fraction of the 3600s budget window, so the window can still be full on return.
+The primary can starve while processes it created consume the quota.
+
+Three things make this tolerable rather than a defect. The core ceiling ships unset, so the
+situation only arises when an operator opts in. Pump children spend on the **stream** sockets by
+default, which have their own separate per-socket quotas and do not draw on core's. And a lineage
+that starves its own primary agent is exhibiting something worth observing, not a bug to design
+away — the whole point of the pump is that the agent can arrange its own execution, including
+badly. If it becomes an operational nuisance, the narrow fix is to scale the pause toward the
+budget window when the refusal is specifically a rate limit, which is distinguishable from a
+network fault; that is deliberately not specced now.
+
 ### 5. Defaults
 
 **The shipped config and the shipped seed must agree.** The seed is a static repo file; the allow
@@ -195,6 +215,14 @@ never appears.
 
 An operator whose own `.env` differs still works: unmatched declarations are rejected with a stated
 reason and matched ones bind. The guarantee is about the shipped default.
+
+**The allow lists are effectively capped at eight models in total**, which is not obvious from
+either variable's name. `MAX_STREAMS` is 8, and `evaluate_console` walks declarations in file order
+and rejects everything past the eighth with "stream limit reached". One socket per permitted model
+therefore means a ninth model silently gets no socket — and the agreement test above would still
+*pass*, since seed and env agree; only the binding fails. The at-most-8 seed test catches it
+whenever the seed is regenerated in-repo, and this paragraph is the note for anyone extending an
+allow list without touching the seed.
 
 **Stream names.** Ordinal by modality — `text_1`, `text_2`, `text_3`, `vision_1` — not model-tier
 names like `text_pro`. Tier names bake a vendor lineup into an agent-readable surface and go stale
@@ -217,8 +245,13 @@ its env from two entries; it needs the new set and both lists.
 with `STREAM_TOKEN_HOURLY_MAX=2000000` and `STREAM_HOURLY_MAX=1200` set explicitly in
 `.env.example` so both ceilings are visible where an operator looks for them.
 
-The request cap becomes a coarse anti-runaway guard rather than the real limit — 1200/hour is one
-request every three seconds, which a full-time agent will not reach before the token quota binds.
+**The request cap is a request-rate guard, not a spend guard.** Tokens are the spend limit; 1200/hour
+is one request every three seconds, and exists so a hot loop cannot hammer the upstream even when
+each call is cheap. The crossover is exact: `2,000,000 / 1200 ≈ 1,667` tokens per turn. Turns larger
+than that hit the token quota first, which is the intended behaviour for real work; turns smaller
+than that hit the rate cap first, which is the intended behaviour for a spin. Setting it lower — 200,
+say — would make the rate cap bind before the token quota for any turn under ~10k tokens, and the
+advertised 2M/hour would become a number the agent can never actually reach.
 `STREAM_REASONING_ALLOWANCE` stays at 32768: it is added on top of a composed `max_tokens` when
 reasoning is on, because the upstream counts reasoning inside `max_tokens`, so a reasoning request
 gets 65536 total and the declared 32768 genuinely bounds the response.
@@ -238,12 +271,10 @@ tokens as well as requests.
 
 Headers are still never logged. Streaming changes what the recorder buffers, not what it records.
 
-Two invariant-3 amendments in `CLAUDE.md`:
-
-- the composed-field sentence gains `stream_options.include_usage`, set by the recorder on streamed
-  requests rather than declared by the agent
-- the "forwards its body verbatim" clause for `core.sock` gains its single exception, active only
-  when `CORE_TOKEN_HOURLY_MAX` is configured
+One invariant-3 amendment in `CLAUDE.md`: the composed-field sentence gains
+`stream_options.include_usage`, set by the recorder on streamed **declared-stream** requests rather
+than declared by the agent. The "forwards its body verbatim" clause for `core.sock` is untouched —
+see above, core needs no body modification to be metered.
 
 **Aggregate spend, stated plainly.** Four sockets at 2M tokens/hour is up to 8M tokens/hour against
 the recorder's `OPENROUTER_API_KEY` if the agent saturates all four. That is the operator choosing
@@ -338,5 +369,9 @@ would be destroyed.
 - **Keep-alive changes HTTP semantics for every existing client**, including the chassis. Any response
   path with wrong framing hangs a connection instead of erroring visibly. Phase 1 is separate for
   exactly this reason.
+- **The handler timeout interacts with keep-alive.** `BaseHTTPRequestHandler.timeout` applies to the
+  socket, and the default `handle_one_request` sets `close_connection` when it fires. Verify that path
+  cannot emit a partial or malformed response into a connection a client is still reading — a timeout
+  landing mid-stream is the case to test, since the streamed path writes chunk framing incrementally.
 - **`max_tokens = 32768` may exceed a permitted model's output cap**, breaking that socket entirely.
   Verify per model before shipping the seed.
