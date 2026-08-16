@@ -396,7 +396,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   background: var(--flash); animation: breathe 1.6s ease-in-out infinite; }
 .bar.lit { opacity: 1; outline: 1px solid var(--paper); outline-offset: 2px; }
 #bar-labels { flex: none; height: 18px; display: flex; gap: 4px; }
-.bl { flex: 1 1 0; min-width: 0; text-align: center; overflow: hidden;
+.bl { flex: 1 1 0; min-width: 0; text-align: center; overflow: visible; white-space: nowrap;
   font: 400 13px/18px var(--mono); color: var(--paper-faint);
   font-variant-numeric: tabular-nums; }
 .bl.now { color: var(--vital); }

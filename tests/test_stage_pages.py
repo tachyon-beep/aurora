@@ -845,3 +845,12 @@ def test_the_reached_meta_never_wraps_into_the_next_row():
     block = HTML[HTML.index("\n.rrow .rmeta {") :]
     block = block[: block.index("}")]
     assert "white-space: nowrap" in block and "text-overflow: ellipsis" in block
+
+
+def test_bar_labels_overflow_their_cell_rather_than_clip():
+    """Only every Nth column carries a label at narrow widths; a two-digit label
+    must not be clipped by its own 12-16px cell (its neighbours are empty)."""
+    block = HTML[HTML.index("\n.bl {") :]
+    block = block[: block.index("}")]
+    assert "overflow: visible" in block and "white-space: nowrap" in block
+    assert "overflow: hidden" not in block
