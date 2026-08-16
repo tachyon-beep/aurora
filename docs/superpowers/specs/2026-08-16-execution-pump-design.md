@@ -194,44 +194,34 @@ was:
   `STREAM_HOURLY_MAX`, which live in the recorder's environment.
 - `core.sock` — see below. This is the one that needed new work.
 
-### `core.sock` had no ceiling
+### `core.sock` is uncapped, and stays that way
 
-Verified rather than assumed: `STREAM_HOURLY_MAX` clamps declared streams only.
-`core.sock` forwards its body verbatim to the operator-configured upstream with the real key and
-has **no hourly limit**. This went unnoticed because the watchdog spawns exactly one agent
-process, so exactly one consumer existed.
+`STREAM_HOURLY_MAX` clamps declared streams only. `core.sock` forwards its body verbatim to the
+operator-configured upstream with the real key and has no limit of any kind. This went unnoticed
+because the watchdog spawns exactly one agent process, so exactly one consumer existed.
 
 A pump that supervises long-running processes removes that accident. `runtime.md` already states
 that the model socket accepts connections from any process in the container, so a `keepalive`
 entry running an agent-authored agent works on day one, and N of them do too — unattended, across
 incarnations, on the uncapped credentialed socket.
 
-Two mechanisms, with different standing:
+**No recorder-side ceiling is added.** Ruled deliberately: the key budget is the ceiling. An agent
+that discovers it can run an empire by multiplexing that socket exhausts the budget quickly, and
+that exhaustion is the feedback — a real consequence arriving on its own schedule, rather than an
+artificial refusal standing in for one.
 
-1. **`PUMP_MAX_ENTRIES` (default 32) and `PUMP_MAX_CONCURRENT` (default 8).** These are
-   **resource hygiene, not containment.** They live in the agent container's environment, and the
-   agent can start any process it likes without the pump's involvement. They exist to keep the
-   pump from exhausting `pids_limit: 256` and `mem_limit: 5g` by accident. The spec states this
-   plainly so nobody later mistakes them for a boundary.
-2. **`CORE_TOKEN_HOURLY_MAX` in the recorder.** This is the actual spend boundary, and it is in
-   the right place: the recorder's environment, in another container, unreachable from the
-   agent's. A sliding one-hour window over `core.sock` **tokens**, refusing with the same shaped
-   response the streams path uses.
+`PUMP_MAX_ENTRIES` (default 32) and `PUMP_MAX_CONCURRENT` (default 8) are therefore the only new
+numbers, and they are **resource hygiene, not containment**. They live in the agent container's
+environment, and the agent can start any process it likes without the pump's involvement — a limit
+inside the agent's own container is not a boundary. They exist so the pump cannot exhaust
+`pids_limit: 256` or `mem_limit: 5g` by accident. Stated plainly here so nobody later mistakes
+them for a guarantee.
 
-   **Ships unset by default.** Empty means no limit, which is exactly today's behaviour, so
-   nothing changes until the operator sets it. The lever exists before the agent starts
-   multiplying rather than after.
-
-   The mechanism — token accounting in the recorder, and the usage extraction that streamed
-   responses need before tokens can be counted at all — is designed in
-   `2026-08-16-stream-socket-defaults-design.md`, which this depends on for that piece. An
-   earlier draft of this spec named a request-counted `CORE_HOURLY_MAX`; tokens supersede it,
-   because requests are not the quantity that costs money.
-
-`chassis.py` must classify a `core.sock` rate-limit refusal as **transient**: retry with backoff,
-then exit 44 (environment pause) if it persists. It must not tombstone the incarnation and must
-not fall back to the environment default model, both of which would be wrong responses to a
-budget refusal.
+What this makes load-bearing is the behaviour on exhaustion, which is currently wrong: a 402
+classifies as `invalid_request` and walks the recovery ladder, destroying the session and working
+tree over a billing event. The fix is specced in
+`2026-08-16-stream-socket-defaults-design.md` §4, and it is a defect today, before either design
+lands — the pump only raises the odds of meeting it.
 
 ### `later`'s credentialed-refusal is demoted
 
@@ -298,8 +288,6 @@ else lives in the README, which is not a garden document.
 | `Dockerfile` | `COPY pump.py /usr/local/bin/`; add `/pump` to the mountpoint mkdir/chown |
 | `docker-compose.yml` | `pump` named volume; mount at `/pump` in agent; `PUMP_MAX_ENTRIES`, `PUMP_MAX_CONCURRENT` on agent |
 | `.env.example` | document `PUMP_MAX_ENTRIES` and `PUMP_MAX_CONCURRENT` |
-| `proxy.py` | `core.sock` token ceiling, unset means unlimited (see the companion spec) |
-| `chassis.py` | classify a core rate-limit refusal as transient (see the companion spec) |
 | `scripts/build_garden.py` | the `runtime.md` sentence |
 | `CLAUDE.md` | invariant 3: the pump bullet, the guarantee, the `later` demotion, the `PUMP_MAX_*`-is-not-a-boundary note |
 

@@ -116,14 +116,10 @@ which carries `usage` — for the token counts. `data: [DONE]` terminates.
 
 For declared streams this is one more recorder-set field, alongside the five it already composes.
 
-**`core.sock` needs no body modification at all.** Verified: `chassis.py` never sets `stream`, so
-core traffic is entirely non-streamed, `res.read()` returns complete JSON, and `usage` is already
-parsed into the close event today. `CORE_TOKEN_HOURLY_MAX` can therefore be enforced from the
-existing parse with `core.sock` staying **byte-verbatim**, and invariant 3 needs no exception.
-
-Should the agent ever rewrite its chassis to stream on core, that request's response yields no
-usage, and the conservative-charge rule below covers it — the recorder charges the request's
-`max_tokens` rather than zero. No body change, no evasion, invariant intact.
+**`core.sock` is never touched.** It carries no quota (see §4), so nothing needs metering there and
+no body modification arises. It stays **byte-verbatim** and invariant 3 needs no exception.
+Verified in passing that `chassis.py` never sets `stream`, so core traffic is non-streamed today
+regardless.
 
 ### 3. Token quota
 
@@ -169,35 +165,54 @@ proportionally fewer turns; the number is a config value precisely so that trade
 `streams.json` shows the agent its own consumption against both ceilings. Without that the quota
 is invisible until it refuses.
 
-### 4. `core.sock`
+### 4. `core.sock` stays unlimited, by design
 
-`core.sock` has no ceiling of any kind — verified: `STREAM_HOURLY_MAX` clamps declared streams
-only, and core forwards to the operator-configured upstream with the real key. It went unnoticed
-because the watchdog spawns exactly one agent process.
+`core.sock` has no ceiling of any kind — `STREAM_HOURLY_MAX` clamps declared streams only, and
+core forwards to the operator-configured upstream with the real key. **This is deliberate and
+stays.** No `CORE_TOKEN_HOURLY_MAX`; the earlier request-counted `CORE_HOURLY_MAX` named in the
+pump design is dropped rather than converted.
 
-Add **`CORE_TOKEN_HOURLY_MAX`**, token-based for consistency with the above, **shipped unset**.
-Empty means no limit, which is today's exact behaviour, so nothing changes until the operator sets
-it. This supersedes the request-counted `CORE_HOURLY_MAX` named in the pump design.
+The ceiling on core is the key budget itself. An agent that discovers it can run an empire by
+multiplexing that socket exhausts the budget quickly, and that exhaustion is the feedback — a real
+consequence arriving on its own schedule, which is the kind of limit this world is built out of.
+A recorder-side quota would substitute an artificial refusal for a true one.
 
-`chassis.py` must classify a core rate-limit refusal as **transient**: retry with backoff, then
-exit 44 (environment pause) if it persists. Not a tombstone, and not a model fallback — both are
-wrong answers to a budget refusal.
+That makes one behaviour load-bearing, and it is currently wrong.
 
-**The primary agent has no priority over pump children, and that is accepted.** Once the pump
-exists, the transient path has a starvation shape worth stating rather than discovering. The
-primary agent hits the core ceiling, exits 44, the watchdog pauses `ENVIRONMENT_PAUSE_SECONDS`
-(60s) and respawns — but pump-supervised processes kept spending through that entire pause, and
-60s is a small fraction of the 3600s budget window, so the window can still be full on return.
-The primary can starve while processes it created consume the quota.
+**An exhausted key budget destroys the lineage instead of pausing it.** Verified in
+`classify_error` (`chassis.py:146`): the rule is that any status from 400 to 499 other than 408
+and 429 is `invalid_request`. OpenRouter returns **402 Payment Required** when credit is
+exhausted, so today:
 
-Three things make this tolerable rather than a defect. The core ceiling ships unset, so the
-situation only arises when an operator opts in. Pump children spend on the **stream** sockets by
-default, which have their own separate per-socket quotas and do not draw on core's. And a lineage
-that starves its own primary agent is exhibiting something worth observing, not a bug to design
-away — the whole point of the pump is that the agent can arrange its own execution, including
-badly. If it becomes an operational nuisance, the narrow fix is to scale the pause toward the
-budget window when the refusal is specifically a rate limit, which is distinguishable from a
-network fault; that is deliberately not specced now.
+1. 402 classifies as `invalid_request`
+2. the chassis rebuilds the send view with `repair_send_view` — repairing a body that was never
+   the problem — and retries once
+3. the retry returns 402 again, raising `UnrecoverableRequestError`
+4. the chassis writes a tombstone, **archives and deletes the saved session**, and exits 43
+5. the watchdog treats 43 like `done`: archive and reset
+6. repeated 402s cluster, and `TERMINATED_FLAP_COUNT` (3 within 600s) feeds them into the tier
+   ladder — tier 1 restores `agent.py`, tier 2 does `git reset --hard baseline`, tier 3 exits for
+   a container respawn
+
+So a billing event walks the recovery ladder to the end and takes the lineage's working tree and
+session with it. Nothing in that sequence is a fault of the agent's code, and every step of the
+repair is aimed at the wrong thing.
+
+**Fix: classify payment and quota exhaustion as transient.** Add 402 to the transient set
+alongside 408 and 429, and treat an insufficient-credit message as transient regardless of status,
+since providers differ on which code they use. The incarnation then retries with backoff and
+raises `EnvironmentFailure`, which exits 44 — the watchdog pauses `ENVIRONMENT_PAUSE_SECONDS` and
+tries again, leaving the session, the working tree, and the tier ladder untouched. The lineage
+waits out a topped-up budget instead of being reset out of existence by it.
+
+This is a defect today, before either design lands. The pump only raises the odds of meeting it,
+by multiplying the consumers drawing on the same key.
+
+**Contention between the primary agent and pump children is accepted.** Once the pump exists,
+several processes draw on one key budget with no priority between them, so the primary can pause
+on 44 while processes it created keep spending. That is not designed away: a lineage that starves
+its own primary agent is exhibiting something worth watching, and arranging its own execution —
+including badly — is the point of the pump.
 
 ### 5. Defaults
 
@@ -265,7 +280,7 @@ output limit, lower the seed to the smallest if any is below 32768, and record w
 
 No containment property changes. Every ceiling introduced or raised here lives in the **recorder's
 environment**, in another container, unreachable from the agent's: `STREAM_TOKEN_HOURLY_MAX`,
-`STREAM_HOURLY_MAX`, `CORE_TOKEN_HOURLY_MAX`, and both allow lists. The console can lower an
+`STREAM_HOURLY_MAX`, and both allow lists. The console can lower an
 allowance and never raise it above the operator's ceiling — the existing property, now applying to
 tokens as well as requests.
 
@@ -285,11 +300,11 @@ the bill surprises.
 
 | file | change |
 |---|---|
-| `proxy.py` | HTTP/1.1, handler timeout, chunked SSE relay, delta reconstruction incl. tool calls, usage from the final stream event, charge the registry, core token ceiling |
+| `proxy.py` | HTTP/1.1, handler timeout, chunked SSE relay, delta reconstruction incl. tool calls, usage from the final stream event, charge the registry |
 | `recorder_streams.py` | `token_budget` field, `STREAM_TOKEN_HOURLY_MAX`, token histories, token check in `admit`, `charge`, `stream_options` composition, token fields in `render_state` and the `/llm/sock` README |
-| `chassis.py` | classify a core rate-limit refusal as transient |
+| `chassis.py` | classify 402 and insufficient-credit as transient, so an exhausted key budget pauses the lineage instead of resetting it |
 | `llm_console_seed.json` | one declaration per permitted model; `token_budget`, `budget`, `max_tokens` |
-| `.env.example` | uncomment both allow lists; add `STREAM_TOKEN_HOURLY_MAX`, `STREAM_HOURLY_MAX`; document `CORE_TOKEN_HOURLY_MAX` unset |
+| `.env.example` | uncomment both allow lists; add `STREAM_TOKEN_HOURLY_MAX`, `STREAM_HOURLY_MAX` |
 | `docker-compose.yml` | pass the new recorder variables; `pids_limit` and `mem_limit` on `recorder` |
 | `CLAUDE.md` | the two invariant-3 amendments |
 
@@ -317,8 +332,7 @@ Independently testable phases, in this order:
   `finish_reason` carried through
 - usage is read from the final stream event and appears in the close event
 - `stream_options.include_usage` is set on declared-stream streamed requests
-- `core.sock` stays byte-verbatim with `CORE_TOKEN_HOURLY_MAX` unset, and gains only
-  `stream_options` when it is set
+- `core.sock` stays byte-verbatim under every path, streamed or not
 - headers still never appear in the transcript or events
 
 `tests/test_recorder_streams.py`:
@@ -341,8 +355,10 @@ Independently testable phases, in this order:
 - the seeded stream count is at most `MAX_STREAMS` (8), so a later allow-list expansion cannot push
   a declaration past the limit and have it silently rejected
 
-`tests/test_chassis_recovery.py`: a core rate-limit refusal is transient — not a tombstone, no model
-fallback.
+`tests/test_chassis_recovery.py`: a 402 is transient — it retries with backoff and raises
+`EnvironmentFailure` (exit 44), and does **not** trigger `repair_send_view`, a model swap, a
+tombstone, or session deletion. Same for an insufficient-credit message arriving under a different
+status.
 
 `scripts/verify_container.sh`: a streamed completion over a declared socket returns incrementally
 and its usage lands in `events.jsonl`.
