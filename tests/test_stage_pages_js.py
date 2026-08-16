@@ -1361,7 +1361,13 @@ out.heights_after_growth = bars.map(function (b) { return b.style.height; });
 
 /* Spotlight: 10s cadence over the lineage entries, newest first; the lit bar follows. */
 NOW = 1000000;
+/* The death slide (added by runMourn) must survive a renderSpot that follows
+   in the same synchronous render pass: the kind/empty classes are toggled,
+   never written wholesale over className. */
+fake("spot").className = "k-declared slide";
 renderSpot(NOW);
+out.slide_survives = fake("spot").className.indexOf("slide") !== -1;
+out.spot_kind_flag = fake("spot")["_k-declared"] === true;
 out.spot_0 = fake("spot-eyebrow").textContent;
 out.spot_0_facts = fake("spot-facts").textContent;
 out.spot_0_note = fake("spot-note").textContent;
@@ -1370,7 +1376,7 @@ renderSpot(NOW + 10000);
 out.spot_1 = fake("spot-eyebrow").textContent;
 out.lit_1 = bars.map(function (b) { return !!b._lit; });
 renderSpot(NOW + 20000);
-out.spot_2_wraps = fake("spot-eyebrow").textContent === out.spot_0;
+out.spot_2_wraps = fake("spot-eyebrow").textContent.indexOf("INCARNATION 4") === 0;
 
 /* A death pins the spotlight on the newly dead life for one cadence. */
 spotPin = { ordinal: 3, untilMs: NOW + 10000 };
@@ -1425,6 +1431,8 @@ def test_the_lineage_scales_colours_caps_and_walks(tmp_path):
     assert out["figs"] == "alive 120s · 4 turns · 2 self-edits · 2 reached out"
     assert out["ord"] == "5"
     assert out["heights_after_growth"] == ["2px", "30%", "45%", "60%", "100%"]
+    assert out["slide_survives"] is True
+    assert out["spot_kind_flag"] is True
     assert out["spot_0"] == "INCARNATION 4 · ENDED ON ITS OWN NOTE · 1000s ago"
     assert out["spot_0_facts"] == "lived 240s · 12+ turns"
     assert out["spot_0_note"] == "Fourth note."

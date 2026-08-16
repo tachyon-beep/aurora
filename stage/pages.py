@@ -1369,8 +1369,6 @@ var STATE_WORD = { live: "LIVE", thinking: "THINKING", quiet: "QUIET", nosignal:
   between: "BETWEEN LIVES", standby: "STANDING BY" };
 var STATE_DOT = { live: "dot vital pulse", thinking: "dot think breathe", quiet: "dot act",
   nosignal: "dot fault", between: "dot taken", standby: "dot hollow" };
-var STATE_GLYPH = { live: "●", thinking: "●", quiet: "●", nosignal: "●",
-  between: "◼", standby: "○" };
 
 function setState(age) {
   var s = stateOf(age);
@@ -1544,8 +1542,12 @@ function spotFacts(l) {
 }
 function renderSpot(nowMs) {
   var spot = $("spot"), l = spotEntry(nowMs);
+  var kind = l ? kindOf(l.kind) : "unknown";
+  setClass(spot, "k-declared", kind === "declared");
+  setClass(spot, "k-harness", kind === "harness");
+  setClass(spot, "k-unknown", kind === "unknown");
+  setClass(spot, "empty", !l);
   if (!l) {
-    if (spot.className !== "k-unknown empty") spot.className = "k-unknown empty";
     setText($("spot-eyebrow"), "");
     setText($("spot-facts"), "");
     setText($("spot-note"), "No one has died here yet.");
@@ -1553,11 +1555,10 @@ function renderSpot(nowMs) {
     litBar(null);
     return;
   }
-  var kind = kindOf(l.kind), ord = l.ordinal == null ? "?" : l.ordinal;
+  var ord = l.ordinal == null ? "?" : l.ordinal;
   var key = ord + ":" + kind;
-  if (spot.className !== "k-" + kind) spot.className = "k-" + kind;
   var eyebrow = "INCARNATION " + ord + " · " + KIND_LABEL[kind];
-  if (l.ended_epoch != null) eyebrow += " · " + rel(l.ended_epoch, clock());
+  if (l.ended_epoch != null) eyebrow += " · " + rel(l.ended_epoch, nowMs);
   setText($("spot-eyebrow"), eyebrow);
   setText($("spot-facts"), spotFacts(l));
   var note = norm(l.sentence || l.summary || "");
