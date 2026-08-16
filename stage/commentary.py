@@ -137,13 +137,19 @@ def _newest_call(turns, tool=None):
 def _attach_call(beat, turns):
     """Add the newest relevant tool call to a beat as prompt context.
 
-    For a beat that names a tool, the newest call of that tool; otherwise the
-    newest call in the newest turn. call and args are context only: _prompt
-    renders them for the model but _digest ignores them, so a change of
-    arguments never invalidates the cached line — the line picks the fresh
-    arguments up when it next regenerates.
+    Three cases: a beat that names a tool takes the newest call of that tool
+    across turns (its detection window is already recent by construction); a
+    beat with no tool takes only the newest turn's newest call, never walking
+    further back into history; a silence beat takes no call context at all,
+    since its premise is that nothing is current. call and args are context
+    only: _prompt renders them for the model but _digest ignores them, so a
+    change of arguments never invalidates the cached line — the line picks
+    the fresh arguments up when it next regenerates.
     """
-    name, arguments = _newest_call(turns, beat.get("tool"))
+    if beat.get("kind") == "silence":
+        name, arguments = None, None
+    else:
+        name, arguments = _newest_call(turns if beat.get("tool") else turns[-1:], beat.get("tool"))
     beat["call"] = name
     beat["args"] = _field(arguments, ARGS_CHARS) if name is not None and arguments else None
     return beat

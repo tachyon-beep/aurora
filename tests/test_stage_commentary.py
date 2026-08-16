@@ -522,7 +522,7 @@ def test_a_fixation_beat_carries_the_newest_arguments_of_that_tool():
 
 def test_a_working_beat_carries_the_newest_call_of_the_newest_turn():
     turns = [
-        _turn_with_calls(1, NOW - 40, [("read_file", "{}")]),
+        _turn_with_calls(1, NOW - 40, [("exec_python", '{"code": "OLD"}')]),
         _turn_with_calls(2, NOW - 5, [("list_dir", "{}"), ("exec_python", '{"code": "print(1)"}')]),
     ]
     beat = commentary.detect_beat(turns, _stats(), EMPTY_DIODE, [], NOW)
@@ -576,3 +576,33 @@ def test_a_generated_line_survives_a_change_in_arguments_alone(monkeypatch):
 
 def test_the_model_is_told_it_may_quote_the_call():
     assert "arguments" in commentary.COLOUR_SYSTEM_PROMPT
+
+
+def test_a_working_beat_takes_no_call_from_an_older_turn():
+    turns = [
+        _turn_with_calls(1, NOW - 40, [("exec_python", '{"code": "print(1)"}')]),
+        _turn_with_calls(2, NOW - 5, []),
+    ]
+    beat = commentary.detect_beat(turns, _stats(), EMPTY_DIODE, [], NOW)
+    assert beat["kind"] == "working"
+    assert beat["call"] is None and beat["args"] is None
+
+
+def test_a_silence_beat_carries_no_call():
+    turns = [_turn_with_calls(1, NOW - 200, [("run_shell", '{"command": "ls"}')])]
+    beat = commentary.detect_beat(turns, _stats(), EMPTY_DIODE, [], NOW)
+    assert beat["kind"] == "silence"
+    assert beat["call"] is None and beat["args"] is None
+
+
+def test_a_tool_beat_still_finds_that_tools_newest_call_behind_a_later_turn():
+    turns = [
+        _turn_with_calls(1, NOW - 40, [("run_shell", '{"command": "ls"}')]),
+        _turn_with_calls(2, NOW - 30, [("run_shell", '{"command": "pwd"}')]),
+        _turn_with_calls(3, NOW - 20, [("run_shell", '{"command": "cat x"}')]),
+        _turn_with_calls(4, NOW - 5, [("read_file", "{}")]),
+    ]
+    beat = commentary.detect_beat(turns, _stats(), EMPTY_DIODE, [], NOW)
+    assert beat["kind"] == "tool_fixation"
+    assert beat["call"] == "run_shell"
+    assert beat["args"] == '{"command": "cat x"}'
