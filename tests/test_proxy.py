@@ -957,3 +957,29 @@ def test_core_is_neither_admitted_nor_charged(core_server, registry, transcripts
     assert "budget" not in reported and "tokens" not in reported
     assert registry._token_histories.get("core", []) == []
     assert registry._histories.get("core", []) == []
+
+
+def test_a_chunked_request_body_is_refused_and_closes_the_connection(core_server):
+    # HTTP/1.1 keeps the connection open, but the request body is framed by
+    # Content-Length alone. A chunked request body would otherwise leave its
+    # bytes in the socket to be parsed as the next request line.
+    client = _connect(core_server)
+    try:
+        client.sendall(
+            b"POST /api/v1/chat/completions HTTP/1.1\r\n"
+            b"Host: agent\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Transfer-Encoding: chunked\r\n"
+            b"\r\n"
+            b"5\r\nhello\r\n0\r\n\r\n"
+        )
+        fp = client.makefile("rb")
+        status, headers, body = _read_message(fp)
+        trailing = fp.read()
+    finally:
+        client.close()
+
+    assert status.startswith("HTTP/1.1 411")
+    assert headers.get("connection") == "close"
+    assert b"chunked" in body.lower() or b"length" in body.lower()
+    assert trailing == b""

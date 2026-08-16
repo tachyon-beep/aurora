@@ -384,6 +384,19 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.send_error(404, "Not Found")
             return
 
+        if self.headers.get("Transfer-Encoding"):
+            self.send_response(411)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Connection", "close")
+            body = json.dumps(
+                {"error": {"message": "request body must carry a content-length"}}
+            ).encode("utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            self.close_connection = True
+            return
+
         content_length = int(self.headers.get("Content-Length", 0))
         req_body = self.rfile.read(content_length)
         stream = getattr(self.server, "stream_name", "core")

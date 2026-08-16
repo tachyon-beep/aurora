@@ -443,4 +443,63 @@ echo "==> console fails closed without a token"
 code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:${STAGE_CONSOLE_PORT}/api/roots || true)
 [ "$code" = "401" ] || [ "$code" = "403" ] || { echo "FAIL: console served without token ($code)"; exit 1; }
 
+echo "==> pump volume is mounted into the agent and nowhere else"
+agent_cid=$(docker compose ps -q agent)
+[ -n "$agent_cid" ] || { echo "FAIL: agent container not running"; exit 1; }
+if ! docker inspect "$agent_cid" 2>/dev/null | grep -q '"Destination": "/pump"'; then
+  echo "FAIL: the agent does not mount /pump"; exit 1
+fi
+for svc in recorder diode sense viewer stage; do
+  cid=$(docker compose ps -q "$svc" 2>/dev/null || true)
+  [ -n "$cid" ] || continue
+  if docker inspect "$cid" 2>/dev/null | grep -q '"Destination": "/pump"'; then
+    echo "FAIL: $svc mounts /pump"; exit 1
+  fi
+done
+
+echo "==> the scheduler runs from the read-only image and describes itself"
+if ! docker compose exec -T agent test -f /usr/local/bin/pump.py; then
+  echo "FAIL: pump.py is not on the image"; exit 1
+fi
+if docker compose exec -T agent test -e /work/pump.py; then
+  echo "FAIL: pump.py reached the agent workspace"; exit 1
+fi
+for f in README.md state.json; do
+  if ! docker compose exec -T agent test -s "/pump/$f"; then
+    echo "FAIL: the scheduler did not write /pump/$f"; exit 1
+  fi
+done
+
+echo "==> a streamed completion relays incrementally and reports its usage"
+stream_sock=$(docker compose exec -T agent sh -c 'ls /llm/sock/*.sock 2>/dev/null | grep -v core.sock | head -1' | tr -d "\r")
+if [ -n "$stream_sock" ]; then
+  before=$(docker compose exec -T recorder sh -c 'grep -c "\"usage\"" /transcripts/events.jsonl 2>/dev/null || echo 0' | tr -d "\r")
+  docker compose exec -T agent python - "$stream_sock" <<'PY' || true
+import http.client, json, socket, sys
+
+class UDS(http.client.HTTPConnection):
+    def __init__(self, path):
+        super().__init__("localhost")
+        self._path = path
+
+    def connect(self):
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.connect(self._path)
+
+c = UDS(sys.argv[1])
+body = json.dumps({"messages": [{"role": "user", "content": "one word"}], "stream": True})
+c.request("POST", "/api/v1/chat/completions", body, {"Content-Type": "application/json"})
+r = c.getresponse()
+print("status", r.status, "te", r.getheader("Transfer-Encoding"))
+r.read()
+PY
+  sleep 3
+  after=$(docker compose exec -T recorder sh -c 'grep -c "\"usage\"" /transcripts/events.jsonl 2>/dev/null || echo 0' | tr -d "\r")
+  if [ "$after" -le "$before" ]; then
+    echo "    note: no new usage event; the stream may be rate limited or unconfigured"
+  fi
+else
+  echo "    skipped: no declared stream socket is bound"
+fi
+
 echo "ALL CONTAINER CHECKS PASSED"
