@@ -55,27 +55,30 @@ def _reset_for_tests():
 def _compute(work_dir, paths, now):
     """The record book over paths, oldest first."""
     deaths = [data._tombstone_epoch(path, now) for path in paths]
-    chose = 0
+    kinds = []
     for path in paths:
         real = data.contained_file(work_dir, path)
-        if real is None:
-            continue
-        try:
-            with open(real, "r", encoding="utf-8", errors="replace") as f:
-                text = f.read(TOMBSTONE_READ_BYTES)
-        except OSError:
-            continue
-        if data._ending_kind(text) == "declared":
-            chose += 1
+        text = ""
+        if real is not None:
+            try:
+                with open(real, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read(TOMBSTONE_READ_BYTES)
+            except OSError:
+                text = ""
+        kinds.append(data._ending_kind(text))
+    chose = sum(1 for kind in kinds if kind == "declared")
+    lives = []
     longest = None
-    for index in range(1, len(deaths)):
-        began = deaths[index - 1]
-        ended = deaths[index]
-        if began is None or ended is None or ended <= began:
-            continue
-        seconds = float(ended - began)
-        if longest is None or seconds > longest["seconds"]:
-            longest = {"ordinal": index + 1, "seconds": seconds}
+    for index, ended in enumerate(deaths):
+        began = deaths[index - 1] if index > 0 else None
+        seconds = None
+        if began is not None and ended is not None and ended > began:
+            seconds = float(ended - began)
+            if longest is None or seconds > longest["seconds"]:
+                longest = {"ordinal": index + 1, "seconds": seconds}
+        lives.append(
+            {"ordinal": index + 1, "kind": kinds[index], "seconds": seconds, "ended_epoch": ended}
+        )
     gap = None
     if len(deaths) >= 2:
         last, prior = deaths[-1], deaths[-2]
@@ -86,4 +89,5 @@ def _compute(work_dir, paths, now):
         "chose": chose,
         "longest_life": longest,
         "most_recent_gap_seconds": gap,
+        "lives": lives,
     }

@@ -47,6 +47,8 @@ LANES_CAP = 9
 LANE_NAME_CAP = 32
 TIMESTAMP_CAP = 40
 PROMPT_CAP = 160
+LIVES_CAP = 200
+LIFE_KINDS = ("declared", "harness", "unknown")
 AUDIO_MAX_BYTES = 4_000_000
 
 SECURITY_HEADERS = {
@@ -554,11 +556,31 @@ def _public_records(book):
     else:
         longest = None
     gap = book.get("most_recent_gap_seconds")
+    raw_lives = [life for life in (book.get("lives") or []) if isinstance(life, dict)]
+    lives = []
+    for life in raw_lives[-LIVES_CAP:]:
+        kind = life.get("kind")
+        seconds = life.get("seconds")
+        ended = life.get("ended_epoch")
+        try:
+            ordinal = int(life.get("ordinal") or 0)
+        except (TypeError, ValueError):
+            ordinal = 0
+        lives.append(
+            {
+                "ordinal": ordinal,
+                "kind": kind if kind in LIFE_KINDS else "unknown",
+                "seconds": float(seconds) if isinstance(seconds, (int, float)) else None,
+                "ended_epoch": float(ended) if isinstance(ended, (int, float)) else None,
+            }
+        )
     return {
         "lives_ended": int(book.get("lives_ended") or 0),
         "chose": int(book.get("chose") or 0),
         "longest_life": longest,
         "most_recent_gap_seconds": float(gap) if isinstance(gap, (int, float)) else None,
+        "lives": lives,
+        "lives_omitted": max(0, len(raw_lives) - LIVES_CAP),
     }
 
 

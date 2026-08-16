@@ -30,6 +30,7 @@ def test_empty_dir_yields_zeros_and_nones(tmp_path):
         "chose": 0,
         "longest_life": None,
         "most_recent_gap_seconds": None,
+        "lives": [],
     }
 
 
@@ -118,3 +119,29 @@ def test_the_book_is_memoized_on_the_tombstone_set(tmp_path, monkeypatch):
     third = records.record_book(str(work), now=now)
     assert third["lives_ended"] == 3 and third["chose"] == 2
     assert len(reads) == 5
+
+
+def test_lives_lists_every_tombstone_oldest_first_with_kind_and_span(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "done() at turn 3. more detail.", 1000)
+    _tombstone(tmp_path, "incarnation-b.txt", "terminated by the harness after a fault.", 400)
+    _tombstone(tmp_path, "incarnation-c.txt", "done() reached. closing note.", 100)
+    lives = records.record_book(str(tmp_path))["lives"]
+    assert [life["ordinal"] for life in lives] == [1, 2, 3]
+    assert [life["kind"] for life in lives] == ["declared", "harness", "declared"]
+    assert lives[0]["seconds"] is None, "the first life has no recorded birth"
+    assert lives[1]["seconds"] == pytest.approx(600, abs=1)
+    assert lives[2]["seconds"] == pytest.approx(300, abs=1)
+    assert lives[2]["ended_epoch"] == pytest.approx(time.time() - 100, abs=2)
+
+
+def test_lives_is_empty_for_an_empty_dir(tmp_path):
+    assert records.record_book(str(tmp_path))["lives"] == []
+
+
+def test_an_undatable_death_gives_no_span_on_either_side(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "first note.", 1000)
+    _tombstone(tmp_path, "incarnation-b.txt", "second note.", 90 * 86400)
+    _tombstone(tmp_path, "incarnation-c.txt", "third note.", 100)
+    lives = records.record_book(str(tmp_path))["lives"]
+    assert lives[1]["seconds"] is None and lives[1]["ended_epoch"] is None
+    assert lives[2]["seconds"] is None

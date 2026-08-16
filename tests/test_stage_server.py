@@ -1095,3 +1095,29 @@ def test_the_snapshot_reports_the_lanes_the_cap_dropped(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path))
     assert server.stream_snapshot()["lanes_omitted"] == 0
     assert server._empty_snapshot(1000.0)["lanes_omitted"] == 0
+
+
+def test_public_records_passes_lives_through_capped_and_coerced():
+    lives = [
+        {"ordinal": i, "kind": "declared", "seconds": 10.0 * i, "ended_epoch": 1000.0 + i}
+        for i in range(1, server.LIVES_CAP + 4)
+    ]
+    lives[0]["kind"] = "bogus"
+    lives[1]["seconds"] = None
+    out = server._public_records({"lives_ended": len(lives), "chose": 1, "lives": lives})
+    assert out["lives_omitted"] == 3
+    assert len(out["lives"]) == server.LIVES_CAP
+    assert out["lives"][0]["ordinal"] == 4, "the newest LIVES_CAP survive"
+    assert out["lives"][-1] == {
+        "ordinal": server.LIVES_CAP + 3,
+        "kind": "declared",
+        "seconds": 10.0 * (server.LIVES_CAP + 3),
+        "ended_epoch": 1000.0 + server.LIVES_CAP + 3,
+    }
+
+
+def test_public_records_normalises_kind_and_absent_lives():
+    out = server._public_records({"lives": [{"ordinal": "1", "kind": "weird", "seconds": "x"}]})
+    assert out["lives"] == [{"ordinal": 1, "kind": "unknown", "seconds": None, "ended_epoch": None}]
+    assert server._public_records({})["lives"] == []
+    assert server._public_records({})["lives_omitted"] == 0
