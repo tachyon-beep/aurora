@@ -24,6 +24,8 @@ POLL_SECONDS = 30
 MAX_TOKENS = 120
 TEMPERATURE = 0.7
 MAX_OUTPUT_CHARS = 400
+RETRY_SECONDS = 600
+MAX_ATTEMPTS = 3
 
 DEPTH_FULL = "full"
 DEPTH_PARTIAL = "partial"
@@ -52,6 +54,7 @@ CLOSING_INSTRUCTION = (
 
 _LOCK = threading.Lock()
 _VERDICTS = {}
+_ATTEMPTS = {}
 _META = {"generated_at": 0.0, "model": ""}
 _START_LOCK = threading.Lock()
 _THREAD = None
@@ -203,17 +206,44 @@ def _collect(telemetry_dir, transcript_path, now=None):
     return entries, turns
 
 
-def _refresh_once(telemetry_dir, transcript_path, now=None):
-    """Generate the newest missing verdict, if any; True when a request was made."""
+def _due(ordinal, mono):
+    """Whether an ordinal without a verdict may be attempted now.
+
+    A reply that fails to parse, or no reply at all, is not retried until
+    RETRY_SECONDS have passed, and never more than MAX_ATTEMPTS times, so one
+    unanswerable life neither costs a request every loop iteration nor keeps
+    the older lives behind it from being rated.
+    """
+    record = _ATTEMPTS.get(ordinal)
+    if record is None:
+        return True
+    attempts, last = record
+    if attempts >= MAX_ATTEMPTS:
+        return False
+    return mono - last >= RETRY_SECONDS
+
+
+def _refresh_once(telemetry_dir, transcript_path, now=None, mono=None):
+    """Generate the newest due missing verdict, if any; True when a request was made."""
     if not enabled():
         return False
+    if mono is None:
+        mono = time.monotonic()
     entries, turns = _collect(telemetry_dir, transcript_path, now=now)
     with _LOCK:
         have = set(_VERDICTS)
-    for entry in entries:
-        ordinal = entry.get("ordinal")
-        if not isinstance(ordinal, int) or ordinal in have:
-            continue
+        due = [
+            entry
+            for entry in entries
+            if isinstance(entry.get("ordinal"), int)
+            and entry["ordinal"] not in have
+            and _due(entry["ordinal"], mono)
+        ]
+    for entry in due:
+        ordinal = entry["ordinal"]
+        with _LOCK:
+            attempts, _last = _ATTEMPTS.get(ordinal, (0, 0.0))
+            _ATTEMPTS[ordinal] = (attempts + 1, mono)
         evidence = life_evidence(ordinal, entry, turns)
         note = llm._collapse(str(entry.get("summary") or ""))[:NOTE_CHARS]
         reply = llm.chat(
@@ -267,6 +297,7 @@ def _reset_for_tests():
     global _THREAD, _STARTED
     with _LOCK:
         _VERDICTS.clear()
+        _ATTEMPTS.clear()
         _META.update({"generated_at": 0.0, "model": ""})
     with _START_LOCK:
         _THREAD = None

@@ -323,3 +323,40 @@ def test_model_defaults_to_the_summary_model(monkeypatch):
     assert desk.model_name() == "vendor/recap"
     monkeypatch.setenv("STAGE_ANALYSIS_MODEL", "vendor/analyst")
     assert desk.model_name() == "vendor/analyst"
+
+
+def test_a_failing_ordinal_backs_off_and_does_not_starve_older_lives(tmp_path, monkeypatch):
+    """A reply that never parses for the newest life is retried only after
+    RETRY_SECONDS and at most MAX_ATTEMPTS times; the older lives behind it are
+    rated in the meantime rather than waiting on the poison ordinal."""
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    calls = []
+
+    def fake_chat(system, user, *args, **kwargs):
+        calls.append(user)
+        return None if "TURN 3" in user else "STARS: 3 | Fine."
+
+    monkeypatch.setattr(desk.llm, "chat", fake_chat)
+    now = time.time()
+    notes = {3: "Incarnation ended by done() at TURN 3 with nothing to say."}
+    telemetry, transcript = _tree(tmp_path, [now - 5000, now - 3000, now - 1000], notes=notes)
+
+    assert desk._refresh_once(telemetry, transcript, mono=0.0) is True
+    assert desk.cached_verdicts() is None
+    assert len(calls) == 1
+
+    assert desk._refresh_once(telemetry, transcript, mono=30.0) is True
+    assert [v["ordinal"] for v in desk.cached_verdicts()["verdicts"]] == [2]
+    assert desk._refresh_once(telemetry, transcript, mono=60.0) is True
+    assert [v["ordinal"] for v in desk.cached_verdicts()["verdicts"]] == [2, 1]
+    assert len(calls) == 3
+
+    assert desk._refresh_once(telemetry, transcript, mono=90.0) is False
+    assert len(calls) == 3
+
+    assert desk._refresh_once(telemetry, transcript, mono=desk.RETRY_SECONDS + 1.0) is True
+    assert desk._refresh_once(telemetry, transcript, mono=2 * desk.RETRY_SECONDS + 2.0) is True
+    assert len(calls) == 5
+    assert desk._refresh_once(telemetry, transcript, mono=3 * desk.RETRY_SECONDS + 3.0) is False
+    assert len(calls) == 5
+    assert [v["ordinal"] for v in desk.cached_verdicts()["verdicts"]] == [2, 1]

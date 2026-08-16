@@ -1080,6 +1080,9 @@ function renderRevealFrame() {
     if (shown > 0) enterSay(node);
     setText(node.__say.__clamp, sp.slice(0, shown).join(""));
   }
+  /* Each frame grows the newest turn; a pinned feed follows it so the
+     leading edge never slides under the panel between polls. */
+  repin();
 }
 function clearRevealWork() {
   revealState.node = null;
@@ -1102,6 +1105,7 @@ function finishReveal() {
       enterSay(node);
       setText(node.__say.__clamp, revealState.sayParts.join(""));
     }
+    repin();
   }
   clearRevealWork();
 }
@@ -1685,20 +1689,7 @@ function renderDead() {
     setText(g.__facts, facts.join(" · "));
   }
   for (var k = lin.length; k < graveNodes.length; k++) graveNodes[k].hidden = true;
-  var hiddenLives = Math.max(0, (st.lives_ended || 0) - lin.length);
-  var ended = st.lives_ended || 0, chose = st.ended_by_choice || 0;
-  /* The record book: the foot rotates cross-life records so a returning
-     viewer has something to track. tick() carries the rotation. */
-  var lines = [];
-  if (ended) lines.push("by their own notes, " + chose + " of " + ended + " chose to die");
-  var longest = (snap.records || {}).longest_life;
-  if (longest && longest.seconds != null) {
-    lines.push("longest life: incarnation " + longest.ordinal + " · " + dur(longest.seconds));
-  }
-  if (hiddenLives > 0) {
-    lines.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");
-  }
-  deadFootLines = lines.length ? lines : [""];
+  deadFootLines = deadFootFor(st, snap.records, lin.length);
 }
 
 /* ---------- desk ---------- */
@@ -1708,6 +1699,26 @@ function renderDead() {
 var deadView = "graves";
 var deadFootLines = [""];
 var DESK_ROWS = 4;
+/* The record book: the foot rotates cross-life records so a returning viewer
+   has something to track; tick() carries the rotation. The chose count comes
+   from the record book, which is taken over every tombstone; stats counts it
+   over the five lineage entries only and is used just when the book is absent. */
+function deadFootFor(st, book, shown) {
+  st = st || {}; book = book || {};
+  var ended = st.lives_ended || 0;
+  var chose = book.lives_ended ? (book.chose || 0) : (st.ended_by_choice || 0);
+  var hiddenLives = Math.max(0, ended - (shown || 0));
+  var lines = [];
+  if (ended) lines.push("by their own notes, " + chose + " of " + ended + " chose to die");
+  var longest = book.longest_life;
+  if (longest && longest.seconds != null) {
+    lines.push("longest life: incarnation " + longest.ordinal + " · " + dur(longest.seconds));
+  }
+  if (hiddenLives > 0) {
+    lines.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");
+  }
+  return lines.length ? lines : [""];
+}
 var DEPTH_TAG = { partial: "partial record", tombstone_only: "tombstone only" };
 function starGlyphs(n) {
   n = Math.max(1, Math.min(5, Math.round(Number(n) || 1)));
@@ -1771,14 +1782,14 @@ function renderEye() {
   eye.hidden = false;
   var img = $("eye-img");
   if (img.__src !== sense.url) { img.__src = sense.url; img.src = sense.url; }
-  eye.__slot = sense.slot;
+  eye.__feed = sense.feed;
   eye.__epoch = sense.captured_epoch;
   setEyeCaption(clock());
 }
 function setEyeCaption(nowMs) {
   var eye = $("eye");
   if (eye.hidden) return;
-  setText($("eye-cap"), "THE EYE · slot " + eye.__slot +
+  setText($("eye-cap"), "THE EYE · feed " + eye.__feed +
     (eye.__epoch != null ? " · " + rel(eye.__epoch, nowMs) : ""));
 }
 
@@ -1823,7 +1834,8 @@ function renderRibbon() {
   clearRows(diffHost);
   if (showDiff) {
     setText($("selfmod-title"),
-      "WHAT IT JUST CHANGED · seen " + Math.max(0, Math.floor(editAge)) + "s ago");
+      (edit.restored ? "SOURCE RESTORED TO SEED · seen " : "WHAT IT JUST CHANGED · seen ") +
+      Math.max(0, Math.floor(editAge)) + "s ago");
     var dlines = String(edit.excerpt || "").split("\n");
     for (var dl = 0; dl < dlines.length; dl++) {
       var ln = dlines[dl], dcls = "dline";

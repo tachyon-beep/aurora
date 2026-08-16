@@ -138,3 +138,34 @@ def test_a_touched_but_identical_file_keeps_the_previous_edit(tmp_path):
     _rewrite(work, "a\nb\n", stamp=3)
 
     assert codewatch.latest_edit(str(work), now=20.0) == first
+
+
+def test_a_change_back_to_the_seed_is_marked_restored(tmp_path):
+    """The harness rewrites agent.py to the seed after a death and on recovery;
+    the observed change is recorded but marked restored so the page names the
+    outcome rather than attributing an edit to the agent."""
+    work = _work_dir(tmp_path, source="a\nb\nc\nEXTRA\n")
+    (work / "agent_stock.py").write_text("a\nb\nc\n", encoding="utf-8")
+    assert codewatch.latest_edit(str(work)) is None
+
+    _rewrite(work, "a\nb\nc\n", stamp=2)
+    edit = codewatch.latest_edit(str(work))
+    assert edit["restored"] is True
+    assert edit["removed"] == 1 and edit["added"] == 0
+
+    _rewrite(work, "a\nb\nc\nNEW\n", stamp=3)
+    edit = codewatch.latest_edit(str(work))
+    assert edit["restored"] is False
+    assert edit["added"] == 1
+
+
+def test_a_source_line_beginning_with_dashes_still_counts(tmp_path):
+    work = _work_dir(tmp_path, source="a\n--x\nb\n")
+    assert codewatch.latest_edit(str(work)) is None
+
+    _rewrite(work, "a\nb\n++y\n", stamp=2)
+    edit = codewatch.latest_edit(str(work))
+    assert edit["removed"] == 1
+    assert edit["added"] == 1
+    assert "---x" in edit["excerpt"]
+    assert "+++y" in edit["excerpt"]

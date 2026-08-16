@@ -861,6 +861,16 @@ out.line_classes = nodes["selfmod-diff"].children.map(function (n) { return n.cl
 out.line_texts = nodes["selfmod-diff"].children.map(function (n) { return n.textContent; });
 out.count = nodes["selfmod-count"].textContent;
 
+/* A change that leaves the file identical to the seed is a restore, not the
+   agent's edit: the harness does this after every death and on recovery. */
+var restored = snapWith(NOW / 1000 - 12);
+restored.code.latest_edit.restored = true;
+restored.events = [];
+global.snap = restored;
+renderRibbon();
+out.title_restored = nodes["selfmod-title"].textContent;
+out.diff_hidden_restored = nodes["selfmod-diff"].hidden;
+
 /* Sixty seconds on, the rows return and the title is restored -- with the
    count intact either way. */
 global.snap = snapWith(NOW / 1000 - 60);
@@ -887,6 +897,8 @@ def test_a_fresh_edit_swaps_the_rows_for_the_diff_and_back(tmp_path):
     assert out["line_classes"] == ["dline d-hunk", "dline", "dline d-add", "dline d-rem"]
     assert out["line_texts"] == ["@@ -1,3 +1,4 @@", " def a():", "+    return 1", "-    return 0"]
     assert out["count"] == "1 THIS LIFE"
+    assert out["title_restored"] == "SOURCE RESTORED TO SEED · seen 12s ago"
+    assert out["diff_hidden_restored"] is False
     assert out["title_after"] == "WHAT IT DID TO ITSELF"
     assert out["diff_hidden_after"] is True
     assert out["rows_hidden_after"] is False
@@ -906,6 +918,8 @@ global.turnKey = function (t) { return "1:" + t.index; };
 global.turnNodes = new Map();
 global.snap = null;
 global.setTimeout = function () { return 0; };
+var repins = 0;
+global.repin = function () { repins++; };
 function clampStub() {
   return { textContent: "", scrollTop: 0, scrollHeight: 500,
     classList: { entered: 0, add: function (c) { if (c === "enter") this.entered = 1; },
@@ -953,6 +967,8 @@ out.think_done = node.__think.__clamp.textContent;
 out.say_started = node.__say.__clamp.textContent;
 out.say_entered = node.__say.__clamp.classList.entered;
 out.say_shown_when_spoken = node.__say.hidden === false;
+/* Every frame grows the newest turn, so every frame repins the feed. */
+out.repins_per_frame = repins;
 
 /* A newer turn fast-forwards the reveal to completion instantly. */
 turns.push({ kind: "loop", index: 5, epoch: 1005, reasoning: "zeta" });
@@ -964,6 +980,7 @@ out.fast_forwarded_think = node.__think.__clamp.textContent;
 out.fast_forwarded_say = node.__say.__clamp.textContent;
 out.new_key = revealState.key;
 out.old_timer_cleared = timers[0].cleared;
+out.repins_after_finish = repins;
 
 /* A stale newest turn renders whole: the key advances, no reveal starts,
    the clamp is never blanked. */
@@ -1018,10 +1035,12 @@ def test_the_typewriter_paces_fast_forwards_and_respects_its_gates(tmp_path):
     assert out["say_started"] == "delta"
     assert out["say_entered"] == 1
     assert out["say_shown_when_spoken"] is True
+    assert out["repins_per_frame"] == 3
     assert out["fast_forwarded_think"] == "alpha beta gamma"
     assert out["fast_forwarded_say"] == "delta epsilon"
     assert out["new_key"] == "1:5"
     assert out["old_timer_cleared"] is True
+    assert out["repins_after_finish"] == 5
     assert out["stale_no_timer"] is True
     assert out["stale_key"] == "1:6"
     assert out["stale_text_untouched"] == "old words"
@@ -1335,6 +1354,12 @@ deskCycle(5);
 out.graves_back = nodes["graves"].hidden === false && nodes["desk"].hidden === true;
 out.title_back = nodes["dead-title"].textContent;
 
+/* The chose count is the record book's, over every tombstone; stats counts
+   over the five lineage entries only and would cap the numerator at five. */
+out.foot_book = deadFootFor({ lives_ended: 12, ended_by_choice: 5 },
+  { lives_ended: 12, chose: 10, longest_life: { ordinal: 4, seconds: 90 } }, 2);
+out.foot_no_book = deadFootFor({ lives_ended: 3, ended_by_choice: 2 }, null, 2);
+
 /* The record-book foot rotates its lines on a 20s clock. */
 deadFootLines = ["chose-line", "longest-line", "hidden-line"];
 rotateDeadFoot(0);
@@ -1377,6 +1402,15 @@ def test_the_desk_rotation_stars_and_record_book_foot(tmp_path):
     assert out["title"] == "THE DESK"
     assert out["graves_back"] is True
     assert out["title_back"] == "THE DEAD"
+    assert out["foot_book"] == [
+        "by their own notes, 10 of 12 chose to die",
+        "longest life: incarnation 4 · 90s",
+        "10 earlier lives not shown",
+    ]
+    assert out["foot_no_book"] == [
+        "by their own notes, 2 of 3 chose to die",
+        "1 earlier life not shown",
+    ]
     assert out["foot_0"] == "chose-line"
     assert out["foot_1"] == "longest-line"
     assert out["foot_2"] == "hidden-line"
@@ -1411,7 +1445,7 @@ global.snap = { sense: null };
 renderEye();
 out.hidden_when_null = eye.hidden;
 
-global.snap = { sense: { slot: "0", url: "/frame/0/001.jpg", captured_epoch: NOW / 1000 - 12 } };
+global.snap = { sense: { feed: "0", url: "/frame/0/001.jpg", captured_epoch: NOW / 1000 - 12 } };
 renderEye();
 out.shown = !eye.hidden;
 out.src = img.src;
@@ -1421,7 +1455,7 @@ out.caption = cap.textContent;
 /* The same url never re-sets src (no reload flicker); a new frame does. */
 renderEye();
 out.src_sets_after_repeat = srcSets;
-global.snap = { sense: { slot: "2", url: "/frame/2/002.jpg", captured_epoch: NOW / 1000 - 2 } };
+global.snap = { sense: { feed: "2", url: "/frame/2/002.jpg", captured_epoch: NOW / 1000 - 2 } };
 renderEye();
 out.src_sets_after_new = srcSets;
 out.caption_new = cap.textContent;
@@ -1442,8 +1476,8 @@ def test_the_eye_gates_on_sense_and_caches_its_src(tmp_path):
     assert out["shown"] is True
     assert out["src"] == "/frame/0/001.jpg"
     assert out["src_sets"] == 1
-    assert out["caption"] == "THE EYE · slot 0 · 12s ago"
+    assert out["caption"] == "THE EYE · feed 0 · 12s ago"
     assert out["src_sets_after_repeat"] == 1
     assert out["src_sets_after_new"] == 2
-    assert out["caption_new"] == "THE EYE · slot 2 · 2s ago"
+    assert out["caption_new"] == "THE EYE · feed 2 · 2s ago"
     assert out["hidden_again"] is True

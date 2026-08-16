@@ -6,6 +6,13 @@ import pytest
 from stage import records
 
 
+@pytest.fixture(autouse=True)
+def _clean_records_state():
+    records._reset_for_tests()
+    yield
+    records._reset_for_tests()
+
+
 def _tombstone(work, name, text, age_seconds):
     tomb = work / "tombstones"
     tomb.mkdir(parents=True, exist_ok=True)
@@ -79,3 +86,35 @@ def test_classification_reads_only_the_head_of_a_long_note(tmp_path):
     _tombstone(tmp_path, "incarnation-a.txt", text, 100)
     book = records.record_book(str(tmp_path))
     assert book["chose"] == 0
+
+
+def test_the_book_is_memoized_on_the_tombstone_set(tmp_path, monkeypatch):
+    work = tmp_path / "work"
+    tombs = work / "tombstones"
+    tombs.mkdir(parents=True)
+    now = time.time()
+    for ordinal, age in ((1, 3000), (2, 2000)):
+        path = tombs / f"incarnation-{ordinal:04d}.txt"
+        path.write_text("Incarnation ended by done().", encoding="utf-8")
+        os.utime(path, (now - age, now - age))
+    reads = []
+    real_open = open
+
+    def counting_open(path, *args, **kwargs):
+        reads.append(str(path))
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", counting_open)
+    first = records.record_book(str(work), now=now)
+    assert first["lives_ended"] == 2 and first["chose"] == 2
+    assert len(reads) == 2
+    second = records.record_book(str(work), now=now)
+    assert second == first
+    assert len(reads) == 2
+
+    third_path = tombs / "incarnation-0003.txt"
+    third_path.write_text("Incarnation terminated by the harness.", encoding="utf-8")
+    os.utime(third_path, (now - 1000, now - 1000))
+    third = records.record_book(str(work), now=now)
+    assert third["lives_ended"] == 3 and third["chose"] == 2
+    assert len(reads) == 5

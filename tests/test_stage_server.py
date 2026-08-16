@@ -539,8 +539,8 @@ def test_the_desk_and_sense_keys_cap_and_reject_malformed_shapes():
     assert len(package["verdicts"][0]["evidence"]) == server.DESK_EVIDENCE_CAP
     assert len(package["model"]) == server.MODEL_CAP
     assert server._public_sense(None) is None
-    assert server._public_sense({"slot": "", "name": "a.jpg"}) is None
-    frame = server._public_sense({"slot": "2", "name": "04 1.jpg", "captured_epoch": 5.0})
+    assert server._public_sense({"feed": "", "name": "a.jpg"}) is None
+    frame = server._public_sense({"feed": "2", "name": "04 1.jpg", "captured_epoch": 5.0})
     assert frame["url"] == "/frame/2/04%201.jpg"
 
 

@@ -496,7 +496,7 @@ DESK_EVIDENCE_CAP = 120
 DESK_DEPTH_CAP = 20
 DESK_VERDICTS_CAP = 5
 PULSE_BUCKET_COUNT = data.PULSE_WINDOW_SECONDS // data.PULSE_BUCKET_SECONDS
-SLOT_CAP = 8
+FEED_CAP = 8
 
 
 def _public_pulse(pulse):
@@ -529,7 +529,7 @@ def _empty_pulse():
 
 
 def _public_edit(edit):
-    """The latest observed self-edit, capped, or None."""
+    """The latest observed change to the agent source, capped, or None."""
     if not isinstance(edit, dict):
         return None
     epoch = edit.get("epoch")
@@ -538,6 +538,7 @@ def _public_edit(edit):
         "added": int(edit.get("added") or 0),
         "removed": int(edit.get("removed") or 0),
         "excerpt": _clip(str(edit.get("excerpt") or ""), DIFF_EXCERPT_CAP),
+        "restored": bool(edit.get("restored")),
     }
 
 
@@ -601,14 +602,14 @@ def _public_sense(frame):
     """The newest sense frame as a servable reference, or None."""
     if not isinstance(frame, dict):
         return None
-    slot = _clip(str(frame.get("slot") or ""), SLOT_CAP)
+    feed = _clip(str(frame.get("feed") or ""), FEED_CAP)
     name = str(frame.get("name") or "")
     epoch = frame.get("captured_epoch")
-    if not slot or not name:
+    if not feed or not name:
         return None
     return {
-        "slot": slot,
-        "url": "/frame/" + quote(slot, safe="") + "/" + quote(name, safe=""),
+        "feed": feed,
+        "url": "/frame/" + quote(feed, safe="") + "/" + quote(name, safe=""),
         "captured_epoch": float(epoch) if isinstance(epoch, (int, float)) else None,
     }
 
@@ -698,7 +699,7 @@ def _assemble_snapshot(now):
         "stats": stats,
         "code": dict(
             data.code_stats(work),
-            latest_edit=_public_edit(codewatch.latest_edit(work, now=now)),
+            latest_edit=_public_edit(codewatch.cached_edit()),
         ),
         "turns": [_public_turn(t) for t in display],
         "events": data.self_modification_events(turns, limit=6, life=life),
@@ -855,6 +856,10 @@ def main():
         pass
     try:
         desk.start_background_refresh(TELEMETRY_DIR, transcript_path())
+    except Exception:
+        pass
+    try:
+        codewatch.start_background_refresh(os.path.join(TELEMETRY_DIR, "work"))
     except Exception:
         pass
     print(f"stage: stream on :{STREAM_PORT}, console on :{CONSOLE_PORT}")

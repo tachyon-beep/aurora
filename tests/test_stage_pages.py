@@ -728,7 +728,7 @@ def test_the_eye_shows_only_fresh_sense_frames_and_never_blocks_the_feed():
     capture age. alt is empty — the caption carries the fact."""
     assert 'id="eye"' in HTML
     assert '<img id="eye-img" alt="">' in HTML
-    assert '"THE EYE · slot "' in HTML
+    assert '"THE EYE · feed "' in HTML
     assert "img.__src !== sense.url" in HTML
     eye = HTML[HTML.index("\n#eye {") :]
     eye = eye[: eye.index("}")]

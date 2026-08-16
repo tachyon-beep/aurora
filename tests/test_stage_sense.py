@@ -50,7 +50,7 @@ def test_newest_frame_picks_the_newest_fresh_frame_across_slots(tmp_path):
 
     got = sensecam.newest_frame(str(sense), now=NOW)
 
-    assert got["slot"] == "2"
+    assert got["feed"] == "2"
     assert got["name"] == "140.jpg"
     assert abs(got["captured_epoch"] - (NOW - 60)) < 1
 
