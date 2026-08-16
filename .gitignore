@@ -22,12 +22,15 @@ agent_life_transcript.txt
 tombstones/
 .playwright-mcp/
 
-# Filigree issue tracker — its own files are tracked, so the tracker travels
-# with the repo. Ignoring .weft/ itself would stop git descending, and the
-# nested .weft/filigree/.gitignore that keeps the ephemeral runtime files
-# (WAL sidecars, logs, pids, federation_token) out would never be read.
+# Filigree issue tracker — its config travels with the repo, its database does
+# not: a binary sqlite file conflicts on every concurrent edit and grows the
+# history without being reviewable. Ignoring .weft/ itself would stop git
+# descending, and the nested .weft/filigree/.gitignore that keeps the ephemeral
+# runtime files (WAL sidecars, logs, pids, federation_token) out would never be
+# read.
 .weft/*
 !.weft/filigree/
+.weft/filigree/filigree.db
 .filigree/
 
 # Operator-provisioned volumes and locally built wheels
@@ -37,4 +40,3 @@ vendor/wheels/
 # Claude worktrees and local captures
 .claude/worktrees/
 stage-1080.png
-.weft/filigree/filigree.db
