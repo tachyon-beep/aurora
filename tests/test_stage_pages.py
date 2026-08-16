@@ -465,10 +465,18 @@ def test_the_state_strip_left_the_rail_for_the_masthead():
 
 def test_the_lineage_reuses_the_grave_palette_for_bar_kinds():
     css = HTML[HTML.index("<style>") : HTML.index("</style>")]
-    assert ".bar.k-declared { background: var(--chosen); }" in css
-    assert ".bar.k-harness { background: var(--taken); }" in css
-    assert ".bar.k-unknown { background: var(--broken); }" in css
-    assert ".bar.now { background: var(--vital);" in css
+    assert "#bars .bar.k-declared { background: var(--chosen); }" in css
+    assert "#bars .bar.k-harness { background: var(--taken); }" in css
+    assert "#bars .bar.k-unknown { background: var(--broken); }" in css
+    assert "#bars .bar.now { background: var(--vital);" in css
+    assert "\n.bar {" not in css
+
+
+def test_the_repository_line_survives_the_phone():
+    narrow = HTML[HTML.index("@media (max-width: 719px)") :]
+    narrow = narrow[: narrow.index("}", narrow.index("}") + 1) + 1]
+    assert "#repo" not in narrow
+    assert "#provenance { display: none; }" in narrow
 
 
 def test_the_spotlight_and_foot_are_driven_by_the_tick_not_by_clicks():

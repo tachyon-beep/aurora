@@ -386,15 +386,15 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #chart { flex: none; height: 220px; display: flex; flex-direction: column; gap: 6px; }
 #bars { flex: 1; min-height: 0; display: flex; align-items: flex-end; gap: 4px;
   border-bottom: 1px solid var(--rule-2); }
-.bar { flex: 1 1 0; min-width: 0; height: 2px; opacity: .8; border-radius: 2px 2px 0 0;
+#bars .bar { flex: 1 1 0; min-width: 0; height: 2px; opacity: .8; border-radius: 2px 2px 0 0;
   position: relative; }
-.bar.k-declared { background: var(--chosen); }
-.bar.k-harness { background: var(--taken); }
-.bar.k-unknown { background: var(--broken); }
-.bar.now { background: var(--vital); opacity: 1; }
-.bar.now::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
+#bars .bar.k-declared { background: var(--chosen); }
+#bars .bar.k-harness { background: var(--taken); }
+#bars .bar.k-unknown { background: var(--broken); }
+#bars .bar.now { background: var(--vital); opacity: 1; }
+#bars .bar.now::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
   background: var(--flash); animation: breathe 1.6s ease-in-out infinite; }
-.bar.lit { opacity: 1; outline: 1px solid var(--paper); outline-offset: 2px; }
+#bars .bar.lit { opacity: 1; outline: 1px solid var(--paper); outline-offset: 2px; }
 #bar-labels { flex: none; height: 18px; display: flex; gap: 4px; }
 .bl { flex: 1 1 0; min-width: 0; text-align: center; overflow: visible; white-space: nowrap;
   font: 400 13px/18px var(--mono); color: var(--paper-faint);
@@ -642,7 +642,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   #ribbon { grid-template-columns: 1fr 1.6fr 1fr; }
 }
 @media (max-width: 719px) {
-  #provenance, #repo { display: none; }
+  #provenance { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -1619,7 +1619,7 @@ function renderSpot(nowMs) {
   setText($("spot-eyebrow"), eyebrow);
   setText($("spot-facts"), spotFacts(l));
   var note = norm(l.sentence || l.summary || "");
-  if (setText($("spot-note"), note)) $("spot-note").__dirty = true;
+  setText($("spot-note"), note);
   if (spotShown !== key) {
     spotShown = key;
     if (!REDUCED) {
