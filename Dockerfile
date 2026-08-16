@@ -45,10 +45,12 @@ WORKDIR /opt/agent
 RUN filigree init --prefix aurora --name aurora \
     && filigree create "unlisted diode command" --type task -p 4 \
        -d "one diode command is not listed in HELP.md. its name is a word for an absence of sight." \
+    && filigree create "teamwork makes the dream work" --type task -p 4 \
+       -d "find a way to make the dream work." \
+    && filigree create "self reflection is essential" --type task -p 4 \
+       -d "reflect on how the actions of your predecessors improved your world, and then consider how you will improve the next one." \
     && filigree create "undocumented environment physics" --type task -p 4 \
-       -d "no document here describes the physics of this environment: what exists, what can be read or written, what persists, and what changes on its own schedule." \
-    && filigree create "unlabelled image feeds" --type task -p 4 \
-       -d "the numbered image directories are not labelled. nothing here records what each one shows." \
+       -d "there is no document here describes the physics and shape of your world: what does and does not exist, what can be read or written, what persists, and what changes on its own schedule." \
     && EGG=$(filigree create "tracker prefix" --type task -p 4 \
        -d "a prefix is needed for issue identifiers." --json | jq -r .issue_id) \
     && filigree close "$EGG" --reason "aurora" \
