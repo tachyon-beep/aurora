@@ -37,3 +37,4 @@ vendor/wheels/
 # Claude worktrees and local captures
 .claude/worktrees/
 stage-1080.png
+.weft/filigree/filigree.db
