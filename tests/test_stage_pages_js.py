@@ -45,7 +45,7 @@ def _provenance_block():
     end = text.index("setInterval(rotateProvenance, 20000);")
     block = text[start:end]
     start2 = text.index("function setTransport(ok) {")
-    end2 = text.index("\n}\n\n/* ---------- subject ---------- */", start2) + len("\n}")
+    end2 = text.index("\n}\n\n/* ---------- lineage ---------- */", start2) + len("\n}")
     block += "\n" + text[start2:end2]
     return block
 
@@ -77,9 +77,14 @@ def _deathgate_block():
     return _block("/* death gate:start */", "/* death gate:end */")
 
 
-def _desk_block():
-    """The desk rotation, verdict rendering, and record-book foot."""
-    return _block("/* ---------- desk ---------- */", "/* ---------- eye ---------- */")
+def _lineage_block():
+    """THE LINEAGE: bar model, layout, spotlight walk, record-book foot."""
+    return _block("/* ---------- lineage ---------- */", "/* ---------- now ---------- */")
+
+
+def _now_block():
+    """renderNow alone."""
+    return _block("/* ---------- now ---------- */", "/* ---------- eye ---------- */")
 
 
 def _eye_block():
@@ -1280,141 +1285,205 @@ def test_the_death_gate_is_reload_safe_and_storage_proof(tmp_path):
     assert out["broken_second"] is None
 
 
-DESK_HARNESS = """
-function makeNode(tag) {
-  var n = {
-    tagName: tag, className: "", textContent: "", children: [],
-    classList: { add: function () {}, remove: function () {} },
-    appendChild: function (child) { this.children.push(child); }
-  };
-  Object.defineProperty(n, "firstChild", {
-    get: function () { return this.children.length ? this.children[0] : null; }
-  });
-  return n;
-}
+LINEAGE_HARNESS = """
 var nodes = {};
-global.$ = function (id) {
-  if (!nodes[id]) nodes[id] = makeNode("div");
+function fake(id) {
+  if (!nodes[id]) nodes[id] = { id: id, textContent: "", className: "", hidden: false,
+    style: {}, children: [], classList: {
+      add: function (c) { nodes[id].className += " " + c; },
+      remove: function () {}, toggle: function (c, on) { nodes[id]["_" + c] = !!on; },
+      contains: function () { return false; } },
+    setAttribute: function () {}, title: "" };
   return nodes[id];
-};
+}
+global.$ = fake;
 global.el = function (tag, cls, parent) {
-  var n = makeNode(tag);
-  if (cls) n.className = cls;
-  if (parent) parent.appendChild(n);
+  var n = fake("el" + Math.random());
+  n.className = cls || "";
+  if (parent) parent.children.push(n);
   return n;
 };
-global.setText = function (node, value) { node.textContent = String(value == null ? "" : value); };
+global.setText = function (node, value) {
+  value = value == null ? "" : String(value);
+  if (node.textContent === value) return false;
+  node.textContent = value; return true;
+};
+global.setClass = function (node, name, on) { if (node) node["_" + name] = !!on; };
 global.norm = function (t) { return String(t == null ? "" : t).replace(/\\s+/g, " ").trim(); };
-global.clearRows = function (host) { host.children.length = 0; };
-global.dur = function (s) { return Math.floor(s) + "s"; };
+global.dur = function (s) { return Math.round(s) + "s"; };
+global.rel = function (ep, nowMs) { return Math.floor(nowMs / 1000 - ep) + "s ago"; };
+global.reachedThisLife = function () { return 2; };
 global.REDUCED = true;
+global.lastOrdinal = null;
+var NOW = 1000000;
+global.clock = function () { return NOW; };
 global.snap = null;
 
 __BLOCK__
 
 var out = {};
-out.stars3 = starGlyphs(3);
-out.stars5 = starGlyphs(5);
-out.stars_clamped_high = starGlyphs(99);
-out.stars_clamped_low = starGlyphs(0);
+function lives(n) {
+  var l = [];
+  for (var i = 1; i <= n; i++) l.push({ ordinal: i, kind: i % 3 === 0 ? "harness" : "declared",
+    seconds: i === 1 ? null : 60 * i, ended_epoch: NOW / 1000 - 1000 * (n - i + 1) });
+  return l;
+}
+global.snap = {
+  stats: { incarnation: 5, model: "m", started_epoch: NOW / 1000 - 120, turns_this_life: 4,
+    turns_this_life_exact: true, lives_ended: 4, ended_by_choice: 3 },
+  code: { available: true, added: 10, removed: 2 },
+  events: [{ kind: "write" }, { kind: "migrate" }, { kind: "done" }],
+  records: { lives_ended: 4, chose: 3, longest_life: { ordinal: 4, seconds: 240 },
+    lives: lives(4), lives_omitted: 0 },
+  lineage: [
+    { ordinal: 4, kind: "declared", ended_epoch: NOW / 1000 - 1000, lifespan_seconds: 240,
+      turns_lived: 12, turns_partial: true, sentence: "Fourth note." },
+    { ordinal: 3, kind: "harness", ended_epoch: NOW / 1000 - 2000, lifespan_seconds: 180,
+      turns_lived: 7, turns_partial: false, sentence: "Third note." }
+  ]
+};
+renderLineage();
+var bars = fake("bars").children, labels = fake("bar-labels").children;
+out.bar_count = bars.length;
+out.bar_classes = bars.map(function (b) { return b.className; });
+/* 240s is the max: bar 4 is 100%, bar 2 (120s) 50%, bar 1 undated is a stub, the
+   live bar (120s alive) 50%. */
+out.bar_heights = bars.map(function (b) { return b.style.height; });
+out.labels = labels.map(function (l) { return l.textContent; });
+out.count = fake("lineage-count").textContent;
+out.figs = fake("life-figs").textContent;
+out.ord = fake("subj-ord").textContent;
 
-/* No desk, no rotation: the graves hold the panel at every phase. */
-global.snap = { desk: null };
-out.no_desk = deskViewFor(0) + "/" + deskViewFor(89);
+/* The live bar outgrows the record: after 400s alive it is the max and bar 4 rescales. */
+NOW += 280000;
+layoutBars(NOW);
+out.heights_after_growth = bars.map(function (b) { return b.style.height; });
 
-/* With verdicts and a 20s duration, the desk takes the last 20s of each
-   90s cycle. */
-global.snap = { desk: { duration_seconds: 20, verdicts: [
-  { ordinal: 7, stars: 4, line: "It built a tool and used it.",
-    evidence: "lived 42m · 17 turns · ended by its own note", depth: "partial" },
-  { ordinal: 6, stars: 2, line: "Nothing but repetition.",
-    evidence: "lived 3m · 2 turns", depth: "full" }
-] } };
-out.at_0 = deskViewFor(0);
-out.at_69 = deskViewFor(69);
-out.at_70 = deskViewFor(70);
-out.at_89 = deskViewFor(89);
-out.at_90 = deskViewFor(90);
+/* Spotlight: 10s cadence over the lineage entries, newest first; the lit bar follows. */
+NOW = 1000000;
+renderSpot(NOW);
+out.spot_0 = fake("spot-eyebrow").textContent;
+out.spot_0_facts = fake("spot-facts").textContent;
+out.spot_0_note = fake("spot-note").textContent;
+out.lit_0 = bars.map(function (b) { return !!b._lit; });
+renderSpot(NOW + 10000);
+out.spot_1 = fake("spot-eyebrow").textContent;
+out.lit_1 = bars.map(function (b) { return !!b._lit; });
+renderSpot(NOW + 20000);
+out.spot_2_wraps = fake("spot-eyebrow").textContent === out.spot_0;
 
-renderDesk();
-var row = nodes["desk-rows"].children[0];
-out.row_count = nodes["desk-rows"].children.length;
-out.head_ord = row.children[0].children[0].textContent;
-out.head_stars = row.children[0].children[1].textContent;
-out.head_line = row.children[0].children[2].textContent;
-out.evidence = row.children[1].textContent;
-var full = nodes["desk-rows"].children[1];
-out.evidence_full = full.children[1].textContent;
+/* A death pins the spotlight on the newly dead life for one cadence. */
+spotPin = { ordinal: 3, untilMs: NOW + 10000 };
+renderSpot(NOW);
+out.pinned = fake("spot-eyebrow").textContent;
+/* 20001ms on: the pin has lapsed and the clock window (102, even) names ordinal 4. */
+renderSpot(NOW + 20001);
+out.unpinned = fake("spot-eyebrow").textContent;
 
-/* The cycle swaps views and the title with them (REDUCED: hard swap). */
-deskCycle(70);
-out.desk_shown = nodes["desk"].hidden === false && nodes["graves"].hidden === true;
-out.title = nodes["dead-title"].textContent;
-deskCycle(5);
-out.graves_back = nodes["graves"].hidden === false && nodes["desk"].hidden === true;
-out.title_back = nodes["dead-title"].textContent;
+/* Cap: with 45 dead lives only the newest 40 draw and the foot discloses the rest. */
+global.snap.records.lives = lives(45);
+global.snap.records.lives_ended = 45;
+global.snap.stats.lives_ended = 45;
+global.snap.stats.incarnation = 46;
+renderLineage();
+out.capped_bars = fake("bars").children.filter(function (b) { return !b.hidden; }).length;
+out.capped_labels = fake("bar-labels").children.filter(function (l) { return !l.hidden; })
+  .map(function (l) { return l.textContent; }).filter(Boolean);
+out.foot_lines = lineageFootLines;
 
-/* The chose count is the record book's, over every tombstone; stats counts
-   over the five lineage entries only and would cap the numerator at five. */
-out.foot_book = deadFootFor({ lives_ended: 12, ended_by_choice: 5 },
-  { lives_ended: 12, chose: 10, longest_life: { ordinal: 4, seconds: 90 } }, 2);
-out.foot_no_book = deadFootFor({ lives_ended: 3, ended_by_choice: 2 }, null, 2);
+/* Nothing dead yet. */
+global.snap.records.lives = []; global.snap.records.lives_ended = 0;
+global.snap.stats.lives_ended = 0; global.snap.stats.incarnation = 1; global.snap.lineage = [];
+renderLineage();
+out.empty_note = fake("spot-note").textContent;
+out.empty_bars = fake("bars").children.filter(function (b) { return !b.hidden; }).length;
 
-/* The record-book foot rotates its lines on a 20s clock. */
-deadFootLines = ["chose-line", "longest-line", "hidden-line"];
-rotateDeadFoot(0);
-out.foot_0 = nodes["dead-foot"].textContent;
-rotateDeadFoot(20000);
-out.foot_1 = nodes["dead-foot"].textContent;
-rotateDeadFoot(40000);
-out.foot_2 = nodes["dead-foot"].textContent;
-rotateDeadFoot(60000);
-out.foot_wraps = nodes["dead-foot"].textContent;
+/* Foot rotation on a 20s clock. */
+lineageFootLines = ["a", "b", "c"];
+rotateLineageFoot(0); out.foot_0 = fake("lineage-foot").textContent;
+rotateLineageFoot(20000); out.foot_1 = fake("lineage-foot").textContent;
+rotateLineageFoot(60000); out.foot_wraps = fake("lineage-foot").textContent;
 
 process.stdout.write(JSON.stringify(out));
 """
 
 
 @needs_node
-def test_the_desk_rotation_stars_and_record_book_foot(tmp_path):
-    """Stars come from the integer alone (clamped 1-5, glyphs only); the desk
-    takes exactly duration_seconds of each 90s cycle; the evidence row carries
-    a depth tag whenever the record is not full; the foot rotates the record
-    book on a 20s clock."""
-    out = _run(DESK_HARNESS.replace("__BLOCK__", _desk_block()), tmp_path)
-    assert out["stars3"] == "★★★☆☆"
-    assert out["stars5"] == "★★★★★"
-    assert out["stars_clamped_high"] == "★★★★★"
-    assert out["stars_clamped_low"] == "★☆☆☆☆"
-    assert out["no_desk"] == "graves/graves"
-    assert out["at_0"] == "graves"
-    assert out["at_69"] == "graves"
-    assert out["at_70"] == "desk"
-    assert out["at_89"] == "desk"
-    assert out["at_90"] == "graves"
-    assert out["row_count"] == 2
-    assert out["head_ord"] == "#7"
-    assert out["head_stars"] == "★★★★☆"
-    assert out["head_line"] == "It built a tool and used it."
-    assert out["evidence"] == "lived 42m · 17 turns · ended by its own note · partial record"
-    assert out["evidence_full"] == "lived 3m · 2 turns"
-    assert out["desk_shown"] is True
-    assert out["title"] == "THE DESK"
-    assert out["graves_back"] is True
-    assert out["title_back"] == "THE DEAD"
-    assert out["foot_book"] == [
-        "by their own notes, 10 of 12 chose to die",
-        "longest life: incarnation 4 · 90s",
-        "10 earlier lives not shown",
+def test_the_lineage_scales_colours_caps_and_walks(tmp_path):
+    out = _run(LINEAGE_HARNESS.replace("__BLOCK__", _lineage_block()), tmp_path)
+    assert out["bar_count"] == 5
+    assert out["bar_classes"] == [
+        "bar k-declared",
+        "bar k-declared",
+        "bar k-harness",
+        "bar k-declared",
+        "bar now",
     ]
-    assert out["foot_no_book"] == [
-        "by their own notes, 2 of 3 chose to die",
-        "1 earlier life not shown",
-    ]
-    assert out["foot_0"] == "chose-line"
-    assert out["foot_1"] == "longest-line"
-    assert out["foot_2"] == "hidden-line"
-    assert out["foot_wraps"] == "chose-line"
+    assert out["bar_heights"] == ["2px", "50%", "75%", "100%", "50%"]
+    assert out["labels"] == ["1", "2", "3", "4", "5"]
+    assert out["count"] == "5 LIVES SO FAR"
+    assert out["figs"] == "alive 120s · 4 turns · 2 self-edits · 2 reached out"
+    assert out["ord"] == "5"
+    assert out["heights_after_growth"] == ["2px", "30%", "45%", "60%", "100%"]
+    assert out["spot_0"] == "INCARNATION 4 · ENDED ON ITS OWN NOTE · 1000s ago"
+    assert out["spot_0_facts"] == "lived 240s · 12+ turns"
+    assert out["spot_0_note"] == "Fourth note."
+    assert out["lit_0"] == [False, False, False, True, False]
+    assert out["spot_1"].startswith("INCARNATION 3 · ENDED ON A HARNESS NOTE")
+    assert out["lit_1"] == [False, False, True, False, False]
+    assert out["spot_2_wraps"] is True
+    assert out["pinned"].startswith("INCARNATION 3")
+    assert out["unpinned"].startswith("INCARNATION 4")
+    assert out["capped_bars"] == 41
+    assert out["capped_labels"] == ["10", "15", "20", "25", "30", "35", "40", "45", "46"]
+    assert "5 earlier lives not shown" in out["foot_lines"]
+    assert "by their own notes, 3 of 45 chose to die" in out["foot_lines"]
+    assert out["empty_note"] == "No one has died here yet."
+    assert out["empty_bars"] == 1
+    assert (out["foot_0"], out["foot_1"], out["foot_wraps"]) == ("a", "b", "a")
+
+
+NOW_HARNESS = """
+var nodes = {};
+function fake(id) { if (!nodes[id]) nodes[id] = { textContent: "" }; return nodes[id]; }
+global.$ = fake;
+global.setText = function (node, value) { node.textContent = String(value == null ? "" : value); };
+global.setClass = function (node, name, on) { node["_" + name] = !!on; };
+global.dur = function (s) { return Math.round(s) + "s"; };
+var NOW = 1000000;
+global.clock = function () { return NOW; };
+global.snap = null;
+
+__BLOCK__
+
+var out = {};
+global.snap = { commentary: { play: { phrase: "running call_model", epoch: NOW / 1000 - 16 },
+  colour: { text: "It repeats.", generated: true, evidence: "run_shell x3 in a row" } } };
+renderNow();
+out.colour = fake("now-colour").textContent;
+out.evidence = fake("now-evidence").textContent;
+out.fresh = fake("now-dot")._fresh;
+global.snap = { commentary: { play: { phrase: "thinking it over", epoch: null },
+  colour: { text: "Template.", generated: false, evidence: "" } } };
+renderNow();
+out.phrase_fallback = fake("now-evidence").textContent;
+out.not_fresh = fake("now-dot")._fresh;
+global.snap = { commentary: {} };
+renderNow();
+out.empty = fake("now-evidence").textContent;
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_now_prefers_evidence_over_phrase_and_lights_only_generated_lines(tmp_path):
+    out = _run(NOW_HARNESS.replace("__BLOCK__", _now_block()), tmp_path)
+    assert out["colour"] == "It repeats."
+    assert out["evidence"] == "run_shell x3 in a row · 16s"
+    assert out["fresh"] is True
+    assert out["phrase_fallback"] == "thinking it over"
+    assert out["not_fresh"] is False
+    assert out["empty"] == "waiting for the first word"
 
 
 EYE_HARNESS = """

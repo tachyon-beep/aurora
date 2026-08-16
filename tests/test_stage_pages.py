@@ -5,11 +5,6 @@ from stage import commentary, pages
 HTML = pages.STREAM_PAGE_HTML
 
 
-def test_the_now_block_exists_above_the_recap():
-    assert 'id="now"' in HTML
-    assert HTML.index('id="now"') < HTML.index('id="recap-box"')
-
-
 def test_the_commentary_never_borrows_the_subjects_registers():
     """The commentator is a third register. Mistaking it for the subject is the one
     thing this block must never do, so the guard reads sentinels rather than trying
@@ -31,59 +26,6 @@ def test_the_page_never_writes_commentary_with_inner_html():
     for line in HTML.split("\n"):
         if "innerHTML" in line:
             assert "commentary" not in line and "colour" not in line and "play" not in line
-
-
-def test_the_recap_drops_its_opening_sentence():
-    assert "dropLede" in HTML
-    # Pins the call site, not just the function definition: deleting the call
-    # from renderStory would leave every behavioural test below green even
-    # though dropLede would never run.
-    assert "text = dropLede(text);" in HTML
-
-
-def _drop_lede(text):
-    """A Python mirror of the page's `dropLede`, built from literals pulled out of the
-    live source rather than hand-copied, so a change to the JS's split pattern or
-    threshold breaks this extraction instead of silently drifting out of sync.
-
-    `dropLede` is pure JS embedded in `STREAM_PAGE_HTML`; there is no JS runtime in this
-    test environment (no `node` dependency anywhere else in the suite, no JS-execution
-    package installed), so it cannot be called directly from pytest. This mirrors the
-    codebase's existing pattern for pinning JS behaviour from Python
-    (`tests/test_stage_commentary.py::test_silence_threshold_matches_the_pages_state_ladder`
-    extracts a numeric threshold from `stage/pages.py` source the same way).
-    """
-    assert "text.split(/(?<=\\.)\\s+/)" in HTML, (
-        "dropLede's split pattern changed; update this test"
-    )
-    match = re.search(r"if \(parts\.length >= (\d+)\) return parts\.slice\(1\)", HTML)
-    assert match, "dropLede's threshold check changed; update this test"
-    threshold = int(match.group(1))
-    parts = re.split(r"(?<=\.)\s+", text)
-    if len(parts) >= threshold:
-        return " ".join(parts[1:])
-    return text
-
-
-def test_drop_lede_removes_the_first_sentence_at_three_or_more():
-    assert _drop_lede("A. B. C.") == "B. C."
-    assert _drop_lede("A. B. C. D.") == "B. C. D."
-
-
-def test_drop_lede_leaves_exactly_two_sentences_unchanged():
-    assert _drop_lede("A. B.") == "A. B."
-
-
-def test_drop_lede_leaves_a_single_sentence_unchanged():
-    assert _drop_lede("Only one sentence.") == "Only one sentence."
-
-
-def test_drop_lede_leaves_an_empty_string_unchanged_and_does_not_throw():
-    assert _drop_lede("") == ""
-
-
-def test_drop_lede_leaves_text_with_no_sentence_boundary_unchanged():
-    assert _drop_lede("No periods here at all") == "No periods here at all"
 
 
 def test_stream_page_has_an_audio_element_and_caption():
@@ -298,14 +240,6 @@ def test_the_monologue_clamps_deep_enough_for_a_viewer_who_cannot_click():
     assert _clamp_lines(".tool") >= 3
 
 
-def test_a_grave_shows_derived_facts_above_the_note():
-    """The stage states what it measured; the agent's own note stays below it."""
-    assert "lifespan_seconds" in HTML
-    assert "turns_lived" in HTML
-    assert "g-facts" in HTML
-    assert "clamp tomb" in HTML, "the note itself must survive the rebuild"
-
-
 def test_a_window_capped_turn_count_is_rendered_as_a_lower_bound():
     """turns_lived is counted over a 40-record window, so a longer life leaves a
     count that is a floor. The page carries the same "+" the subject panel uses for
@@ -359,31 +293,6 @@ def test_the_containment_facts_hold_the_masthead_slot():
     assert "var(--paper-dim)" not in block, block
 
 
-def test_the_pull_quote_is_attributed_to_the_dead_incarnations_note():
-    """#pull renders the newest dead incarnation's own tombstone sentence.
-    Unattributed, the "narrated by <model>" byline directly below invited
-    misattribution; the quote now carries its own source line, inside #pull-box
-    (tied to the quote) and above #byline (distinct from it)."""
-    assert 'id="pull-attrib"' in HTML
-    start = HTML.index('id="pull-box"')
-    end = HTML.index('id="byline"')
-    assert start < HTML.index('id="pull-attrib"') < end
-    assert "'s own last note" in HTML
-    assert "the harness's note on " in HTML
-
-
-def test_the_recap_clamp_is_refitted_to_the_space_the_wrap_has():
-    """.recap-wrap's height is whatever the fixed story blocks leave, which is
-    not generally a whole number of 27px recap lines — #now varies 74-98px with
-    the colour line, and #pull-attrib took 18px more. fitRecap() lowers the
-    clamp to whole lines so the recap clips line-granularly, never mid-glyph,
-    and tick() keeps the fit current as those heights change."""
-    assert "function fitRecap()" in HTML
-    tick = HTML[HTML.index("function tick()") :]
-    tick = tick[: tick.index("\n}")]
-    assert "fitRecap();" in tick
-
-
 def test_the_stream_page_names_the_repository():
     """The stream page is the only surface strangers reach. The pointer is static
     text, not a link: the page serves an OBS browser source and stays
@@ -427,11 +336,14 @@ BROADCAST_TYPE_FLOOR = 13
 
 # Every rule that declares its px font size at the 13px floor in
 # STREAM_PAGE_HTML's stylesheet, enumerated by grepping the source directly.
-# The descendants that only inherit these sizes (#byline-text, .more-label,
-# #play-tag, .g-id, #dead-count and the rest) are covered by their parent and
-# are deliberately not listed. The rebuild removed `#if-row`, `.chip em`, and
-# `.chip.c-think em` (the strip and the chip captions died) and added the
-# pulse strip, the return chip, the eye caption, and the desk rows.
+# The descendants that only inherit these sizes (.more-label, .g-id, and the
+# rest) are covered by their parent and are deliberately not listed. This
+# rebuild removed the subject/story/dead panels and the desk
+# (`#strip-glyph`, `#subj-strip`, `#now-play`, `#byline`,
+# `.grave .g-eyebrow`, `.grave .blk-tomb .more`, `#dead-foot`,
+# `.verdict .v-ord`, `.verdict .v-evidence`, `#desk-by`, `#pull-attrib`) and
+# added the lineage chart's bar labels and foot and the now panel's evidence
+# line (`.bl`, `#lineage-foot`, `.g-eyebrow`, `.g-facts`, `#now-evidence`).
 BROADCAST_SMALL_TYPE = (
     "#now-by",
     "#state-word",
@@ -447,16 +359,11 @@ BROADCAST_SMALL_TYPE = (
     "#return-live",
     "#eye-cap",
     ".subrow",
-    "#strip-glyph",
-    "#subj-strip",
-    "#now-play",
-    "#byline",
-    ".grave .g-eyebrow",
-    ".grave .blk-tomb .more",
-    "#dead-foot",
-    ".verdict .v-ord",
-    ".verdict .v-evidence",
-    "#desk-by",
+    ".bl",
+    "#lineage-foot",
+    ".g-eyebrow",
+    ".g-facts",
+    "#now-evidence",
     ".rrow .rmeta",
     ".rrow .rid",
     "#said-stamp",
@@ -467,7 +374,6 @@ BROADCAST_SMALL_TYPE = (
     ".chip b",
     ".divider span",
     "#repo",
-    "#pull-attrib",
 )
 
 
@@ -489,42 +395,94 @@ def test_no_broadcast_type_falls_below_the_transcode_floor():
     assert too_small == {}, f"below the {BROADCAST_TYPE_FLOOR}px floor: {too_small}"
 
 
-def test_the_subject_counters_are_set_larger_than_the_labels():
-    """The stat values are the page's primary instrument and were the third-smallest
-    type on it."""
-    block = HTML[HTML.index(".srow {") : HTML.index("}", HTML.index(".srow {"))]
-    assert re.search(r"font:\s*400\s+15px/20px", block), block
-
-
-def test_the_rail_rows_still_fill_the_rail():
+def test_the_rail_is_two_panels_that_fill_the_rail():
     block = HTML[HTML.index("#rail {") : HTML.index("}", HTML.index("#rail {"))]
     declaration = block.split("grid-template-rows:")[1].split(";")[0]
     rows = [int(n) for n in re.findall(r"(\d+)px", declaration)]
-    assert len(rows) == 3, rows
-    assert sum(rows) + 2 * 20 == 772, f"{rows} plus two 20px gaps is not 772"
+    assert rows == [536, 216], rows
+    assert sum(rows) + 20 == 772
 
 
-def test_the_recap_is_the_region_that_absorbs_a_full_story_panel():
-    """#story is fixed-height and overflow:hidden. Something has to give when the
-    recap runs long, and it must not be the byline that discloses who wrote it."""
-    block = HTML[HTML.index("#story .recap-wrap {") :]
+def test_the_rail_holds_only_the_lineage_and_now():
+    rail = HTML[HTML.index('<aside id="rail">') : HTML.index("</aside>")]
+    assert 'id="lineage"' in rail and 'id="now"' in rail
+    for gone in (
+        'id="subject"',
+        'id="story"',
+        'id="dead"',
+        'id="graves"',
+        'id="desk"',
+        'id="recap-box"',
+        'id="pull-box"',
+        'id="byline"',
+        'id="play-tag"',
+        'id="subj-strip"',
+        "READ THE REST",
+        'class="more"',
+    ):
+        assert gone not in rail, gone
+
+
+def test_the_removed_renderers_are_gone_from_the_script():
+    for name in (
+        "function renderStory",
+        "function renderDead",
+        "function renderDesk",
+        "function deskCycle",
+        "function fitRecap",
+        "function dropLede",
+        "function fallbackRecap",
+        "function renderSubject",
+        "function makeGrave",
+        "function renderStoryByline",
+        "graveNodes",
+    ):
+        assert name not in HTML, name
+
+
+def test_the_lineage_chart_is_decorative_and_its_facts_are_stated_in_text():
+    assert '<div id="chart" aria-hidden="true">' in HTML
+    assert 'id="life-figs"' in HTML
+    assert 'id="spot-eyebrow"' in HTML and 'id="spot-facts"' in HTML and 'id="spot-note"' in HTML
+    assert 'id="lineage-foot"' in HTML
+
+
+def test_the_colour_line_is_the_now_panels_subject_and_is_announced():
+    assert '<p id="now-colour" aria-live="polite"></p>' in HTML
+    block = HTML[HTML.index("\n#now-colour {") :]
     block = block[: block.index("}")]
-    assert "flex: 1 1 auto" in block, block
-    assert "min-height: 0" in block, block
-    assert "overflow: hidden" in block, block
+    assert "22px/30px" in block, block
+    assert "line-clamp: 3" in block, block
+    assert 'id="now-evidence"' in HTML
+    assert 'id="now-dot"' in HTML
 
 
-def test_the_byline_and_pull_quote_are_never_the_thing_that_shrinks():
-    for selector in ("#pull-box {", "#byline {"):
-        block = HTML[HTML.index(selector) :]
-        block = block[: block.index("}")]
-        assert "flex: none" in block, selector
+def test_the_state_strip_left_the_rail_for_the_masthead():
+    assert 'id="strip-text"' not in HTML
+    assert 'id="strip-glyph"' not in HTML
+    assert 'id="state-word"' in HTML
 
 
-def test_the_byline_is_still_pinned_to_the_panel_floor():
-    block = HTML[HTML.index("#byline {") :]
-    block = block[: block.index("}")]
-    assert "margin-top: auto" in block
+def test_the_lineage_reuses_the_grave_palette_for_bar_kinds():
+    css = HTML[HTML.index("<style>") : HTML.index("</style>")]
+    assert ".bar.k-declared { background: var(--chosen); }" in css
+    assert ".bar.k-harness { background: var(--taken); }" in css
+    assert ".bar.k-unknown { background: var(--broken); }" in css
+    assert ".bar.now { background: var(--vital);" in css
+
+
+def test_the_spotlight_and_foot_are_driven_by_the_tick_not_by_clicks():
+    tick = HTML[HTML.index("function tick()") :]
+    tick = tick[: tick.index("\n}")]
+    for call in (
+        "renderLifeFigs(nowMs);",
+        "layoutBars(nowMs);",
+        "renderSpot(nowMs);",
+        "rotateLineageFoot(nowMs);",
+        "renderNow();",
+    ):
+        assert call in tick, call
+    assert "deskCycle" not in tick and "fitRecap" not in tick
 
 
 def test_the_stream_page_stylesheet_declares_no_px_font_size_under_the_floor():
@@ -658,16 +616,6 @@ def test_the_death_beat_survives_a_reload():
     assert "height: 3px" in sweep
 
 
-def test_the_subject_panel_slimmed_to_five_rows():
-    """memory file and self-calls were ops telemetry with no audience; the
-    metabolism strip carries tempo now, so the rate span dies too."""
-    assert 'id="row-mem"' not in HTML
-    assert 'id="row-self"' not in HTML
-    assert "repeat(5, 20px)" in HTML
-    assert ".srow .v .rate" not in HTML
-    assert '.toFixed(1) + "/min"' not in HTML
-
-
 def test_a_fresh_edit_shows_the_diff_itself():
     """The show's premise is a model rewriting its own file; for ~45s after
     the stage first sees an edit the panel shows the capped excerpt of the
@@ -734,47 +682,6 @@ def test_the_eye_shows_only_fresh_sense_frames_and_never_blocks_the_feed():
     eye = eye[: eye.index("}")]
     assert "position: absolute" in eye
     assert "pointer-events: none" in eye
-
-
-def test_the_desk_keeps_judgment_and_evidence_distinct_and_bylined():
-    """The split between loud judgment and factual evidence is the design; the
-    verdict is an opinion and is bylined as one. Stars are built from the
-    verdict's integer, never from model text."""
-    assert 'id="desk"' in HTML
-    assert "the stage's read, not a measurement" in HTML
-    assert "function starGlyphs(n)" in HTML
-    assert '"★"' in HTML and '"☆"' in HTML
-    assert "v-stars" in HTML and "v-evidence" in HTML
-    assert '"partial record"' in HTML and '"tombstone only"' in HTML
-    assert '"THE DESK"' in HTML
-
-
-def test_the_desk_rows_fit_the_space_the_graves_leave():
-    """#dead's middle region is ~166px (244 minus border, padding, title and
-    foot); the desk spends 18px on its byline, leaving 148px. Each verdict is
-    an explicit 34px plus a 3px gap, so DESK_ROWS rows must sum inside 148."""
-    verdict = HTML[HTML.index("\n.verdict {") :]
-    verdict = verdict[: verdict.index("}")]
-    height = int(re.search(r"height:\s*(\d+)px", verdict).group(1))
-    gap = int(re.search(r"margin-bottom:\s*(\d+)px", verdict).group(1))
-    rows = int(re.search(r"var DESK_ROWS = (\d+);", HTML).group(1))
-    assert rows * height + (rows - 1) * gap <= 148
-    assert "slice(0, DESK_ROWS)" in HTML
-
-
-def test_the_desk_and_graves_share_the_panel_on_a_timer():
-    assert "function deskViewFor(nowSec)" in HTML
-    assert "nowSec % 90" in HTML
-    # REDUCED gets a hard swap, not a withheld view
-    cycle = HTML[HTML.index("function deskCycle(nowSec)") : HTML.index("function rotateDeadFoot")]
-    assert "if (REDUCED) { applyDeadView(which); return; }" in cycle
-
-
-def test_the_record_book_foot_rotates_cross_life_records():
-    assert "longest life: incarnation " in HTML
-    assert "function rotateDeadFoot(nowMs)" in HTML
-    assert "deadFootLines" in HTML
-    assert "snap.records" in HTML
 
 
 def _srgb_luminance(hex_colour):
@@ -892,10 +799,3 @@ def test_console_load_restores_focus_into_the_rebuilt_tree():
     body = CONSOLE[start:end]
     assert "document.activeElement" in body, body
     assert re.search(r"hadFocus\b.*\.focus\(\)", body, re.S), body
-
-
-def test_the_grounded_count_sits_beside_the_interpretation():
-    """The colour line is a model's reading of a beat. The beat's own counted fact
-    belongs next to it, in the deterministic row, not behind it."""
-    assert 'id="play-evidence"' in HTML
-    assert HTML.index('id="play-evidence"') < HTML.index('id="now-colour"')

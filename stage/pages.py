@@ -366,138 +366,103 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   text-wrap: pretty; }
 
 /* ---------- rail ---------- */
-#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 196px 292px 244px;
+#rail { grid-column: 2; grid-row: 2; display: grid; grid-template-rows: 536px 216px;
   row-gap: 20px; min-height: 0; }
 #rail .panel { padding: 14px 20px; }
 #rail .ptitle { margin-bottom: 8px; }
 
-#subject { position: relative; display: grid; grid-template-rows: 1fr 26px; }
-#subject.nosig { opacity: .55; }
-#subject.nosig::after { content: ""; position: absolute; left: 0; right: 0; top: 50%;
+/* THE LINEAGE: every life as a bar, oldest left, the current life on the right
+   growing with every tick. Bar height is linear in seconds against the longer
+   of the longest recorded life and the current life's age, so the live bar is
+   never clipped; undated lives keep a 2px stub so every slot is counted. */
+#lineage { position: relative; display: flex; flex-direction: column; gap: 12px; }
+#lineage.nosig { opacity: .55; }
+#lineage.nosig::after { content: ""; position: absolute; left: 0; right: 0; top: 50%;
   height: 1px; background: var(--fault); }
-#subject.cut { animation: cut 900ms ease-out; }
+#lineage.cut { animation: cut 900ms ease-out; }
 @keyframes cut { 0% { border-color: var(--rule); box-shadow: none }
   35% { border-color: var(--act); box-shadow: 0 0 12px rgba(240,189,104,.35) }
   100% { border-color: var(--rule); box-shadow: none } }
-#subj-top { display: grid; grid-template-columns: 236px 1fr; column-gap: 20px; min-height: 0; }
+#chart { flex: none; height: 220px; display: flex; flex-direction: column; gap: 6px; }
+#bars { flex: 1; min-height: 0; display: flex; align-items: flex-end; gap: 4px;
+  border-bottom: 1px solid var(--rule-2); }
+.bar { flex: 1 1 0; min-width: 0; height: 2px; opacity: .8; border-radius: 2px 2px 0 0;
+  position: relative; }
+.bar.k-declared { background: var(--chosen); }
+.bar.k-harness { background: var(--taken); }
+.bar.k-unknown { background: var(--broken); }
+.bar.now { background: var(--vital); opacity: 1; }
+.bar.now::after { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 3px;
+  background: var(--flash); animation: breathe 1.6s ease-in-out infinite; }
+.bar.lit { opacity: 1; outline: 1px solid var(--paper); outline-offset: 2px; }
+#bar-labels { flex: none; height: 18px; display: flex; gap: 4px; }
+.bl { flex: 1 1 0; min-width: 0; text-align: center; overflow: hidden;
+  font: 400 13px/18px var(--mono); color: var(--paper-faint);
+  font-variant-numeric: tabular-nums; }
+.bl.now { color: var(--vital); }
+
+#life-now { flex: none; display: flex; flex-direction: column; gap: 4px; }
+#life-head { display: flex; align-items: baseline; gap: 12px; min-width: 0; }
 .eyebrow { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   color: var(--paper-faint); }
-#subj-ord { font: 600 34px/38px var(--sans); color: var(--paper); font-variant-numeric: tabular-nums;
-  margin-top: 2px; }
+#subj-ord { font: 600 34px/38px var(--sans); color: var(--paper); font-variant-numeric: tabular-nums; }
 #subj-ord.bump { animation: bump 320ms ease-out; }
 @keyframes bump { 0% { transform: scale(1) } 50% { transform: scale(1.06); color: var(--flash) }
   100% { transform: scale(1) } }
-#subj-model { font: 400 13px/19px var(--mono); color: var(--paper-dim); margin-top: 6px;
+#subj-model { font: 400 13px/19px var(--mono); color: var(--paper-dim); min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#subj-stats { display: grid; grid-template-rows: repeat(5, 20px); align-content: start; }
-.srow { display: grid; grid-template-columns: 104px 1fr; align-items: baseline;
+#life-figs { font: 400 15px/20px var(--mono); color: var(--vital); font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow { display: grid; grid-template-columns: 68px 1fr; align-items: center;
   font: 400 15px/20px var(--mono); font-variant-numeric: tabular-nums; }
-#subj-stats .srow { line-height: 20px; }
-.srow .k { color: var(--paper-faint); }
-.srow .v { color: var(--vital); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.srow.dimv .v { color: var(--paper-faint); }
-.srow.src { grid-template-columns: 68px 1fr; align-items: center; }
-.srow.src .k { color: var(--act); text-transform: uppercase; letter-spacing: .06em;
+.srow .k { color: var(--act); text-transform: uppercase; letter-spacing: .06em;
   display: flex; align-items: center; gap: 6px; }
-.srow.src .k::before { content: ""; width: 3px; height: 14px; background: var(--act); flex: none; }
-.srow.src .add { color: var(--vital); }
-.srow.src .rem { color: var(--fault); }
-.srow.src .tail { color: var(--paper-dim); }
-.srow.src .plain { color: var(--paper-dim); }
-.srow.src .none { color: var(--paper-faint); }
-#subj-strip { border-top: 1px solid var(--rule); display: flex; align-items: center; gap: 8px;
-  font: 400 14px/20px var(--mono); color: var(--paper-dim); }
-#strip-glyph { font-size: 13px; }
+.srow .k::before { content: ""; width: 3px; height: 14px; background: var(--act); flex: none; }
+.srow .v { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srow .add { color: var(--vital); }
+.srow .rem { color: var(--fault); }
+.srow .tail { color: var(--paper-dim); }
+.srow .plain { color: var(--paper-dim); }
+.srow .none { color: var(--paper-faint); }
 
-/* commentary:start */
-#now { padding: 0 0 10px 0; }
-#now-play { font-family: var(--mono); font-size: 13px; letter-spacing: .06em;
-  text-transform: uppercase; color: var(--paper-dim); display: flex; gap: 8px;
-  align-items: baseline; min-width: 0; }
-#play-tag { color: var(--world); flex: none; }
-#play-phrase { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
-#play-evidence { flex: none; color: var(--paper-faint); font-variant-numeric: tabular-nums; }
-#play-age { flex: none; color: var(--paper-faint); font-variant-numeric: tabular-nums; }
-#now-colour { font-family: var(--sans); font-size: 17px; line-height: 24px;
-  color: var(--paper); margin: 6px 0 0 0; display: -webkit-box; -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
-#now-by { font-family: var(--mono); font-size: 13px; letter-spacing: .08em;
-  color: var(--paper-faint); margin-top: 4px; }
-/* commentary:end */
-#story .recap-wrap { flex: 1 1 auto; min-height: 0; overflow: hidden; }
-#recap-box .more { margin-top: 2px; }
-/* The 4-line clamp is a ceiling; fitRecap() lowers it inline to the whole
-   27px lines .recap-wrap actually has, since the wrap's height is whatever the
-   fixed story blocks leave (74-98px of #now, the pull box, the byline). */
-#recap { margin: 0; font: 400 17px/27px var(--serif); max-width: 62ch; color: var(--paper-dim);
-  -webkit-line-clamp: 4; line-clamp: 4; text-wrap: pretty; }
-#recap-lede { color: var(--paper); }
-#recap-rest { color: var(--paper-dim); }
-hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex: none; }
-#pull-box { margin-top: 6px; flex: none; }
-#pull { margin: 0; font: italic 400 16px/24px var(--serif); color: var(--think); max-width: 62ch;
-  -webkit-line-clamp: 2; line-clamp: 2; }
-/* One 16px line plus its 2px margin: those 18px come out of .recap-wrap, the
-   flexible #story region, whose recap clamp fitRecap() refits to whole 27px
-   lines so the region gives up a full line rather than clipping mid-glyph.
-   Set in the quote's own colour so it reads as part of the quote, distinct
-   from #byline, which attributes the generated recap above it. */
-#pull-attrib { margin-top: 2px; font: 400 13px/16px var(--mono); color: var(--think);
-  opacity: .8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.q { color: var(--paper-faint); font-style: normal; }
-#byline { margin-top: auto; padding-top: 4px; display: flex; align-items: center; gap: 6px;
-  font: 400 13px/18px var(--mono); color: var(--paper-dim); flex: none; }
-#byline.stale, #byline.stale #byline-text { color: var(--paper-faint); }
-#byline-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--paper-faint);
-  display: inline-block; flex: none; }
-#byline-dot.fresh { background: var(--vital); }
-
-#graves { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
-#graves, #desk { transition: opacity 250ms ease; }
-#dead.viewfade #graves, #dead.viewfade #desk { opacity: 0; }
-/* The desk: the analyst's verdicts on the last dead incarnations. Judgment
-   (the starred head line) and evidence (the faint mono row beneath) stay
-   visually distinct; the byline names the whole thing as opinion. */
-/* #desk shares #graves' 166px: 148px of rows above an 18px byline. Every
-   line-height below is explicit so a verdict is exactly 34px (18px head plus
-   16px evidence) with a 3px gap: four rows are 145px. DESK_ROWS matches. */
-#desk { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-#desk-rows { flex: 1; min-height: 0; overflow: hidden; }
-.verdict { flex: none; height: 34px; margin-bottom: 3px; overflow: hidden; }
-.verdict .v-head { display: flex; gap: 8px; align-items: baseline; white-space: nowrap;
-  overflow: hidden; height: 18px; font: 400 15px/18px var(--sans); color: var(--paper); }
-.verdict .v-ord { flex: none; font: 600 13px/18px var(--mono); color: var(--paper-faint);
-  font-variant-numeric: tabular-nums; }
-.verdict .v-stars { flex: none; color: var(--act); letter-spacing: .06em; }
-.verdict .v-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.verdict .v-evidence { height: 16px; font: 400 13px/16px var(--mono); color: var(--paper-faint);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-variant-numeric: tabular-nums; }
-#desk-by { flex: none; height: 18px; font: 400 13px/16px var(--mono); color: var(--paper-dim);
-  padding-top: 2px; }
-.grave { display: grid; grid-template-columns: 22px 1fr; column-gap: 14px; flex: none;
-  min-height: 80px; }
-.grave .g-body { position: relative; min-width: 0; }
-.grave .blk-tomb { position: static; }
-.grave .blk-tomb .more { position: absolute; right: 0; bottom: 2px; height: 18px; margin: 0;
-  font: 600 13px/18px var(--mono); }
-.grave .blk-tomb.open .more { position: static; margin-top: 6px; }
-.grave.slide { animation: slidein 500ms cubic-bezier(.22,.61,.36,1); }
+/* The spotlight walks the recent dead one at a time on a 10s cadence — the
+   pacing is the disclosure; there is nothing to click. */
+#spot { flex: 1; min-height: 0; display: grid; grid-template-columns: 22px 1fr; column-gap: 14px;
+  overflow: hidden; }
+#spot .tick { width: 2px; justify-self: end; }
+#spot .spot-body { min-width: 0; }
+#spot .spot-body.swap { animation: surface 400ms ease; }
+#spot.slide { animation: slidein 500ms cubic-bezier(.22,.61,.36,1); }
 @keyframes slidein { from { transform: translateY(-14px); opacity: 0 } to { transform: none; opacity: 1 } }
-.grave .tick { width: 2px; height: 100%; justify-self: end; }
-.grave .g-eyebrow { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
+.g-eyebrow { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .g-facts { font: 400 13px/18px var(--mono); color: var(--paper-faint); margin-top: 2px;
   font-variant-numeric: tabular-nums; }
 .clamp.tomb { -webkit-line-clamp: 2; line-clamp: 2; font: 400 15px/23px var(--serif);
   color: var(--paper-dim); max-width: 60ch; margin-top: 2px; text-wrap: pretty; }
+#spot.empty .clamp.tomb { color: var(--paper-dim); }
 .k-declared { color: var(--chosen); } .k-declared .tick { background: var(--chosen); }
 .k-harness { color: var(--taken); } .k-harness .tick { background: var(--taken); }
 .k-unknown { color: var(--broken); } .k-unknown .tick { background: var(--broken); }
-.empty-serif { font: 400 15px/23px var(--serif); color: var(--paper-dim); }
-#dead-foot { font: 400 13px/16px var(--mono); color: var(--paper-faint); flex: none; height: 16px;
+#lineage-foot { font: 400 13px/16px var(--mono); color: var(--paper-faint); flex: none;
+  height: 16px; overflow: hidden; }
+
+/* commentary:start */
+/* NOW: the generated read of the current beat is the panel's subject; its
+   evidence sits under it; the byline names it as the stage's. */
+#now { display: flex; flex-direction: column; }
+#now-colour { margin: 0; font: 500 22px/30px var(--sans); color: var(--paper);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3;
   overflow: hidden; }
+#now-evidence { margin-top: 8px; font: 400 13px/18px var(--mono); letter-spacing: .06em;
+  text-transform: uppercase; color: var(--paper-dim); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+#now-by { margin-top: auto; display: flex; align-items: center; gap: 6px;
+  font: 400 13px/18px var(--mono); letter-spacing: .08em; color: var(--paper-faint); }
+#now-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--paper-faint);
+  display: inline-block; flex: none; }
+#now-dot.fresh { background: var(--vital); }
+/* commentary:end */
 
 /* ---------- ribbon ---------- */
 #ribbon { grid-column: 1 / -1; grid-row: 3; display: grid; grid-template-columns: 1fr 1.6fr 1fr;
@@ -611,25 +576,20 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 .blk.is-expandable { cursor: pointer; }
 .blk.is-expandable:hover .clamp.think, .blk-think.open .clamp { color: var(--think); }
 .blk.is-expandable:hover .clamp.say { color: var(--say); }
-.blk.is-expandable:hover .clamp.tomb { color: var(--paper); }
 .blk.is-expandable:hover .more { opacity: 1; }
 .blk.is-expandable:focus-visible { outline: 2px solid var(--vital); outline-offset: 4px; }
 .more { height: 18px; margin-top: 6px; font: 600 13px/18px var(--mono); text-transform: uppercase;
   letter-spacing: .12em; opacity: .78; }
 .blk-think .more { color: var(--think); }
 .blk-say .more { color: var(--say); }
-.blk-tomb .more, #recap-box .more, #pull-box .more { color: var(--paper-dim); }
 .open-tail { margin-top: 8px; font: 600 13px/18px var(--mono); text-transform: uppercase;
   letter-spacing: .12em; color: var(--paper-faint); }
 .blk.open .clamp { -webkit-line-clamp: none; line-clamp: none; display: block;
   max-height: 420px; overflow-y: auto; overscroll-behavior: contain;
   background: var(--ink-2); border-radius: 6px; padding: 12px 16px; margin: 0 -16px;
   scrollbar-width: thin; scrollbar-color: var(--rule-2) transparent; }
-.rail-blk.open .clamp { max-height: 180px; padding: 10px 14px; }
 .blk-think.open .clamp { border-left: 3px solid var(--think); }
 .blk-say.open .clamp { border-left: 3px solid var(--say); }
-.blk-tomb.open .clamp { border-left: 3px solid var(--paper-dim); }
-#recap-box.open .clamp, #pull-box.open .clamp { border-left: 3px solid var(--think); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
@@ -681,58 +641,37 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
   </section>
 
   <aside id="rail">
-    <section id="subject" class="panel">
-      <div id="subj-top">
-        <div>
-          <div class="eyebrow">THE SUBJECT</div>
-          <div class="eyebrow" style="margin-top:10px">INCARNATION</div>
-          <div id="subj-ord">&mdash;</div>
-          <div id="subj-model">&mdash;</div>
+    <section id="lineage" class="panel">
+      <div class="ptitle"><span>THE LINEAGE</span><span id="lineage-count"></span></div>
+      <div id="chart" aria-hidden="true">
+        <div id="bars"></div>
+        <div id="bar-labels"></div>
+      </div>
+      <div id="life-now">
+        <div id="life-head">
+          <span class="eyebrow">INCARNATION</span>
+          <span id="subj-ord">&mdash;</span>
+          <span id="subj-model">&mdash;</span>
         </div>
-        <div id="subj-stats">
-          <div class="srow"><span class="k">alive</span><span class="v" id="v-alive">&mdash;</span></div>
-          <div class="srow"><span class="k">turns</span><span class="v" id="v-turns">&mdash;</span></div>
-          <div class="srow"><span class="k">self-edits</span><span class="v" id="v-edits">&mdash;</span></div>
-          <div class="srow"><span class="k">reached out</span><span class="v" id="v-reach">&mdash;</span></div>
-          <div class="srow src"><span class="k">source</span><span class="v" id="v-src">&mdash;</span></div>
+        <div id="life-figs">&mdash;</div>
+        <div class="srow"><span class="k">source</span><span class="v" id="v-src">&mdash;</span></div>
+      </div>
+      <div id="spot" class="k-unknown empty">
+        <i class="tick"></i>
+        <div class="spot-body">
+          <div id="spot-eyebrow" class="g-eyebrow"></div>
+          <div id="spot-facts" class="g-facts"></div>
+          <div id="spot-note" class="clamp tomb"></div>
         </div>
       </div>
-      <div id="subj-strip"><span id="strip-glyph"></span><span id="strip-text"></span></div>
+      <div id="lineage-foot"></div>
     </section>
 
-    <section id="story" class="panel">
-      <div class="ptitle"><span>THE STORY SO FAR</span></div>
-      <div id="now">
-        <div id="now-play"><span id="play-tag"></span><span id="play-phrase"></span><span id="play-evidence"></span><span id="play-age"></span></div>
-        <p id="now-colour"></p>
-        <div id="now-by">&mdash; the stage, not the subject</div>
-      </div>
-      <hr class="rule" id="now-rule">
-      <div class="recap-wrap">
-        <div id="recap-box" class="blk rail-blk">
-          <p id="recap" class="clamp"><span id="recap-lede"></span><span id="recap-rest"></span></p>
-          <div class="open-tail" hidden></div>
-          <div class="more" hidden><span class="more-label"></span></div>
-        </div>
-      </div>
-      <hr class="rule" id="story-rule">
-      <div id="pull-box" class="blk rail-blk">
-        <p id="pull" class="clamp"><span class="q">&ldquo;</span><span id="pull-text"></span><span class="q">&rdquo;</span></p>
-        <div id="pull-attrib"></div>
-        <div class="open-tail" hidden></div>
-        <div class="more" hidden><span class="more-label"></span></div>
-      </div>
-      <div id="byline"><i id="byline-dot"></i><span id="byline-text"></span></div>
-    </section>
-
-    <section id="dead" class="panel">
-      <div class="ptitle"><span id="dead-title">THE DEAD</span><span id="dead-count"></span></div>
-      <div id="graves"></div>
-      <div id="desk" hidden>
-        <div id="desk-rows"></div>
-        <div id="desk-by">&mdash; the stage's read, not a measurement</div>
-      </div>
-      <div id="dead-foot"></div>
+    <section id="now" class="panel">
+      <div class="ptitle"><span>NOW</span></div>
+      <p id="now-colour" aria-live="polite"></p>
+      <div id="now-evidence"></div>
+      <div id="now-by"><i id="now-dot"></i><span>&mdash; the stage, not the subject</span></div>
     </section>
   </aside>
 
@@ -765,7 +704,7 @@ hr.rule { border: none; border-top: 1px solid var(--rule); margin: 8px 0 0; flex
 <script>
 "use strict";
 var snap = null, skewMs = 0, failures = 0, lastIncarn = null, lastOrdinal = null;
-var turnNodes = new Map(), dividers = new Map(), expanded = new Set(), graveNodes = [];
+var turnNodes = new Map(), dividers = new Map(), expanded = new Set();
 var announceUntil = 0;
 var REDUCED = false;
 try { REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
@@ -1444,16 +1383,7 @@ function setState(age) {
   }
   setText($("state-clock"), clockText);
 
-  var strip;
-  if (s === "live") strip = "live · just now";
-  else if (s === "thinking") strip = "thinking · " + dur(age);
-  else if (s === "quiet") strip = "quiet · " + dur(age);
-  else if (s === "nosignal") strip = "no signal · " + dur(age);
-  else if (s === "between") strip = "between lives · incarnation " + snap.stats.incarnation + " has not spoken";
-  else strip = "standing by · waiting for the first word";
-  setText($("strip-glyph"), STATE_GLYPH[s]);
-  setText($("strip-text"), strip);
-  setClass($("subject"), "nosig", s === "nosignal");
+  setClass($("lineage"), "nosig", s === "nosignal");
   return s;
 }
 function setTransport(ok) {
@@ -1467,28 +1397,78 @@ function setTransport(ok) {
   else setText(p, PREMISE_LINE);
 }
 
-/* ---------- subject ---------- */
-function renderSubject() {
-  var st = snap.stats, code = snap.code || {};
-  setText($("subj-ord"), String(st.incarnation));
-  if (lastOrdinal != null && st.incarnation !== lastOrdinal && !REDUCED) {
-    var o = $("subj-ord");
-    o.classList.remove("bump"); void o.offsetWidth; o.classList.add("bump");
+/* ---------- lineage ---------- */
+/* THE LINEAGE. One bar per life, oldest left, the current life on the right,
+   growing with every tick. Heights are linear in seconds against the longer
+   of the longest recorded life and the current life's age, so the live bar is
+   never clipped. Undated lives keep a stub so every slot is counted. Every
+   number here is a snapshot fact or clock arithmetic on one. */
+var BAR_CAP = 40, STUB_PX = "2px", SPOT_SECONDS = 10, FOOT_SECONDS = 20;
+var KIND_LABEL = { declared: "ENDED ON ITS OWN NOTE", harness: "ENDED ON A HARNESS NOTE",
+  unknown: "ENDED WITHOUT A NOTE" };
+var barNodes = [], labelNodes = [], barLives = [];
+var lineageFootLines = [""];
+var lifeEdits = 0;
+var spotPin = { ordinal: null, untilMs: 0 };
+var spotShown = null;
+
+function kindOf(kind) { return KIND_LABEL[kind] ? kind : "unknown"; }
+function ensureBars(count) {
+  var host = $("bars"), labels = $("bar-labels");
+  while (barNodes.length < count) {
+    barNodes.push(el("div", "bar", host));
+    labelNodes.push(el("span", "bl", labels));
   }
-  lastOrdinal = st.incarnation;
-  setText($("subj-model"), st.model || "—");
-  $("subj-model").title = st.model || "";
-
-  var edits = 0, ev = snap.events || [];
-  for (var i = 0; i < ev.length; i++) if (ev[i].kind === "write" || ev[i].kind === "migrate") edits++;
-  setText($("v-edits"), String(edits));
-
-  setText($("v-reach"), String(reachedThisLife()));
-
+  for (var i = 0; i < barNodes.length; i++) {
+    barNodes[i].hidden = i >= count;
+    labelNodes[i].hidden = i >= count;
+  }
+}
+/* The newest BAR_CAP dead lives, oldest first, then the current one. */
+function barModel() {
+  var rec = snap.records || {}, lives = (rec.lives || []).slice(-BAR_CAP), out = [];
+  for (var i = 0; i < lives.length; i++) {
+    var l = lives[i] || {};
+    out.push({ ordinal: l.ordinal, kind: kindOf(l.kind), seconds: l.seconds, now: false });
+  }
+  out.push({ ordinal: snap.stats.incarnation, kind: null, seconds: null, now: true });
+  return out;
+}
+function aliveSeconds(nowMs) {
+  var st = snap.stats;
+  if (st.started_epoch == null || !((st.turns_this_life || 0) > 0)) return 0;
+  return Math.max(0, nowMs / 1000 - st.started_epoch);
+}
+function labelStep(count) { return count > 24 ? 5 : 1; }
+function layoutBars(nowMs) {
+  var alive = aliveSeconds(nowMs), max = alive, i;
+  for (i = 0; i < barLives.length; i++) {
+    if (barLives[i].seconds > max) max = barLives[i].seconds;
+  }
+  for (i = 0; i < barLives.length; i++) {
+    var b = barLives[i], sec = b.now ? alive : b.seconds, h;
+    if (!(sec > 0) || !(max > 0)) h = STUB_PX;
+    else h = Math.max(1, Math.round(100 * sec / max)) + "%";
+    if (barNodes[i].style.height !== h) barNodes[i].style.height = h;
+  }
+}
+function litBar(ordinal) {
+  for (var i = 0; i < barLives.length; i++) {
+    setClass(barNodes[i], "lit", ordinal != null && !barLives[i].now && barLives[i].ordinal === ordinal);
+  }
+}
+function renderLifeFigs(nowMs) {
+  var st = snap.stats, parts = [];
+  parts.push("alive " + (st.started_epoch != null ? dur(nowMs / 1000 - st.started_epoch) : "—"));
   var tl = st.turns_this_life || 0;
-  setText($("v-turns"), tl + (st.turns_this_life_exact ? "" : "+"));
-
-  var v = $("v-src");
+  parts.push(tl + (st.turns_this_life_exact ? "" : "+") + " turn" +
+    (tl === 1 && st.turns_this_life_exact ? "" : "s"));
+  parts.push(lifeEdits + " self-edit" + (lifeEdits === 1 ? "" : "s"));
+  parts.push(reachedThisLife() + " reached out");
+  setText($("life-figs"), parts.join(" · "));
+}
+function renderSource() {
+  var code = snap.code || {}, v = $("v-src");
   v.textContent = ""; v.__text = null;
   if (!code.available) {
     el("span", "none", v).textContent = "the mirror is not available";
@@ -1501,209 +1481,102 @@ function renderSubject() {
     el("span", "tail", v).textContent = " lines from seed";
   }
 }
+function renderLineage() {
+  var st = snap.stats, rec = snap.records || {}, nowMs = clock();
+  setText($("lineage-count"), st.incarnation + " LIVE" + (st.incarnation === 1 ? "" : "S") + " SO FAR");
+  barLives = barModel();
+  ensureBars(barLives.length);
+  var step = labelStep(barLives.length);
+  for (var i = 0; i < barLives.length; i++) {
+    var b = barLives[i], node = barNodes[i], cls = "bar" + (b.now ? " now" : " k-" + b.kind);
+    if (node.className !== cls) node.className = cls;
+    var last = i === barLives.length - 1;
+    var show = b.ordinal != null && (last || step === 1 || b.ordinal % step === 0);
+    setText(labelNodes[i], show ? String(b.ordinal) : "");
+    var lcls = "bl" + (b.now ? " now" : "");
+    if (labelNodes[i].className !== lcls) labelNodes[i].className = lcls;
+  }
+  layoutBars(nowMs);
 
-/* ---------- story ---------- */
-function fallbackRecap() {
-  var st = snap.stats, lin = snap.lineage || [], code = snap.code || {}, out = [];
-  var inc = st.incarnation, tl = st.turns_this_life || 0;
-  var tword = tl === 1 ? "1 turn" : tl + " turns";
-  var tphrase = (st.turns_this_life_exact ? "" : "at least ") + tword;
-  if (tl === 0) out.push("Incarnation " + inc + " has not spoken yet.");
-  else if (st.started_epoch != null) {
-    out.push("Incarnation " + inc + " has been alive " +
-      dur(clock() / 1000 - st.started_epoch) + " and has taken " + tphrase + ".");
-  } else out.push("Incarnation " + inc + " is running and has taken " + tphrase + ".");
+  setText($("subj-ord"), String(st.incarnation));
+  if (lastOrdinal != null && st.incarnation !== lastOrdinal && !REDUCED) {
+    var o = $("subj-ord");
+    o.classList.remove("bump"); void o.offsetWidth; o.classList.add("bump");
+  }
+  lastOrdinal = st.incarnation;
+  setText($("subj-model"), st.model || "—");
+  $("subj-model").title = st.model || "";
+  var ev = snap.events || [];
+  lifeEdits = 0;
+  for (var e = 0; e < ev.length; e++) if (ev[e].kind === "write" || ev[e].kind === "migrate") lifeEdits++;
+  renderLifeFigs(nowMs);
+  renderSource();
 
-  var n = lin.length;
-  if (!n) out.push("Nothing has ended here yet.");
-  else {
-    var chosen = 0;
-    for (var i = 0; i < n; i++) if (lin[i].kind === "declared") chosen++;
-    var head = "Of the last " + numWord(n) + " ending" + (n === 1 ? "" : "s") + " on record, ";
-    if (chosen === n) out.push(head + (n === 1 ? "it was chosen." : "all " + numWord(n) + " were chosen."));
-    else if (chosen === 0) out.push(head + (n === 1 ? "it was not chosen." : "none were chosen."));
-    else out.push(head + numWord(chosen) + (chosen === 1 ? " was" : " were") + " chosen and " +
-      numWord(n - chosen) + (n - chosen === 1 ? " was" : " were") + " not.");
-    if (lin[0].ended_epoch != null) {
-      var k = lin[0].kind;
-      var how = k === "declared" ? ", by its own hand."
-        : k === "harness" ? ", cut off by the harness."
-        : "; the record does not say how.";
-      out.push("The most recent ended " + agoLong(lin[0].ended_epoch, clock()) + how);
-    }
-  }
-  if (code.available) {
-    var total = (code.added || 0) + (code.removed || 0);
-    out.push(total > 0
-      ? "This one has already changed " + total + " lines of the file that runs it."
-      : "This one has not touched the file that runs it yet.");
-  }
-  return out.join(" ");
-}
-function dropLede(text) {
-  var parts = text.split(/(?<=\.)\s+/);
-  if (parts.length >= 3) return parts.slice(1).join(" ");
-  return text;
-}
-function renderNow() {
-  var c = (snap.commentary || {}), play = c.play || {}, colour = c.colour || {};
-  setText($("play-tag"), play.tag || "··");
-  setText($("play-phrase"), play.phrase || "waiting for the first word");
-  setText($("play-evidence"), colour.evidence || "");
-  var age = play.epoch == null ? null : Math.max(0, clock() / 1000 - play.epoch);
-  setText($("play-age"), age == null ? "" : dur(age));
-  setText($("now-colour"), colour.text || "");
-}
-/* .recap-wrap takes whatever height the fixed story blocks leave, which is
-   not generally a whole number of recap lines: #now runs 74-98px depending on
-   the colour line, and #pull-attrib takes 18px more. overflow: hidden alone
-   would clip the last visible line mid-glyph, so the clamp is refitted to the
-   space in whole 27px lines (the #recap line-height), never above the CSS
-   ceiling of 4. Inline line-clamp is inert while the block is open: the open
-   style switches #recap to display: block. */
-function fitRecap() {
-  var box = $("recap-box"), recap = $("recap");
-  if (!box || !recap || box.classList.contains("open")) return;
-  var lines = Math.max(1, Math.min(4, Math.floor(box.parentElement.clientHeight / 27)));
-  if (recap.__fitLines === lines) return;
-  recap.__fitLines = lines;
-  recap.style.webkitLineClamp = String(lines);
-  recap.style.lineClamp = String(lines);
-}
-function renderStory() {
-  var story = snap.story, text, model = null, gen = null;
-  if (story && typeof story.text === "string" && story.text.trim()) {
-    text = norm(story.text).slice(0, 1200);
-    model = norm(story.model || "").slice(0, 30);
-    gen = story.generated_at;
-  } else {
-    text = norm(fallbackRecap());
-  }
-  text = dropLede(text);
-  var lede = text, rest = "";
-  var idx = text.indexOf(". ");
-  if (idx > -1 && idx < 200) { lede = text.slice(0, idx + 2); rest = text.slice(idx + 2); }
-  var box = $("recap-box");
-  var a = setText($("recap-lede"), lede), b = setText($("recap-rest"), rest);
-  if (a || b) $("recap").__dirty = true;
-  markBlock(box, snap.stats.incarnation + ":recap", text, text.length, false);
-
-  var lin = snap.lineage || [], pbox = $("pull-box");
-  $("story-rule").hidden = !(lin.length && lin[0].sentence);
-  if (lin.length && lin[0].sentence) {
-    pbox.hidden = false;
-    var s = norm(lin[0].sentence);
-    if (setText($("pull-text"), s)) $("pull").__dirty = true;
-    markBlock(pbox, snap.stats.incarnation + ":pull", s, lin[0].sentence_chars, false);
-    var who = lin[0].ordinal != null ? "incarnation " + lin[0].ordinal : "the last incarnation";
-    var att = lin[0].kind === "harness"
-      ? "— the harness's note on " + who
-      : "— from " + who + "'s own last note";
-    setText($("pull-attrib"), att);
-  } else {
-    pbox.hidden = true;
-  }
-
-  var dot = $("byline-dot"), row = $("byline");
-  if (model) {
-    var ageMin = gen != null ? (clock() / 1000 - gen) / 60 : 999;
-    var fresh = ageMin < 15;
-    setClass(dot, "fresh", fresh);
-    setClass(row, "stale", !fresh);
-    setText($("byline-text"), "narrated by " + model + " · " + rel(gen, clock()) +
-      (fresh ? "" : " — the record has moved on"));
-  } else {
-    setClass(dot, "fresh", false);
-    setClass(row, "stale", false);
-    setText($("byline-text"), "assembled from the record · live");
-  }
+  var shownDead = Math.max(0, barLives.length - 1);
+  lineageFootLines = lineageFootFor(st, rec, shownDead);
+  renderSpot(nowMs);
 }
 
-/* ---------- the dead ---------- */
-function makeGrave() {
-  var g = el("div", "grave");
-  el("i", "tick", g);
-  var body = el("div", "g-body", g);
-  g.__eyebrow = el("div", "g-eyebrow", body);
-  var box = el("div", "blk blk-tomb rail-blk", body);
-  g.__facts = el("div", "g-facts", box);
-  g.__clamp = el("div", "clamp tomb", box);
-  el("div", "open-tail", box).hidden = true;
-  var more = el("div", "more", box);
-  el("span", "more-label", more);
-  more.hidden = true;
-  g.__box = box;
-  return g;
+/* The spotlight: the lineage entries the snapshot carries (newest first), one
+   at a time on a SPOT_SECONDS cadence keyed to the clock, so a reload lands on
+   the same entry. A death pins the newly dead life for one cadence. */
+function spotIndexFor(nowMs, count) {
+  return count ? Math.floor(nowMs / (SPOT_SECONDS * 1000)) % count : -1;
 }
-/* Each kind is a reading of the incarnation's tombstone note — the agent's own
-   done() message, or the harness's synthetic one — not a fact the stage
-   measured. The labels name the note as the source rather than pass a verdict. */
-var KIND_LABEL = { declared: "ENDED ON ITS OWN NOTE", harness: "ENDED ON A HARNESS NOTE",
-  unknown: "ENDED WITHOUT A NOTE" };
-// #dead is 244px tall (#rail's third row). Subtracting the panel's 2x15px
-// padding+border and a fixed 32px title and 16px foot line leaves ~166px for
-// #graves. Each grave is a real record now (facts line plus two lines of note,
-// min-height 80px) rather than a one-liner: two 80px graves plus the 4px
-// inter-grave gap need 164px, which fits in 166px with 2px to spare; a third
-// would need 248px. Raising this back to 3 needs a taller #dead row, which only
-// comes out of #rail's other two rows (#subject or #story's .recap-wrap, the
-// one region built to absorb it) or #rail overall.
-var GRAVE_ROWS = 2;
-function renderDead() {
-  var lin = (snap.lineage || []).slice(0, GRAVE_ROWS), st = snap.stats, box = $("graves");
-  setText($("dead-count"), st.incarnation + " LIVE" + (st.incarnation === 1 ? "" : "S") + " SO FAR");
-  if (!lin.length) {
-    for (var j = 0; j < graveNodes.length; j++) graveNodes[j].hidden = true;
-    if (!box.__empty) {
-      box.__empty = el("div", "empty-serif", box);
-      box.__empty.textContent = "No one has died here yet.";
-    }
-    box.__empty.hidden = false;
-    deadFootLines = [""];
+function spotEntry(nowMs) {
+  var lin = snap.lineage || [];
+  if (!lin.length) return null;
+  if (spotPin.ordinal != null && nowMs < spotPin.untilMs) {
+    for (var i = 0; i < lin.length; i++) if (lin[i].ordinal === spotPin.ordinal) return lin[i];
+  }
+  return lin[spotIndexFor(nowMs, lin.length)];
+}
+function spotFacts(l) {
+  var facts = [];
+  if (l.lifespan_seconds != null) facts.push("lived " + dur(l.lifespan_seconds));
+  /* turns_lived is counted over the transcript window, which the oldest life in
+     it can outrun; turns_partial says the count is a floor. */
+  if (l.turns_lived != null) {
+    var lived = l.turns_lived + (l.turns_partial ? "+" : "");
+    facts.push(lived + " turn" + (l.turns_lived === 1 && !l.turns_partial ? "" : "s"));
+  }
+  return facts.join(" · ");
+}
+function renderSpot(nowMs) {
+  var spot = $("spot"), l = spotEntry(nowMs);
+  if (!l) {
+    if (spot.className !== "k-unknown empty") spot.className = "k-unknown empty";
+    setText($("spot-eyebrow"), "");
+    setText($("spot-facts"), "");
+    setText($("spot-note"), "No one has died here yet.");
+    spotShown = null;
+    litBar(null);
     return;
   }
-  if (box.__empty) box.__empty.hidden = true;
-  for (var i = 0; i < lin.length; i++) {
-    var g = graveNodes[i];
-    if (!g) { g = makeGrave(); graveNodes[i] = g; box.appendChild(g); }
-    g.hidden = false;
-    var l = lin[i];
-    var kind = KIND_LABEL[l.kind] ? l.kind : "unknown";
-    if (g.className.indexOf("k-" + kind) === -1) g.className = "grave k-" + kind;
-    var eyebrow = "INCARNATION " + (l.ordinal == null ? "?" : l.ordinal) + " · " + KIND_LABEL[kind];
-    if (l.turn != null) eyebrow += " · at turn " + l.turn;
-    g.__eyebrowBase = eyebrow;
-    g.__endedEpoch = l.ended_epoch;
-    var sent = norm(l.sentence || l.summary || "");
-    markBlock(g.__box, st.incarnation + ":tomb" + i, sent, l.sentence_chars, false);
-    setText(g.__clamp, sent);
-    var facts = [];
-    if (l.lifespan_seconds != null) facts.push("lived " + dur(l.lifespan_seconds));
-    /* turns_lived is counted over the transcript window, which the oldest life in
-       it can outrun; turns_partial says the count is a floor, and the "+" is the
-       one the subject panel already uses for an inexact turns_this_life. */
-    if (l.turns_lived != null) {
-      var lived = l.turns_lived + (l.turns_partial ? "+" : "");
-      facts.push(lived + " turn" + (l.turns_lived === 1 && !l.turns_partial ? "" : "s"));
+  var kind = kindOf(l.kind), ord = l.ordinal == null ? "?" : l.ordinal;
+  var key = ord + ":" + kind;
+  if (spot.className !== "k-" + kind) spot.className = "k-" + kind;
+  var eyebrow = "INCARNATION " + ord + " · " + KIND_LABEL[kind];
+  if (l.ended_epoch != null) eyebrow += " · " + rel(l.ended_epoch, clock());
+  setText($("spot-eyebrow"), eyebrow);
+  setText($("spot-facts"), spotFacts(l));
+  var note = norm(l.sentence || l.summary || "");
+  if (setText($("spot-note"), note)) $("spot-note").__dirty = true;
+  if (spotShown !== key) {
+    spotShown = key;
+    if (!REDUCED) {
+      var body = spot.querySelector ? spot.querySelector(".spot-body") : null;
+      if (body) { body.classList.remove("swap"); void body.offsetWidth; body.classList.add("swap"); }
     }
-    setText(g.__facts, facts.join(" · "));
   }
-  for (var k = lin.length; k < graveNodes.length; k++) graveNodes[k].hidden = true;
-  deadFootLines = deadFootFor(st, snap.records, lin.length);
+  litBar(l.ordinal);
 }
 
-/* ---------- desk ---------- */
-/* #dead alternates between the graves and the analyst's verdicts on a fixed
-   90s cycle whenever the desk has something. The stars are drawn from the
-   verdict's integer, never from model text. */
-var deadView = "graves";
-var deadFootLines = [""];
-var DESK_ROWS = 4;
-/* The record book: the foot rotates cross-life records so a returning viewer
-   has something to track; tick() carries the rotation. The chose count comes
-   from the record book, which is taken over every tombstone; stats counts it
-   over the five lineage entries only and is used just when the book is absent. */
-function deadFootFor(st, book, shown) {
+/* The record book foot rotates cross-life records so a returning viewer has
+   something to track. The chose count comes from the record book, which is
+   taken over every tombstone; stats counts it over the five lineage entries
+   only and is used just when the book is absent. */
+function lineageFootFor(st, book, shown) {
   st = st || {}; book = book || {};
   var ended = st.lives_ended || 0;
   var chose = book.lives_ended ? (book.chose || 0) : (st.ended_by_choice || 0);
@@ -1719,58 +1592,22 @@ function deadFootFor(st, book, shown) {
   }
   return lines.length ? lines : [""];
 }
-var DEPTH_TAG = { partial: "partial record", tombstone_only: "tombstone only" };
-function starGlyphs(n) {
-  n = Math.max(1, Math.min(5, Math.round(Number(n) || 1)));
-  var out = "";
-  for (var i = 0; i < 5; i++) out += i < n ? "★" : "☆";
-  return out;
+function rotateLineageFoot(nowMs) {
+  var lines = lineageFootLines.length ? lineageFootLines : [""];
+  setText($("lineage-foot"), lines[Math.floor(nowMs / (FOOT_SECONDS * 1000)) % lines.length]);
 }
-function deskViewFor(nowSec) {
-  var d = snap && snap.desk;
-  if (!d || !(d.verdicts || []).length) return "graves";
-  var span = Math.max(5, Math.min(60, Number(d.duration_seconds) || 20));
-  return (nowSec % 90) < (90 - span) ? "graves" : "desk";
-}
-function renderDesk() {
-  var host = $("desk-rows"), d = snap.desk;
-  clearRows(host);
-  if (!d) return;
-  var vs = (d.verdicts || []).slice(0, DESK_ROWS);
-  for (var i = 0; i < vs.length; i++) {
-    var v = vs[i], row = el("div", "verdict", host);
-    var head = el("div", "v-head", row);
-    el("span", "v-ord", head).textContent = "#" + v.ordinal;
-    el("span", "v-stars", head).textContent = starGlyphs(v.stars);
-    el("span", "v-line", head).textContent = norm(v.line || "");
-    var evd = el("div", "v-evidence", row);
-    var tag = DEPTH_TAG[v.depth];
-    evd.textContent = norm(v.evidence || "") + (tag ? " · " + tag : "");
-  }
-}
-function applyDeadView(which) {
-  $("graves").hidden = which !== "graves";
-  $("desk").hidden = which !== "desk";
-  setText($("dead-title"), which === "desk" ? "THE DESK" : "THE DEAD");
-}
-function deskCycle(nowSec) {
-  var which = deskViewFor(nowSec);
-  if (which === deadView) return;
-  deadView = which;
-  if (REDUCED) { applyDeadView(which); return; }
-  var box = $("dead");
-  box.classList.add("viewfade");
-  setTimeout(function () {
-    /* swap while still faded, force layout, then release: the incoming
-       view fades up rather than popping in from display:none */
-    applyDeadView(which);
-    void box.offsetWidth;
-    box.classList.remove("viewfade");
-  }, 250);
-}
-function rotateDeadFoot(nowMs) {
-  var lines = deadFootLines.length ? deadFootLines : [""];
-  setText($("dead-foot"), lines[Math.floor(nowMs / 20000) % lines.length]);
+
+/* ---------- now ---------- */
+/* NOW: the generated colour line is the subject; the evidence line prefers
+   the beat's counted fact and falls back to the play phrase; the dot is lit
+   only for a generated line, never for the no-key template. */
+function renderNow() {
+  var c = (snap.commentary || {}), play = c.play || {}, colour = c.colour || {};
+  setText($("now-colour"), colour.text || "");
+  var line = colour.evidence || play.phrase || "waiting for the first word";
+  var age = play.epoch == null ? null : Math.max(0, clock() / 1000 - play.epoch);
+  setText($("now-evidence"), line + (age == null ? "" : " · " + dur(age)));
+  setClass($("now-dot"), "fresh", !!colour.generated);
 }
 
 /* ---------- eye ---------- */
@@ -2067,13 +1904,12 @@ function runMourn(endedOrdinal) {
     setTimeout(function () { stage.classList.remove("mourning"); }, 600);
   }
   setTimeout(function () { sweep.hidden = true; sweep.classList.remove("sweeping"); }, 4000);
+  spotPin = { ordinal: endedOrdinal, untilMs: clock() + SPOT_SECONDS * 1000 };
+  renderSpot(clock());
   if (!REDUCED) {
-    for (var i = 0; i < graveNodes.length; i++) {
-      (function (g) {
-        g.classList.remove("slide"); void g.offsetWidth; g.classList.add("slide");
-        setTimeout(function () { g.classList.remove("slide"); }, 700);
-      })(graveNodes[i]);
-    }
+    var sp = $("spot");
+    sp.classList.remove("slide"); void sp.offsetWidth; sp.classList.add("slide");
+    setTimeout(function () { sp.classList.remove("slide"); }, 700);
   }
 }
 function maybeCut() {
@@ -2087,7 +1923,7 @@ function maybeCut() {
   var stamp = newest.index + ":" + newest.name;
   if (age < 10 && maybeCut.last !== stamp) {
     maybeCut.last = stamp;
-    var s = $("subject");
+    var s = $("lineage");
     s.classList.remove("cut"); void s.offsetWidth; s.classList.add("cut");
     setTimeout(function () { s.classList.remove("cut"); }, 1000);
     var row = $("selfmod-rows").firstElementChild;
@@ -2147,29 +1983,12 @@ function setPulse(state) {
 
 /* ---------- tick ---------- */
 function setRelativeTimes(nowMs) {
-  for (var i = 0; i < graveNodes.length; i++) {
-    var g = graveNodes[i];
-    if (!g || g.hidden || !g.__eyebrowBase) continue;
-    var t = g.__eyebrowBase;
-    if (g.__endedEpoch != null) t += " · " + rel(g.__endedEpoch, nowMs);
-    setText(g.__eyebrow, t);
-  }
   var metas = document.querySelectorAll(".rmeta.agerow");
-  for (i = 0; i < metas.length; i++) {
+  for (var i = 0; i < metas.length; i++) {
     var m = metas[i];
     setText(m, m.__size + (m.__epoch != null ? " · " + rel(m.__epoch, nowMs) : ""));
   }
   setEyeCaption(nowMs);
-  if (snap.story && snap.story.text) renderStoryByline(nowMs);
-}
-function renderStoryByline(nowMs) {
-  var gen = snap.story.generated_at, model = norm(snap.story.model || "").slice(0, 30);
-  if (!model) return;
-  var fresh = gen != null && (nowMs / 1000 - gen) / 60 < 15;
-  setClass($("byline-dot"), "fresh", fresh);
-  setClass($("byline"), "stale", !fresh);
-  setText($("byline-text"), "narrated by " + model + " · " + rel(gen, nowMs) +
-    (fresh ? "" : " — the record has moved on"));
 }
 function tick() {
   if (!snap) return;
@@ -2178,21 +1997,20 @@ function tick() {
     ? Math.max(0, nowMs / 1000 - snap.stats.last_epoch) : null;
   var state = setState(age);
   var st = snap.stats;
-  setText($("v-alive"), st.started_epoch != null
-    ? dur(nowMs / 1000 - st.started_epoch) : "—");
+  renderLifeFigs(nowMs);
+  layoutBars(nowMs);
   setPulse(state);
   setRelativeTimes(nowMs);
   renderNow();
+  renderSpot(nowMs);
+  rotateLineageFoot(nowMs);
   maybeAutoRepin();
-  deskCycle(nowMs / 1000);
-  rotateDeadFoot(nowMs);
   if (announceUntil && Date.now() > announceUntil) {
     announceUntil = 0;
     $("premise").classList.remove("announce");
     showProvenance();
   }
   if ((st.turns_this_life || 0) === 0) renderColdStart();
-  fitRecap();
 }
 
 /* ---------- lanes ---------- */
@@ -2266,11 +2084,8 @@ function renderLanes() {
 function render(prev) {
   deathBeat(prev);
   noteColour();
-  renderSubject();
+  renderLineage();
   renderLanes();
-  renderStory();
-  renderDead();
-  renderDesk();
   renderSpoken();
   renderRibbon();
   renderEye();
