@@ -832,3 +832,16 @@ def test_the_canvas_tier_alone_hides_overflow():
     assert "html, body { width: 1920px; height: 1080px;" in base
     scaled = css[css.index("@media (max-width: 1919px)") : css.index("@media (max-width: 1199px)")]
     assert "html, body { width: auto; height: auto; overflow: auto; }" in scaled
+
+
+def test_the_flow_tier_wraps_the_figures_and_narrows_the_reached_rows():
+    flow = HTML[HTML.index("@media (max-width: 1199px)") : HTML.index("@media (min-width: 720px)")]
+    assert "#life-figs { white-space: normal; }" in flow
+    assert ".g-eyebrow { white-space: normal; }" in flow
+    assert "#reached-rows .rrow { grid-template-columns: 82px 1fr 100px; column-gap: 8px; }" in flow
+
+
+def test_the_reached_meta_never_wraps_into_the_next_row():
+    block = HTML[HTML.index("\n.rrow .rmeta {") :]
+    block = block[: block.index("}")]
+    assert "white-space: nowrap" in block and "text-overflow: ellipsis" in block

@@ -530,7 +530,8 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #selfmod-diff .d-rem { color: var(--fault); }
 #selfmod-diff .d-hunk { color: var(--paper-faint); }
 #reached.is-sparse #reached-foot { margin-top: 8px; }
-.rrow .rmeta { text-align: right; font: 400 13px/21px var(--mono); color: var(--paper-faint); }
+.rrow .rmeta { text-align: right; font: 400 13px/21px var(--mono); color: var(--paper-faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .empty-mono { font: 400 14px/21px var(--mono); color: var(--paper-dim); }
 #reached { position: relative; }
 #reached.spoke { border-left: 2px solid var(--say); }
@@ -614,6 +615,9 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   #lineage { order: 1; flex: none; gap: 8px; }
   #chart { height: 84px; }
   #spot { flex: none; }
+  #life-figs { white-space: normal; }
+  .g-eyebrow { white-space: normal; }
+  #reached-rows .rrow { grid-template-columns: 82px 1fr 100px; column-gap: 8px; }
   #monologue { order: 2; height: 70dvh; min-height: 420px; }
   #now { order: 3; min-height: 150px; }
   #ribbon { order: 4; display: grid; grid-template-columns: 1fr; gap: 14px; }
@@ -1486,7 +1490,11 @@ function aliveSeconds(nowMs) {
   if (st.started_epoch == null || !((st.turns_this_life || 0) > 0)) return 0;
   return Math.max(0, nowMs / 1000 - st.started_epoch);
 }
-function labelStep(count) { return count > 24 ? 5 : 1; }
+function labelStep(count, width) {
+  if (!(width > 0)) return count > 24 ? 5 : 1;
+  var per = width / count;
+  return per >= 22 ? 1 : per >= 12 ? 5 : 10;
+}
 function layoutBars(nowMs) {
   var alive = aliveSeconds(nowMs), max = alive, i;
   for (i = 0; i < barLives.length; i++) {
@@ -1533,7 +1541,7 @@ function renderLineage() {
   setText($("lineage-count"), st.incarnation + " LIVE" + (st.incarnation === 1 ? "" : "S") + " SO FAR");
   barLives = barModel();
   ensureBars(barLives.length);
-  var step = labelStep(barLives.length);
+  var step = labelStep(barLives.length, $("bar-labels").clientWidth || 0);
   for (var i = 0; i < barLives.length; i++) {
     var b = barLives[i], node = barNodes[i], cls = "bar" + (b.now ? " now" : " k-" + b.kind);
     if (node.className !== cls) node.className = cls;

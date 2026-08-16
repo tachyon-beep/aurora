@@ -1410,6 +1410,8 @@ rotateLineageFoot(0); out.foot_0 = fake("lineage-foot").textContent;
 rotateLineageFoot(20000); out.foot_1 = fake("lineage-foot").textContent;
 rotateLineageFoot(60000); out.foot_wraps = fake("lineage-foot").textContent;
 
+out.steps = [labelStep(23, 366), labelStep(41, 658), labelStep(24, 658), labelStep(60, 366), labelStep(23, 0)];
+
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -1449,6 +1451,7 @@ def test_the_lineage_scales_colours_caps_and_walks(tmp_path):
     assert out["empty_note"] == "No one has died here yet."
     assert out["empty_bars"] == 1
     assert (out["foot_0"], out["foot_1"], out["foot_wraps"]) == ("a", "b", "a")
+    assert out["steps"] == [5, 5, 1, 10, 1]
 
 
 NOW_HARNESS = """
