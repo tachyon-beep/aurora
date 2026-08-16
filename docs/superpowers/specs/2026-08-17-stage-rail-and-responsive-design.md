@@ -1,7 +1,9 @@
 # Stage rail rebuild and responsive layout
 
-Date: 2026-08-17. Status: approved for implementation (John, 2026-08-17: "resolve this
-issue … you're authorised to fully adjust the layout and reach down into the containers").
+Date: 2026-08-17. Status: implemented on branch `stage-rail-rebuild` (records `lives`, the
+LINEAGE and NOW panels, the three layout tiers, the container check fixes, and the colour-line
+call context below); approved 2026-08-17 (John: "resolve this issue … you're authorised to fully
+adjust the layout and reach down into the containers").
 Companion plan: `docs/superpowers/plans/2026-08-17-stage-rail-and-responsive.md`.
 Supersedes the THE SUBJECT / THE STORY SO FAR / THE DEAD rulings in
 `2026-08-16-stream-page-first-principles.md`. Everything else in that spec stands.
@@ -97,7 +99,8 @@ One panel, height 216 px at 1080p:
 
 1. Title bar: `NOW`.
 2. **The colour line** — the generated one-sentence read of the current beat — at
-   22 px/30 px, two-line clamp, `aria-live="polite"`. This is the one generated element
+   22 px/30 px, three-line clamp (amended from two at implementation: the 216 px panel has
+   the room and a 140-character sentence at 22 px needs it), `aria-live="polite"`. This is the one generated element
    on the page that changes turn to turn; it is promoted from third position in a panel
    to the panel's subject.
 3. **Evidence line**, 13 px mono: the beat's counted fact when it has one
@@ -105,6 +108,17 @@ One panel, height 216 px at 1080p:
    `· 16s` age. The play tag is deleted.
 4. Byline: `— the stage, not the subject`, with the fresh dot lit while the colour line
    is generated (not the no-key template).
+
+**Colour-line call context (added 2026-08-17, operator request during the container check —
+"can we give the summariser the contents of the command as well so it can explain what it's
+actually doing").** Every beat now carries `call` (the newest relevant tool name: the beat's
+own tool when it names one, else the newest call of the newest turn) and `args` (that call's
+arguments, passed through the same `_field` flattening and fence-stripping as every other
+agent-controlled value, capped at `ARGS_CHARS = 200`). The prompt renders them as `call:` /
+`args:` lines; the cache digest ignores them, so a change of arguments never drops the
+displayed line to the template — the line simply picks the fresh arguments up when it next
+regenerates (the existing 60 s floor). The system prompt tells the model it may use them to say
+concretely what the agent is doing, quoting at most a few words.
 
 Deleted from the page: `#play-tag`, `#recap-box`, `#pull-box`, `#byline`, `#graves`,
 `#desk`, `#subj-strip`, `.more`/`READ THE REST` on every rail block, `fitRecap`,

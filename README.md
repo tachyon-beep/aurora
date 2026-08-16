@@ -200,10 +200,12 @@ docker compose down -v  # destructive: removes state, diode data, transcripts, a
 
 The stage comes up with the stack; both ports bind host-loopback only. It serves two pages:
 
-- `http://localhost:8091` — the stream page, a 1920×1080 read-only view designed for an OBS
-  browser source: live agent turns, incarnation stats, lineage, self-modification and diode
-  activity, and per-socket stream lanes with a live in-flight indicator fed by the recorder's
-  event log.
+- `http://localhost:8091` — the stream page, a read-only view composed at 1920×1080 for an OBS
+  browser source and reflowed for phones: live agent turns, the lineage of lives with the
+  current one growing live, a generated one-line read of the current beat, self-modification and
+  diode activity, and per-socket stream lanes with a live in-flight indicator fed by the
+  recorder's event log. Between 1200 and 1919 px wide the 1080p composition is scaled to fit;
+  below 1200 px it becomes a single scrolling column.
 - `http://localhost:8092/?token=<STAGE_CONSOLE_TOKEN>` — the operator console (loopback only):
   browse the telemetry mirror of the agent's working tree, the transcripts, and the diode; view
   the agent.py diff against stock; tail the captured agent log.
