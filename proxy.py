@@ -518,6 +518,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         response_code = 500
         response_headers = []
         relayed = None
+        upstream_refused = False
 
         try:
             with urllib.request.urlopen(req, timeout=60) as res:
@@ -531,6 +532,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             response_code = e.code
             response_body = e.read()
             response_headers = passthrough_headers(e.headers.items())
+            upstream_refused = True
         except Exception as e:
             response_code = 500
             response_body = json.dumps({"error": {"message": f"Proxy error: {str(e)}"}}).encode(
@@ -561,9 +563,13 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         log_event("close", stream, **close_fields)
 
         if registry is not None and stream != "core":
+            # An upstream that answered with an error status generated nothing,
+            # so the request settles at zero. A request whose usage is unknown
+            # for any other reason - a relay that broke, a transport failure
+            # after the request may have been received - keeps its reservation.
             spent = usage.get("total_tokens") if isinstance(usage, dict) else None
-            if not isinstance(spent, int) or isinstance(spent, bool):
-                spent = None
+            if isinstance(spent, bool) or not isinstance(spent, (int, float)):
+                spent = 0 if upstream_refused else None
             registry.settle(stream, ticket, spent)
 
         self.log_transcript(req_data, res_data, stream=stream)

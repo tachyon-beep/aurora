@@ -300,7 +300,7 @@ def estimate_prompt_tokens(body_bytes, divisor=PROMPT_BYTES_PER_TOKEN):
     return max(1, len(body_bytes) // divisor)
 
 
-def reservation_for(body_bytes, settings, allowance=0):
+def reservation_for(composed_bytes, allowance):
     """The tokens held against a stream's window while one request is in flight.
 
     A request is admitted before anyone knows what it will spend, so admitting
@@ -310,14 +310,22 @@ def reservation_for(body_bytes, settings, allowance=0):
     the response is permitted to be, so concurrent requests contend for the
     same allowance instead of each seeing it empty. It is replaced by the real
     usage when the request settles.
+
+    What the response is permitted to be is read from the composed body, the
+    one actually forwarded: its max_tokens, whether declared or the request's
+    own, already carrying the reasoning allowance when the composed request
+    reasons. A composed body with no max_tokens permits whatever the upstream
+    will produce, so it holds the stream's whole hourly allowance.
     """
-    reserved = estimate_prompt_tokens(body_bytes)
-    tokens = settings.get("max_tokens")
+    reserved = estimate_prompt_tokens(composed_bytes)
+    try:
+        data = json.loads(composed_bytes.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        data = None
+    tokens = data.get("max_tokens") if isinstance(data, dict) else None
     if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens > 0:
-        reserved += tokens
-        if settings.get("reasoning_effort") != "none":
-            reserved += allowance
-    return reserved
+        return reserved + tokens
+    return reserved + allowance
 
 
 def token_limited_message(allowance, history, now, window=BUDGET_WINDOW):
@@ -409,7 +417,10 @@ each accepted declaration is served at <name>.sock. configuration fields:
   budget: integer, requests allowed per hour on that socket
   token_budget: integer, tokens allowed per hour on that socket. a request is
   admitted while the hour's spend is below it; the response that crosses it
-  completes.
+  completes. a request in flight counts the most it is permitted to spend
+  until its usage is known: its prompt and its max_tokens, or the whole
+  hourly allowance when it has no max_tokens. the usage then replaces that
+  count, so the hour's spend can go down as well as up.
   model: string
   reasoning_effort: one of none, minimal, low, medium, high
   temperature: number from 0 to 2
@@ -580,7 +591,7 @@ class StreamRegistry:
             return body, (400, error), None
         allowance = effective_allowance(settings)
         token_allowance = effective_token_allowance(settings)
-        reserved = reservation_for(composed, settings, reasoning_allowance())
+        reserved = reservation_for(composed, token_allowance)
         with self._lock:
             now = self._clock()
             tokens = self._token_histories.get(stream, [])
@@ -608,8 +619,9 @@ class StreamRegistry:
         """
         if ticket is None:
             return
-        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
+        if isinstance(tokens, bool) or not isinstance(tokens, (int, float)) or tokens < 0:
             return
+        tokens = int(tokens)
         with self._lock:
             history = self._token_histories.get(stream)
             if not history:

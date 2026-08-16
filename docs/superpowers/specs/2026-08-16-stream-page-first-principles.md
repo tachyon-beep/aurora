@@ -130,7 +130,7 @@ new `/frame/` route serves only names matched against a directory listing (trave
 impossible by construction), resolved through `contained_file`, size-capped. What is new is
 *public exposure* of the captured frames on the stream port — deliberate, operator-approved.
 
-**CLAUDE.md follow-up (proposal, not yet applied):** invariant 3's telemetry sentence
+**CLAUDE.md follow-up (applied 2026-08-17):** invariant 3's telemetry sentence
 ("never rendered on the stream page") predates the graves and source-delta features and now
 also predates the diff excerpt; it should read "never rendered wholesale — only curated,
 capped extracts (tombstone notes, source deltas, per-edit diff excerpts), each read through

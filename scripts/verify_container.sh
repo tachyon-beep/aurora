@@ -49,7 +49,8 @@ cleanup() {
     "${COMPOSE_PROJECT_NAME}_transcripts" \
     "${COMPOSE_PROJECT_NAME}_telemetry" \
     "${COMPOSE_PROJECT_NAME}_llm_sock" \
-    "${COMPOSE_PROJECT_NAME}_llm_console" >/dev/null 2>&1 || true
+    "${COMPOSE_PROJECT_NAME}_llm_console" \
+    "${COMPOSE_PROJECT_NAME}_pump" >/dev/null 2>&1 || true
   rm -rf "$VERIFY_BUILD_DIR"
 }
 trap cleanup EXIT

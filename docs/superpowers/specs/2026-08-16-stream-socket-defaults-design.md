@@ -267,9 +267,19 @@ than that hit the token quota first, which is the intended behaviour for real wo
 than that hit the rate cap first, which is the intended behaviour for a spin. Setting it lower — 200,
 say — would make the rate cap bind before the token quota for any turn under ~10k tokens, and the
 advertised 2M/hour would become a number the agent can never actually reach.
-`STREAM_REASONING_ALLOWANCE` stays at 32768: it is added on top of a composed `max_tokens` when
-reasoning is on, because the upstream counts reasoning inside `max_tokens`, so a reasoning request
-gets 65536 total and the declared 32768 genuinely bounds the response.
+`STREAM_REASONING_ALLOWANCE` is added on top of a composed `max_tokens` when reasoning is on,
+because the upstream counts reasoning inside `max_tokens`, so the declared cap genuinely bounds the
+response. The implemented default is 8192 (`DEFAULT_REASONING_ALLOWANCE`), and `.env.example`
+shows the same value; an earlier draft of this section assumed 32768, which would put a reasoning
+request at 65536 total and needs the same per-model output-cap check as the seed's `max_tokens`
+before it is adopted.
+
+**Reservation (added after review).** A request in flight holds the prompt estimate plus the
+composed body's `max_tokens` — the value actually forwarded, allowance included — until its usage
+settles it. A composed body with no `max_tokens` holds the stream's whole hourly allowance, so
+uncapped requests are single-flight on that socket; declaring `max_tokens` is the lever for
+concurrency. An upstream error status settles at zero; any other unknown spend keeps the hold.
+`/llm/sock/README.md` states the in-flight rule.
 
 **`max_tokens = 32768` is the one number to verify during implementation.** It must not exceed the
 output cap of any model in the shipped allow lists, or the upstream rejects every call and the

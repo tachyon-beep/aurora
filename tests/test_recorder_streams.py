@@ -658,7 +658,7 @@ def test_apply_reports_added_and_removed():
 def test_admit_composes_and_charges(monkeypatch):
     monkeypatch.delenv("STREAM_HOURLY_MAX", raising=False)
     registry = _registry()
-    registry.apply({"aux": {"model": "declared", "budget": 1}}, {})
+    registry.apply({"aux": {"model": "declared", "budget": 1, "max_tokens": 10}}, {})
     body = json.dumps({"model": "sent", "messages": []}).encode("utf-8")
     composed, refusal, _ = registry.admit("aux", body)
     assert refusal is None
@@ -747,7 +747,10 @@ def test_a_request_refusal_reserves_no_tokens():
     # for rate adds nothing to it. What is already there is the reservation the
     # admitted request holds until it settles.
     registry = _registry()
-    registry.apply({"aux": {"budget": 1, "token_budget": 1000}}, {})
+    registry.apply(
+        {"aux": {"budget": 1, "token_budget": 1000, "max_tokens": 10, "reasoning_effort": "none"}},
+        {},
+    )
     _, _, ticket = registry.admit("aux", b"{}")
     held = registry.state()["streams"]["aux"]["tokens"]["used"]
     assert held > 0
@@ -1050,3 +1053,72 @@ def test_a_declaration_without_max_tokens_still_reserves_its_prompt(monkeypatch)
     registry.settle(name, ticket, None)
 
     assert rs.token_status(registry._token_histories[name], registry._clock())["used"] > 0
+
+
+def test_reservation_follows_the_composed_max_tokens(monkeypatch):
+    # The reservation is what the forwarded request permits: the composed
+    # max_tokens, which already carries the reasoning allowance when the
+    # composed request reasons, and does not when it does not.
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
+    monkeypatch.setenv("STREAM_REASONING_ALLOWANCE", "100")
+    body = json.dumps({"model": "m", "messages": []}).encode()
+
+    reasoning = {"model": "m", "max_tokens": 400, "reasoning_effort": "low"}
+    composed, _ = rs.compose_body(body, reasoning, rs.reasoning_allowance())
+    assert rs.reservation_for(composed, 1000) == rs.estimate_prompt_tokens(composed) + 500
+
+    plain = {"model": "m", "max_tokens": 400}
+    quiet = json.dumps({"model": "m", "messages": [], "reasoning_effort": "none"}).encode()
+    composed, _ = rs.compose_body(quiet, plain, rs.reasoning_allowance())
+    assert rs.reservation_for(composed, 1000) == rs.estimate_prompt_tokens(composed) + 400
+
+
+def test_a_request_without_any_max_tokens_reserves_the_whole_allowance(monkeypatch):
+    # With no cap declared and none in the request, the response may be as
+    # large as the upstream permits, so the request holds the hour's allowance
+    # until it settles: concurrent uncapped requests contend rather than each
+    # seeing an empty window.
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
+    registry = rs.StreamRegistry()
+    name = _declared(registry, token_budget=1000)
+    body = json.dumps({"model": "m", "messages": []}).encode()
+
+    _, refusal, ticket = registry.admit(name, body)
+    assert refusal is None
+    assert rs.token_status(registry._token_histories[name], registry._clock())["used"] >= 1000
+    _, refusal, _ = registry.admit(name, body)
+    assert refusal is not None and refusal[0] == 429
+
+    registry.settle(name, ticket, 10)
+    _, refusal, _ = registry.admit(name, body)
+    assert refusal is None
+
+
+def test_a_request_carrying_its_own_max_tokens_reserves_that(monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
+    registry = rs.StreamRegistry()
+    name = _declared(registry, token_budget=1000)
+    body = json.dumps({"model": "m", "messages": [], "max_tokens": 300}).encode()
+
+    _, refusal, _ = registry.admit(name, body)
+    assert refusal is None
+    used = rs.token_status(registry._token_histories[name], registry._clock())["used"]
+    assert 300 <= used < 400
+
+
+def test_settle_accepts_a_float_total(monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
+    registry = rs.StreamRegistry()
+    name = _declared(registry, token_budget=1000, max_tokens=400)
+    body = json.dumps({"model": "m", "messages": []}).encode()
+
+    _, _, ticket = registry.admit(name, body)
+    registry.settle(name, ticket, 10.0)
+
+    assert rs.token_status(registry._token_histories[name], registry._clock())["used"] == 10
+
+
+def test_readme_states_what_a_request_in_flight_counts():
+    text = rs.README_TEXT
+    assert "in flight" in text
+    assert "until its usage is known" in text

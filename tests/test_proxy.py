@@ -1,10 +1,12 @@
 import http.client
 import importlib
+import io
 import json
 import os
 import socket
 import threading
 import time
+import urllib.error
 
 import httpx
 import pytest
@@ -921,7 +923,7 @@ def test_a_streamed_response_leaves_the_connection_usable(stream_factory, upstre
         b"data: [DONE]\n\n",
     ]
     upstream["response"] = lambda: _StreamingResponse(pieces)
-    path = stream_factory()
+    path = stream_factory(max_tokens=10)
 
     client = _connect(path)
     try:
@@ -937,7 +939,7 @@ def test_a_streamed_response_leaves_the_connection_usable(stream_factory, upstre
 
 
 def test_a_refusal_leaves_the_connection_usable(stream_factory, upstream):
-    path = stream_factory(budget=1)
+    path = stream_factory(budget=1, max_tokens=10)
     client = _connect(path)
     try:
         fp = client.makefile("rb")
@@ -1074,3 +1076,37 @@ def test_a_request_body_at_the_cap_is_forwarded(core_server, monkeypatch, upstre
     response = _post(core_server, payload)
     assert response.status_code == 200
     assert json.loads(upstream["seen"]["data"]) == payload
+
+
+def test_an_upstream_error_releases_the_reservation(stream_factory, upstream, registry):
+    # An upstream that answers with an error status generated nothing, so the
+    # request settles at zero rather than holding its permitted maximum for
+    # the hour; otherwise a run of cheap 400s exhausts the socket's quota.
+    def refused(request, timeout=None):
+        raise urllib.error.HTTPError(
+            request.full_url, 400, "Bad Request", {}, io.BytesIO(b'{"error": {"message": "no"}}')
+        )
+
+    upstream["response"] = None
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("urllib.request.urlopen", refused)
+        path = stream_factory(max_tokens=400)
+        response = _post(path, {"model": "m", "messages": []})
+
+    assert response.status_code == 400
+    assert _used_tokens(registry) == 0
+
+
+def test_a_transport_failure_keeps_its_reservation(stream_factory, upstream, registry):
+    # A request that failed in transit may have reached the upstream and been
+    # generated; its spend is unknown, so the reservation stands.
+    def dropped(request, timeout=None):
+        raise OSError("connection reset")
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("urllib.request.urlopen", dropped)
+        path = stream_factory(max_tokens=400)
+        response = _post(path, {"model": "m", "messages": []})
+
+    assert response.status_code == 500
+    assert _used_tokens(registry) >= 400

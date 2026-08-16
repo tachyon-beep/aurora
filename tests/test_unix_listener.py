@@ -130,7 +130,7 @@ def registry():
 @pytest.fixture
 def stream_server(tmp_path, transcripts, fake_upstream, registry, monkeypatch):
     monkeypatch.delenv("STREAM_HOURLY_MAX", raising=False)
-    registry.apply({"aux": {"model": "declared", "budget": 1}}, {})
+    registry.apply({"aux": {"model": "declared", "budget": 1, "max_tokens": 10}}, {})
     path = str(tmp_path / "aux.sock")
     instance = proxy.UnixHTTPServer(path, proxy.ProxyHTTPRequestHandler)
     instance.stream_name = "aux"

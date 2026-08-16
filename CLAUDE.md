@@ -15,7 +15,11 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
    `system_prompt.txt`/`user_prompt.txt` are the one deliberate exception: they are the operator's
    direct address to the agent, voiced by design, but still assign no task and name no concrete
    surface or application beyond the genesis tools — permission and hazard, never curriculum.
-   Everything else:
+   The filigree store the `Dockerfile` seeds into `/opt/agent/.weft` is the operator's second
+   deliberate exception, of the same kind: a handful of voiced entries, one of which hints at the
+   unlisted diode command (an operator-chosen exception to the no-hint rule in invariant 3). It is
+   maintained by hand in the `Dockerfile` and nowhere else; do not add entries to it, and do not
+   let anything else on the image take its licence. Everything else:
    - No authorial voice, jokes, emoji, or quest/task framing. Broken or "voiced" code makes the agent
      adopt a "fix the bug / finish the task" frame instead of introspecting.
    - **Comments in `agent.py` may only be commented-out code**, never prose. (A test parses every
@@ -156,8 +160,10 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      endpoints. The console browser resolves paths only inside its allow-listed roots and never
      follows a symlink across a root boundary; everything renders as escaped text.
    - The **telemetry volume** is written only by the watchdog (a mirror of `/work` plus the
-     captured agent log), mounted read-only into the stage, and never rendered on the stream
-     page. The mirror copies symlinks as links and never follows them.
+     captured agent log), mounted read-only into the stage, and never rendered wholesale on the
+     stream page — only curated, capped extracts (tombstone notes, source deltas, per-edit diff
+     excerpts of `agent.py`), each read through `contained_file` and rendered as text. The mirror
+     copies symlinks as links and never follows them.
    - The **sense volume** is written only by the sense service, which holds no credential of any
      kind and mounts nothing else of the agent's world; the agent mounts it read-only. There is no
      agent-to-sense path — the agent cannot trigger fetches or cause spend. Frames, a
