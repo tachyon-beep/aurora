@@ -1113,3 +1113,54 @@ def diode_spoken(diode_dir, limit=2):
             epoch = stat.st_mtime
         out.append({"name": name, "epoch": epoch, "text": (text or "")[:SPOKEN_TEXT_CAP]})
     return out, total
+
+
+PULSE_WINDOW_SECONDS = 600
+PULSE_BUCKET_SECONDS = 30
+PULSE_INFLIGHT_ROWS = 4
+PULSE_LANE_CHARS = 32
+
+
+def request_pulse(
+    events_path, now=None, window=PULSE_WINDOW_SECONDS, bucket_seconds=PULSE_BUCKET_SECONDS
+):
+    """Recent request activity across all lanes, folded into fixed token buckets.
+
+    Buckets sum closed total_tokens over the window, oldest first; the counts
+    and totals cover closes inside the window. Opens without a matching close
+    appear in flight until INFLIGHT_MAX_AGE, newest first, at most
+    PULSE_INFLIGHT_ROWS rows. last_close_epoch reports the newest close in
+    the log regardless of the window.
+    """
+    if now is None:
+        now = time.time()
+    fold = _event_fold(events_path)
+    bucket_count = window // bucket_seconds
+    edges = [now - window + i * bucket_seconds for i in range(bucket_count + 1)]
+    buckets = [0] * bucket_count
+    requests_window = 0
+    tokens_window = 0
+    last_close_epoch = None
+    threshold = now - window
+    for epochs, _error_prefix, token_prefix in fold["closes"].values():
+        if epochs:
+            last_close_epoch = _later(last_close_epoch, epochs[-1])
+        start = bisect.bisect_right(epochs, threshold)
+        requests_window += len(epochs) - start
+        tokens_window += token_prefix[-1] - token_prefix[start]
+        cuts = [bisect.bisect_right(epochs, edge) for edge in edges]
+        for i in range(bucket_count):
+            buckets[i] += token_prefix[cuts[i + 1]] - token_prefix[cuts[i]]
+    in_flight = []
+    for (name, _id), epoch in fold["opens"].items():
+        if now - epoch > INFLIGHT_MAX_AGE:
+            continue
+        in_flight.append({"lane": name[:PULSE_LANE_CHARS], "since_epoch": epoch})
+    in_flight.sort(key=lambda row: row["since_epoch"], reverse=True)
+    return {
+        "in_flight": in_flight[:PULSE_INFLIGHT_ROWS],
+        "buckets": buckets,
+        "requests_window": requests_window,
+        "tokens_window": tokens_window,
+        "last_close_epoch": last_close_epoch,
+    }

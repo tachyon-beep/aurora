@@ -1,0 +1,81 @@
+import os
+import time
+
+import pytest
+
+from stage import records
+
+
+def _tombstone(work, name, text, age_seconds):
+    tomb = work / "tombstones"
+    tomb.mkdir(parents=True, exist_ok=True)
+    path = tomb / name
+    path.write_text(text, encoding="utf-8")
+    stamp = time.time() - age_seconds
+    os.utime(path, (stamp, stamp))
+    return path
+
+
+def test_empty_dir_yields_zeros_and_nones(tmp_path):
+    book = records.record_book(str(tmp_path))
+    assert book == {
+        "lives_ended": 0,
+        "chose": 0,
+        "longest_life": None,
+        "most_recent_gap_seconds": None,
+    }
+
+
+def test_three_tombstones_give_longest_life_gap_and_chose(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "done() at turn 3. more detail.", 1000)
+    _tombstone(tmp_path, "incarnation-b.txt", "terminated by the harness after a fault.", 400)
+    _tombstone(tmp_path, "incarnation-c.txt", "done() reached. closing note.", 100)
+    book = records.record_book(str(tmp_path))
+    assert book["lives_ended"] == 3
+    assert book["chose"] == 2
+    assert book["longest_life"]["ordinal"] == 2
+    assert book["longest_life"]["seconds"] == pytest.approx(600, abs=1)
+    assert book["most_recent_gap_seconds"] == pytest.approx(300, abs=1)
+
+
+def test_ordinal_one_is_excluded_from_longest_life(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "first note.", 500)
+    _tombstone(tmp_path, "incarnation-b.txt", "second note.", 200)
+    book = records.record_book(str(tmp_path))
+    assert book["longest_life"]["ordinal"] == 2
+    assert book["longest_life"]["seconds"] == pytest.approx(300, abs=1)
+
+
+def test_undatable_death_yields_no_span_across_it(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "first note.", 1000)
+    _tombstone(tmp_path, "incarnation-b.txt", "second note.", 90 * 86400)
+    _tombstone(tmp_path, "incarnation-c.txt", "third note.", 100)
+    book = records.record_book(str(tmp_path))
+    assert book["lives_ended"] == 3
+    assert book["longest_life"] is None
+    assert book["most_recent_gap_seconds"] is None
+
+
+def test_empty_tombstone_text_is_not_counted_as_chose(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "", 100)
+    book = records.record_book(str(tmp_path))
+    assert book["lives_ended"] == 1
+    assert book["chose"] == 0
+
+
+def test_symlinked_tombstone_outside_the_mirror_is_ignored(tmp_path):
+    work = tmp_path / "work"
+    _tombstone(work, "incarnation-a.txt", "done() reached.", 100)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("done() reached.", encoding="utf-8")
+    (work / "tombstones" / "incarnation-b.txt").symlink_to(outside)
+    book = records.record_book(str(work))
+    assert book["lives_ended"] == 1
+    assert book["chose"] == 1
+
+
+def test_classification_reads_only_the_head_of_a_long_note(tmp_path):
+    text = "terminated by the harness at turn 9. " + "x" * 10_000
+    _tombstone(tmp_path, "incarnation-a.txt", text, 100)
+    book = records.record_book(str(tmp_path))
+    assert book["chose"] == 0

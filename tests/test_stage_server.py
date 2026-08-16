@@ -5,7 +5,7 @@ from urllib.parse import quote
 
 import pytest
 
-from stage import commentary, server
+from stage import codewatch, commentary, server
 
 
 @pytest.fixture()
@@ -465,6 +465,10 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "events",
         "lanes",
         "lanes_omitted",
+        "pulse",
+        "records",
+        "desk",
+        "sense",
         "diode",
         "lineage",
         "story",
@@ -495,7 +499,49 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "spoken_total",
     }
     assert isinstance(snap["now"], float)
-    assert snap["code"] == {"available": False, "added": 0, "removed": 0}
+    assert snap["code"] == {"available": False, "added": 0, "removed": 0, "latest_edit": None}
+
+
+def test_the_empty_snapshot_matches_a_live_one_on_the_new_keys(tmp_path, monkeypatch):
+    codewatch._reset_for_tests()
+    live = _snapshot(tmp_path, monkeypatch, [_turn_entry(0)])
+    empty = server._empty_snapshot(1000.0)
+    assert set(empty["pulse"]) == set(live["pulse"])
+    assert len(empty["pulse"]["buckets"]) == len(live["pulse"]["buckets"]) == 20
+    assert set(empty["records"]) == set(live["records"])
+    assert empty["desk"] is None
+    assert empty["sense"] is None
+    assert set(empty["code"]) == set(live["code"])
+
+
+def test_the_desk_and_sense_keys_cap_and_reject_malformed_shapes():
+    assert server._public_desk(None) is None
+    assert server._public_desk({"verdicts": []}) is None
+    assert server._public_desk({"verdicts": [{"ordinal": 3, "stars": True}]}) is None
+    package = server._public_desk(
+        {
+            "verdicts": [
+                {
+                    "ordinal": 3,
+                    "stars": 9,
+                    "line": "x" * 500,
+                    "evidence": "y" * 500,
+                    "depth": "full",
+                }
+            ],
+            "generated_at": 12.0,
+            "model": "m" * 200,
+            "duration_seconds": 20,
+        }
+    )
+    assert package["verdicts"][0]["stars"] == 5
+    assert len(package["verdicts"][0]["line"]) == server.DESK_LINE_CAP
+    assert len(package["verdicts"][0]["evidence"]) == server.DESK_EVIDENCE_CAP
+    assert len(package["model"]) == server.MODEL_CAP
+    assert server._public_sense(None) is None
+    assert server._public_sense({"slot": "", "name": "a.jpg"}) is None
+    frame = server._public_sense({"slot": "2", "name": "04 1.jpg", "captured_epoch": 5.0})
+    assert frame["url"] == "/frame/2/04%201.jpg"
 
 
 def test_snapshot_carries_a_commentary_block(tmp_path, monkeypatch):
@@ -652,8 +698,10 @@ def test_stream_snapshot_reports_diff_statistics_but_no_source(tmp_path, monkeyp
     monkeypatch.setattr(server, "TELEMETRY_DIR", str(telemetry))
     monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(transcripts))
     monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path / "diode"))
+    codewatch._reset_for_tests()
     snap = server.stream_snapshot()
-    assert snap["code"] == {"available": True, "added": 1, "removed": 0}
+    assert snap["code"] == {"available": True, "added": 1, "removed": 0, "latest_edit": None}
+    assert "SECRETLINE" not in json.dumps(snap)
     assert "SECRETLINE" not in json.dumps(snap)
 
 
@@ -733,6 +781,10 @@ def test_stream_snapshot_never_raises_on_missing_directories(tmp_path, monkeypat
         "events",
         "lanes",
         "lanes_omitted",
+        "pulse",
+        "records",
+        "desk",
+        "sense",
         "diode",
         "lineage",
         "story",
@@ -760,6 +812,10 @@ def test_stream_snapshot_returns_the_full_key_set_when_a_reader_fails(tmp_path, 
         "events",
         "lanes",
         "lanes_omitted",
+        "pulse",
+        "records",
+        "desk",
+        "sense",
         "diode",
         "lineage",
         "story",

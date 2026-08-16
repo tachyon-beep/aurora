@@ -201,6 +201,7 @@ services:
       TRANSCRIPT_DIR: /transcripts
       DIODE_DIR: /diode
       TELEMETRY_DIR: /telemetry
+      SENSE_DIR: /sense
       STAGE_CONSOLE_TOKEN: ${STAGE_CONSOLE_TOKEN:-}
       # Optional narrative recap. Empty disables the feature; the key is the
       # stage's own and is never the recorder's upstream credential.
@@ -214,6 +215,9 @@ services:
       - transcripts:/transcripts:ro
       - diode:/diode:ro
       - telemetry:/telemetry:ro
+      # Frames captured by the sense service; written only by sense,
+      # read-only here, served on the stream port's /frame/ route.
+      - ./volumes/sense:/sense:ro
     ports:
       - "127.0.0.1:${STAGE_STREAM_PORT:-8091}:8091"
       - "127.0.0.1:${STAGE_CONSOLE_PORT:-8092}:8092"

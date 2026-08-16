@@ -4,9 +4,20 @@ import os
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
-from stage import browse, commentary, data, diag, diag_page, pages
+from stage import (
+    browse,
+    codewatch,
+    commentary,
+    data,
+    desk,
+    diag,
+    diag_page,
+    pages,
+    records,
+    sensecam,
+)
 
 try:
     from stage import summary
@@ -16,6 +27,7 @@ except Exception:
 TRANSCRIPT_DIR = os.environ.get("TRANSCRIPT_DIR", "/transcripts")
 DIODE_DIR = os.environ.get("DIODE_DIR", "/diode")
 TELEMETRY_DIR = os.environ.get("TELEMETRY_DIR", "/telemetry")
+SENSE_DIR = os.environ.get("SENSE_DIR", "/sense")
 STREAM_PORT = int(os.environ.get("STREAM_PORT", "8091"))
 CONSOLE_PORT = int(os.environ.get("CONSOLE_PORT", "8092"))
 
@@ -478,6 +490,129 @@ def _public_story():
     }
 
 
+DIFF_EXCERPT_CAP = 1600
+DESK_LINE_CAP = 160
+DESK_EVIDENCE_CAP = 120
+DESK_DEPTH_CAP = 20
+DESK_VERDICTS_CAP = 5
+PULSE_BUCKET_COUNT = data.PULSE_WINDOW_SECONDS // data.PULSE_BUCKET_SECONDS
+SLOT_CAP = 8
+
+
+def _public_pulse(pulse):
+    """The request pulse with every field enumerated and capped for public display."""
+    pulse = pulse if isinstance(pulse, dict) else {}
+    rows = []
+    for row in (pulse.get("in_flight") or [])[: data.PULSE_INFLIGHT_ROWS]:
+        since = row.get("since_epoch")
+        rows.append(
+            {
+                "lane": _clip(str(row.get("lane") or ""), data.PULSE_LANE_CHARS),
+                "since_epoch": float(since) if isinstance(since, (int, float)) else None,
+            }
+        )
+    buckets = [int(n) for n in (pulse.get("buckets") or [])][:PULSE_BUCKET_COUNT]
+    buckets += [0] * (PULSE_BUCKET_COUNT - len(buckets))
+    last = pulse.get("last_close_epoch")
+    return {
+        "in_flight": rows,
+        "buckets": buckets,
+        "requests_window": int(pulse.get("requests_window") or 0),
+        "tokens_window": int(pulse.get("tokens_window") or 0),
+        "last_close_epoch": float(last) if isinstance(last, (int, float)) else None,
+    }
+
+
+def _empty_pulse():
+    """The pulse key set with nothing in it."""
+    return _public_pulse({})
+
+
+def _public_edit(edit):
+    """The latest observed self-edit, capped, or None."""
+    if not isinstance(edit, dict):
+        return None
+    epoch = edit.get("epoch")
+    return {
+        "epoch": float(epoch) if isinstance(epoch, (int, float)) else None,
+        "added": int(edit.get("added") or 0),
+        "removed": int(edit.get("removed") or 0),
+        "excerpt": _clip(str(edit.get("excerpt") or ""), DIFF_EXCERPT_CAP),
+    }
+
+
+def _public_records(book):
+    """The record book with every field enumerated for public display."""
+    book = book if isinstance(book, dict) else {}
+    longest = book.get("longest_life")
+    if isinstance(longest, dict) and isinstance(longest.get("seconds"), (int, float)):
+        longest = {
+            "ordinal": int(longest.get("ordinal") or 0),
+            "seconds": float(longest["seconds"]),
+        }
+    else:
+        longest = None
+    gap = book.get("most_recent_gap_seconds")
+    return {
+        "lives_ended": int(book.get("lives_ended") or 0),
+        "chose": int(book.get("chose") or 0),
+        "longest_life": longest,
+        "most_recent_gap_seconds": float(gap) if isinstance(gap, (int, float)) else None,
+    }
+
+
+def _empty_records():
+    """The record-book key set with nothing in it."""
+    return _public_records({})
+
+
+def _public_desk(package):
+    """The analyst verdicts, capped, or None when the desk has nothing."""
+    if not isinstance(package, dict):
+        return None
+    verdicts = []
+    for verdict in (package.get("verdicts") or [])[:DESK_VERDICTS_CAP]:
+        if not isinstance(verdict, dict):
+            continue
+        stars = verdict.get("stars")
+        if not isinstance(stars, int) or isinstance(stars, bool):
+            continue
+        verdicts.append(
+            {
+                "ordinal": int(verdict.get("ordinal") or 0),
+                "stars": min(5, max(1, stars)),
+                "line": _clip(str(verdict.get("line") or ""), DESK_LINE_CAP),
+                "evidence": _clip(str(verdict.get("evidence") or ""), DESK_EVIDENCE_CAP),
+                "depth": _clip(str(verdict.get("depth") or ""), DESK_DEPTH_CAP),
+            }
+        )
+    if not verdicts:
+        return None
+    generated_at = package.get("generated_at")
+    return {
+        "verdicts": verdicts,
+        "generated_at": float(generated_at) if isinstance(generated_at, (int, float)) else None,
+        "model": _clip(str(package.get("model") or ""), MODEL_CAP),
+        "duration_seconds": int(package.get("duration_seconds") or 20),
+    }
+
+
+def _public_sense(frame):
+    """The newest sense frame as a servable reference, or None."""
+    if not isinstance(frame, dict):
+        return None
+    slot = _clip(str(frame.get("slot") or ""), SLOT_CAP)
+    name = str(frame.get("name") or "")
+    epoch = frame.get("captured_epoch")
+    if not slot or not name:
+        return None
+    return {
+        "slot": slot,
+        "url": "/frame/" + quote(slot, safe="") + "/" + quote(name, safe=""),
+        "captured_epoch": float(epoch) if isinstance(epoch, (int, float)) else None,
+    }
+
+
 def _empty_snapshot(now):
     """The full key set with nothing in it, so a failed read still renders a page."""
     return {
@@ -497,11 +632,15 @@ def _empty_snapshot(now):
             "error_count": 0,
             "self_calls": 0,
         },
-        "code": {"available": False, "added": 0, "removed": 0},
+        "code": {"available": False, "added": 0, "removed": 0, "latest_edit": None},
         "turns": [],
         "events": [],
         "lanes": [],
         "lanes_omitted": 0,
+        "pulse": _empty_pulse(),
+        "records": _empty_records(),
+        "desk": None,
+        "sense": None,
         "diode": {
             "outputs": [],
             "operations_total": 0,
@@ -557,11 +696,18 @@ def _assemble_snapshot(now):
     return {
         "now": now,
         "stats": stats,
-        "code": data.code_stats(work),
+        "code": dict(
+            data.code_stats(work),
+            latest_edit=_public_edit(codewatch.latest_edit(work, now=now)),
+        ),
         "turns": [_public_turn(t) for t in display],
         "events": data.self_modification_events(turns, limit=6, life=life),
         "lanes": _public_lanes(lanes),
         "lanes_omitted": _lanes_omitted(lanes),
+        "pulse": _public_pulse(data.request_pulse(events_path(), now=now)),
+        "records": _public_records(records.record_book(work, now=now)),
+        "desk": _public_desk(desk.cached_verdicts()),
+        "sense": _public_sense(sensecam.newest_frame(SENSE_DIR, now=now)),
         "diode": {
             "outputs": diode["outputs"][:DISPLAY_OUTPUTS],
             "operations_total": diode["operations_total"],
@@ -598,6 +744,8 @@ class StreamHandler(_BaseHandler):
             self._send(200, json.dumps(stream_snapshot()))
         elif route.startswith("/audio/"):
             self._handle_audio(unquote(route[len("/audio/") :]))
+        elif route.startswith("/frame/"):
+            self._handle_frame(route)
         else:
             self._send(404, json.dumps({"error": "not found"}))
 
@@ -648,6 +796,45 @@ class StreamHandler(_BaseHandler):
                 self.wfile.write(chunk)
                 remaining -= len(chunk)
 
+    def _handle_frame(self, route):
+        """Serve one captured sense frame.
+
+        The route carries exactly two segments after the prefix. Both are
+        matched against directory listings inside sensecam rather than joined
+        from the request, so traversal is impossible by construction, and the
+        resolved path is contained and size-capped there. The body is
+        streamed for the same reason the audio route streams: this route is
+        on the public stream port.
+        """
+        parts = route.split("/")
+        if len(parts) != 4:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        target = sensecam.frame_bytes_path(SENSE_DIR, unquote(parts[2]), unquote(parts[3]))
+        if target is None:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        try:
+            size = os.path.getsize(target)
+            f = open(target, "rb")
+        except OSError:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        with f:
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.send_header("Content-Length", str(size))
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
+            self.end_headers()
+            remaining = size
+            while remaining > 0:
+                chunk = f.read(min(65536, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
 
 def make_server(port, handler):
     """A threading HTTP server bound to all interfaces on the given port."""
@@ -664,6 +851,10 @@ def main():
             pass
     try:
         commentary.start_background_refresh()
+    except Exception:
+        pass
+    try:
+        desk.start_background_refresh(TELEMETRY_DIR, transcript_path())
     except Exception:
         pass
     print(f"stage: stream on :{STREAM_PORT}, console on :{CONSOLE_PORT}")

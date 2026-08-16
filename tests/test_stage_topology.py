@@ -160,6 +160,13 @@ def test_the_agent_mounts_sense_read_only():
     assert "/sense" in _read("Dockerfile")
 
 
+def test_the_stage_mounts_sense_read_only():
+    text = _read("docker-compose.yml")
+    stage = text.split("\n  stage:\n")[1].split("\n  cloudflared:\n")[0]
+    assert "- ./volumes/sense:/sense:ro" in stage
+    assert "SENSE_DIR: /sense" in stage
+
+
 def test_sense_mounts_only_its_own_volume():
     sense = _sense_block(_read("docker-compose.yml"))
     volume_lines = [
