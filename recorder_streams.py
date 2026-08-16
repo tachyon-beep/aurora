@@ -13,6 +13,7 @@ DEFAULT_STREAM_BUDGET = 10
 STREAM_LIMIT_MAX = 120
 STREAM_TOKEN_LIMIT_MAX = 2_000_000
 BUDGET_WINDOW = 3600
+PROMPT_BYTES_PER_TOKEN = 4
 MODEL_NAME_CAP = 200
 REPORTED_NAME_CAP = 80
 
@@ -264,15 +265,16 @@ def rate_limited_message(allowance, history, now, window=BUDGET_WINDOW):
 def token_status(history, now, window=BUDGET_WINDOW):
     """Use of a stream's token allowance over the window.
 
-    The history is (timestamp, tokens) pairs and is pruned here rather than
+    The history is (timestamp, tokens, ticket) triples and is pruned here rather
+    than
     trusted, so a stream that went quiet reports its true in-window spend.
     """
     recent = [entry for entry in history if now - entry[0] < window]
     if not recent:
         return {"used": 0, "window_seconds": window, "oldest_expires_in_seconds": None}
-    expires = max(0, math.ceil(window - (now - min(t for t, _ in recent))))
+    expires = max(0, math.ceil(window - (now - min(entry[0] for entry in recent))))
     return {
-        "used": sum(tokens for _, tokens in recent),
+        "used": sum(entry[1] for entry in recent),
         "window_seconds": window,
         "oldest_expires_in_seconds": expires,
     }
@@ -282,11 +284,40 @@ def check_token_budget(history, now, allowance, window=BUDGET_WINDOW):
     """Rolling-window check. Returns (allowed, new_history).
 
     Drops entries older than the window; allows while the tokens spent inside
-    it remain below allowance. Nothing is appended: the spend of a request is
-    known only once its response completes, and is recorded then.
+    it remain below allowance.
     """
     recent = [entry for entry in history if now - entry[0] < window]
-    return sum(tokens for _, tokens in recent) < allowance, recent
+    return sum(entry[1] for entry in recent) < allowance, recent
+
+
+def estimate_prompt_tokens(body_bytes, divisor=PROMPT_BYTES_PER_TOKEN):
+    """A coarse token count for a request body, from its size.
+
+    The recorder holds no tokenizer, and a reservation only has to be a
+    defensible upper-bound stand-in until the response reports its usage. Four
+    bytes per token is the usual rough ratio for this family of models.
+    """
+    return max(1, len(body_bytes) // divisor)
+
+
+def reservation_for(body_bytes, settings, allowance=0):
+    """The tokens held against a stream's window while one request is in flight.
+
+    A request is admitted before anyone knows what it will spend, so admitting
+    on the window alone lets every request in flight see a window none of the
+    others has charged yet - and with keep-alive the agent holds many
+    connections open at once. The reservation is the prompt estimate plus what
+    the response is permitted to be, so concurrent requests contend for the
+    same allowance instead of each seeing it empty. It is replaced by the real
+    usage when the request settles.
+    """
+    reserved = estimate_prompt_tokens(body_bytes)
+    tokens = settings.get("max_tokens")
+    if isinstance(tokens, int) and not isinstance(tokens, bool) and tokens > 0:
+        reserved += tokens
+        if settings.get("reasoning_effort") != "none":
+            reserved += allowance
+    return reserved
 
 
 def token_limited_message(allowance, history, now, window=BUDGET_WINDOW):
@@ -484,6 +515,7 @@ class StreamRegistry:
         self._settings = {}
         self._rejected = {}
         self._histories = {}
+        self._ticket = 0
         self._token_histories = {}
         self._clock = clock
 
@@ -542,33 +574,59 @@ class StreamRegistry:
             settings = self._settings.get(stream)
             settings = dict(settings) if settings is not None else None
         if settings is None:
-            return body, (503, "stream not available")
+            return body, (503, "stream not available"), None
         composed, error = compose_body(body, settings, reasoning_allowance())
         if error is not None:
-            return body, (400, error)
+            return body, (400, error), None
         allowance = effective_allowance(settings)
         token_allowance = effective_token_allowance(settings)
+        reserved = reservation_for(composed, settings, reasoning_allowance())
         with self._lock:
             now = self._clock()
             tokens = self._token_histories.get(stream, [])
             allowed, tokens = check_token_budget(tokens, now, token_allowance)
             self._token_histories[stream] = tokens
             if not allowed:
-                return body, (429, token_limited_message(token_allowance, tokens, now))
+                return body, (429, token_limited_message(token_allowance, tokens, now)), None
             history = self._histories.get(stream, [])
             allowed, history = check_budget(history, now, allowance)
             self._histories[stream] = history
             if not allowed:
-                return body, (429, rate_limited_message(allowance, history, now))
-        return composed, None
+                return body, (429, rate_limited_message(allowance, history, now)), None
+            self._ticket += 1
+            ticket = self._ticket
+            tokens.append((now, reserved, ticket))
+        return composed, None, ticket
+
+    def settle(self, stream, ticket, tokens):
+        """Replace a request's reservation with what it actually spent.
+
+        tokens of None leaves the reservation standing, which is what a
+        streamed response reports when its usage event never arrives - a
+        client that disconnected, or an upstream that faulted. Charging zero
+        there would make truncation a way to spend without being metered.
+        """
+        if ticket is None:
+            return
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens < 0:
+            return
+        with self._lock:
+            history = self._token_histories.get(stream)
+            if not history:
+                return
+            self._token_histories[stream] = [
+                (stamp, tokens, held) if held == ticket else (stamp, spent, held)
+                for stamp, spent, held in history
+            ]
 
     def charge(self, stream, tokens):
-        """Record tokens spent on a stream against its hourly token window."""
+        """Record tokens spent on a stream outside any reservation."""
         if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
             return
         with self._lock:
             now = self._clock()
-            self._token_histories.setdefault(stream, []).append((now, tokens))
+            self._ticket += 1
+            self._token_histories.setdefault(stream, []).append((now, tokens, self._ticket))
 
     def state(self, streams_enabled=False, console_error=None, now=None):
         """The current streams.json document."""

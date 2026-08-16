@@ -1,5 +1,6 @@
 import io
 import json
+import os
 import pathlib
 import re
 import signal
@@ -875,3 +876,48 @@ def test_the_image_ships_the_pump_outside_the_agent_workspace():
     assert any(re.search(r"\s/usr/local/bin/", line) for line in copies)
     for line in copies:
         assert "/opt/agent" not in line
+
+
+def test_start_process_leads_its_own_session(tmp_path):
+    # The stop path signals the process GROUP, and README_TEXT tells the agent
+    # "each process leads its own session, so a signal reaches the processes it
+    # started as well". Without start_new_session the child shares the pump's
+    # group, signal_process takes its fallback branch, and a SIGTERM reaches
+    # only the `sh -c` shell while its children are orphaned.
+    entry = _accept(_once(command=["sh", "-c", "sleep 30"], cwd=str(tmp_path)))
+
+    proc = pump.start_process(entry, str(tmp_path / "log"))
+    try:
+        group = os.getpgid(proc.pid)
+        assert group == proc.pid
+        assert group != os.getpgid(0)
+    finally:
+        # Never killpg a group this process is in: a regression here would take
+        # the test runner down instead of reporting a failure.
+        if os.getpgid(proc.pid) == os.getpgid(0):
+            proc.kill()
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        proc.wait(timeout=30)
+
+
+def test_start_process_closes_stdin(monkeypatch, tmp_path):
+    # Asserted on the spawn arguments rather than on the child's behaviour:
+    # pytest's default fd capture already points fd 0 at /dev/null, so a child
+    # that reads stdin sees EOF either way and cannot detect the difference.
+    seen = {}
+
+    class _Recorded:
+        pid = 4321
+
+        def __init__(self, *args, **kwargs):
+            seen.update(kwargs)
+            self.stdout = io.BytesIO(b"")
+
+    monkeypatch.setattr(pump.subprocess, "Popen", _Recorded)
+    entry = _accept(_once(command=["true"], cwd=str(tmp_path)))
+
+    pump.start_process(entry, str(tmp_path / "log"))
+
+    assert seen["stdin"] is pump.subprocess.DEVNULL
+    assert seen["start_new_session"] is True

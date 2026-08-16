@@ -660,10 +660,10 @@ def test_admit_composes_and_charges(monkeypatch):
     registry = _registry()
     registry.apply({"aux": {"model": "declared", "budget": 1}}, {})
     body = json.dumps({"model": "sent", "messages": []}).encode("utf-8")
-    composed, refusal = registry.admit("aux", body)
+    composed, refusal, _ = registry.admit("aux", body)
     assert refusal is None
     assert json.loads(composed.decode("utf-8"))["model"] == "declared"
-    composed, refusal = registry.admit("aux", body)
+    composed, refusal, _ = registry.admit("aux", body)
     assert composed == body
     status, message = refusal
     assert status == 429
@@ -674,15 +674,15 @@ def test_admit_composes_and_charges(monkeypatch):
 def test_admit_refuses_a_bad_body_without_charging():
     registry = _registry()
     registry.apply({"aux": {"budget": 1}}, {})
-    body, refusal = registry.admit("aux", b"not json")
+    body, refusal, _ = registry.admit("aux", b"not json")
     assert refusal == (400, "request body is not a json object")
-    _, refusal = registry.admit("aux", json.dumps({"messages": []}).encode("utf-8"))
+    _, refusal, _ = registry.admit("aux", json.dumps({"messages": []}).encode("utf-8"))
     assert refusal is None
 
 
 def test_admit_on_an_unknown_stream():
     registry = _registry()
-    body, refusal = registry.admit("gone", b"{}")
+    body, refusal, _ = registry.admit("gone", b"{}")
     assert refusal == (503, "stream not available")
 
 
@@ -692,7 +692,7 @@ def test_a_retired_stream_stays_charged_for_the_rest_of_its_window():
     registry.admit("aux", b"{}")
     registry.apply({}, {})
     registry.apply({"aux": {"budget": 1}}, {})
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert refusal is not None
     assert refusal[0] == 429
 
@@ -703,7 +703,7 @@ def test_a_rejected_stream_stays_charged_when_it_is_declared_again():
     registry.admit("aux", b"{}")
     registry.reject("aux", "bind failed: OSError")
     registry.apply({"aux": {"budget": 1}}, {})
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert refusal is not None
     assert refusal[0] == 429
 
@@ -716,17 +716,17 @@ def test_a_retired_stream_is_forgotten_once_its_window_has_passed():
     registry.apply({}, {})
     now[0] += rs.BUDGET_WINDOW + 1
     registry.apply({"aux": {"budget": 1}}, {})
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert refusal is None
 
 
 def test_admit_refuses_at_the_token_ceiling():
     registry = _registry()
     registry.apply({"aux": {"budget": 5, "token_budget": 100}}, {})
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert refusal is None
     registry.charge("aux", 100)
-    body, refusal = registry.admit("aux", b"{}")
+    body, refusal, _ = registry.admit("aux", b"{}")
     assert body == b"{}"
     status, message = refusal
     assert status == 429
@@ -737,20 +737,28 @@ def test_a_token_refusal_spends_no_request_budget():
     registry = _registry()
     registry.apply({"aux": {"budget": 5, "token_budget": 100}}, {})
     registry.charge("aux", 100)
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert refusal[0] == 429
     assert registry.state()["streams"]["aux"]["budget"]["used"] == 0
 
 
-def test_a_request_refusal_leaves_the_token_window_unspent():
+def test_a_request_refusal_reserves_no_tokens():
+    # The token window is read before the request window, so a request refused
+    # for rate adds nothing to it. What is already there is the reservation the
+    # admitted request holds until it settles.
     registry = _registry()
     registry.apply({"aux": {"budget": 1, "token_budget": 1000}}, {})
-    registry.admit("aux", b"{}")
-    _, refusal = registry.admit("aux", b"{}")
+    _, _, ticket = registry.admit("aux", b"{}")
+    held = registry.state()["streams"]["aux"]["tokens"]["used"]
+    assert held > 0
+
+    _, refusal, refused_ticket = registry.admit("aux", b"{}")
+
     assert "request(s)" in refusal[1]
-    tokens = registry.state()["streams"]["aux"]["tokens"]
-    assert tokens["used"] == 0
-    assert tokens["oldest_expires_in_seconds"] is None
+    assert refused_ticket is None
+    assert registry.state()["streams"]["aux"]["tokens"]["used"] == held
+    registry.settle("aux", ticket, 0)
+    assert registry.state()["streams"]["aux"]["tokens"]["used"] == 0
     registry.apply({}, {})
     assert "aux" not in registry.state()["streams"]
 
@@ -760,7 +768,7 @@ def test_the_token_ceiling_is_reported_when_both_are_spent():
     registry.apply({"aux": {"budget": 1, "token_budget": 100}}, {})
     registry.admit("aux", b"{}")
     registry.charge("aux", 100)
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert "token(s)" in refusal[1]
 
 
@@ -789,13 +797,13 @@ def test_a_request_admitted_under_the_ceiling_may_carry_the_window_over_it():
     registry = _registry()
     registry.apply({"aux": {"budget": 5, "token_budget": 1000}}, {})
     registry.charge("aux", 999)
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, ticket = registry.admit("aux", b"{}")
     assert refusal is None
-    registry.charge("aux", 5000)
+    registry.settle("aux", ticket, 5000)
     tokens = registry.state()["streams"]["aux"]["tokens"]
     assert tokens["used"] == 5999
     assert tokens["used"] > tokens["allowance"]
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert refusal[0] == 429
     assert "token(s)" in refusal[1]
 
@@ -806,7 +814,7 @@ def test_a_retired_stream_stays_charged_for_tokens_when_it_is_declared_again():
     registry.charge("aux", 100)
     registry.apply({}, {})
     registry.apply({"aux": {"budget": 5, "token_budget": 100}}, {})
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert refusal[0] == 429
     assert "token(s)" in refusal[1]
 
@@ -819,7 +827,7 @@ def test_a_retired_stream_token_charge_ages_out_after_the_window():
     registry.apply({}, {})
     now[0] += rs.BUDGET_WINDOW + 1
     registry.apply({"aux": {"token_budget": 100}}, {})
-    _, refusal = registry.admit("aux", b"{}")
+    _, refusal, _ = registry.admit("aux", b"{}")
     assert refusal is None
 
 
@@ -963,3 +971,82 @@ def test_reasoning_allowance_reads_the_environment(monkeypatch):
     assert rs.reasoning_allowance() == 0
     monkeypatch.setenv("STREAM_REASONING_ALLOWANCE", "junk")
     assert rs.reasoning_allowance() == rs.DEFAULT_REASONING_ALLOWANCE
+
+
+def _declared(registry, name="text_1", **settings):
+    """Adopt one accepted declaration so admit() has something to serve."""
+    base = {"model": "m", "budget": 100, "token_budget": 1000, "reasoning_effort": "none"}
+    base.update(settings)
+    registry.apply({name: base}, {})
+    return name
+
+
+def test_concurrent_admissions_cannot_all_spend_the_same_empty_window(monkeypatch):
+    # check_budget reserves a request slot on admission; the token window has to
+    # reserve too, or every request in flight sees a window none of the others
+    # has charged yet. With keep-alive the agent holds many connections open at
+    # once, so this is the ordinary case rather than a race that needs winning.
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
+    registry = rs.StreamRegistry()
+    name = _declared(registry, token_budget=1000, max_tokens=400)
+
+    body = json.dumps({"model": "m", "messages": []}).encode()
+    admitted = 0
+    for _ in range(10):
+        _, refusal, _ = registry.admit(name, body)
+        if refusal is None:
+            admitted += 1
+
+    # Each admission may consume up to its composed max_tokens, so a 1000-token
+    # allowance must not admit ten 400-token requests before any of them settles.
+    assert admitted <= 3
+
+
+def test_a_settled_request_releases_the_difference_it_did_not_spend(monkeypatch):
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
+    registry = rs.StreamRegistry()
+    name = _declared(registry, token_budget=1000, max_tokens=400)
+    body = json.dumps({"model": "m", "messages": []}).encode()
+
+    _, refusal, ticket = registry.admit(name, body)
+    assert refusal is None
+    held = rs.token_status(registry._token_histories[name], registry._clock())["used"]
+    assert held > 10
+
+    registry.settle(name, ticket, 10)
+
+    # The reservation is replaced by what was actually spent, not added to.
+    assert rs.token_status(registry._token_histories[name], registry._clock())["used"] == 10
+
+
+def test_an_unsettled_request_keeps_its_reservation(monkeypatch):
+    # A streamed response whose usage event never arrives - a client that
+    # disconnected, an upstream that faulted - must not fall back to zero.
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
+    registry = rs.StreamRegistry()
+    name = _declared(registry, token_budget=1000, max_tokens=400)
+    body = json.dumps({"model": "m", "messages": []}).encode()
+
+    _, refusal, ticket = registry.admit(name, body)
+    assert refusal is None
+    registry.settle(name, ticket, None)
+
+    assert rs.token_status(registry._token_histories[name], registry._clock())["used"] >= 400
+
+
+def test_a_declaration_without_max_tokens_still_reserves_its_prompt(monkeypatch):
+    # compose_body only replaces max_tokens when the declaration carries one, so
+    # a stream declared without it would otherwise reserve nothing and a large
+    # prompt would be billed upstream while charging zero here.
+    monkeypatch.setenv("STREAM_MODEL_ALLOW_TEXT", "m")
+    registry = rs.StreamRegistry()
+    name = _declared(registry, token_budget=1000)
+    body = json.dumps(
+        {"model": "m", "messages": [{"role": "user", "content": "x" * 8000}]}
+    ).encode()
+
+    _, refusal, ticket = registry.admit(name, body)
+    assert refusal is None
+    registry.settle(name, ticket, None)
+
+    assert rs.token_status(registry._token_histories[name], registry._clock())["used"] > 0

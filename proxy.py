@@ -390,8 +390,9 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         registry = getattr(self.server, "registry", None)
 
         refused = None
+        ticket = None
         if registry is not None and stream != "core":
-            req_body, refused = registry.admit(stream, req_body)
+            req_body, refused, ticket = registry.admit(stream, req_body)
 
         try:
             req_data = json.loads(req_body.decode("utf-8"))
@@ -481,10 +482,9 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
 
         if registry is not None and stream != "core":
             spent = usage.get("total_tokens") if isinstance(usage, dict) else None
-            if isinstance(spent, int) and not isinstance(spent, bool):
-                registry.charge(stream, spent)
-            elif relayed is not None:
-                registry.charge(stream, req_data.get("max_tokens"))
+            if not isinstance(spent, int) or isinstance(spent, bool):
+                spent = None
+            registry.settle(stream, ticket, spent)
 
         self.log_transcript(req_data, res_data, stream=stream)
 

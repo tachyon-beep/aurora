@@ -251,9 +251,14 @@ def upstream(monkeypatch):
 
 
 @pytest.fixture
-def core_server(tmp_path, transcripts, stream_env, upstream):
+def core_server(tmp_path, transcripts, stream_env, upstream, registry):
+    # Attached exactly as main() attaches them, so the `stream != "core"` guards
+    # on admission and charging are live under test. Without a registry here
+    # they are dead code and removing them fails nothing.
     path = str(tmp_path / "core.sock")
     instance = proxy.UnixHTTPServer(path, proxy.ProxyHTTPRequestHandler)
+    instance.stream_name = "core"
+    instance.registry = registry
     thread = threading.Thread(target=instance.serve_forever, daemon=True)
     thread.start()
     yield path
@@ -733,18 +738,21 @@ def test_a_streamed_declared_request_asks_the_upstream_for_usage(stream_factory,
     assert forwarded["stream_options"]["include_usage"] is True
 
 
-def test_a_streamed_response_without_usage_charges_the_composed_max_tokens(
+def test_a_streamed_response_without_usage_keeps_its_reservation(
     stream_factory, upstream, registry, transcripts
 ):
+    # No usage event arrived, so the reservation admission took stands rather
+    # than being released. Releasing it would make truncating a stream a way to
+    # spend against the recorder's key without being metered.
     upstream["response"] = lambda: _StreamingResponse(
         [_event({"choices": [{"index": 0, "delta": {"content": "x"}}]}).encode("utf-8")]
     )
     path = stream_factory(max_tokens=128, reasoning_effort="none")
     _post(path, {"model": "m", "messages": [], "stream": True})
-    assert _wait_until(lambda: _used_tokens(registry) == 128)
+    assert _wait_until(lambda: _used_tokens(registry) >= 128)
 
 
-def test_a_stream_broken_mid_relay_still_charges_the_composed_max_tokens(
+def test_a_stream_broken_mid_relay_keeps_its_reservation(
     stream_factory, upstream, registry, transcripts
 ):
     upstream["response"] = lambda: _StreamingResponse(
@@ -756,17 +764,21 @@ def test_a_stream_broken_mid_relay_still_charges_the_composed_max_tokens(
         _post(path, {"model": "m", "messages": [], "stream": True})
     except httpx.HTTPError:
         pass
-    assert _wait_until(lambda: _used_tokens(registry) == 64)
+    assert _wait_until(lambda: _used_tokens(registry) >= 64)
 
 
-def test_a_non_streamed_response_without_usage_charges_nothing(
+def test_a_response_without_usage_keeps_its_reservation(
     stream_factory, upstream, registry, transcripts
 ):
+    # An upstream that reports no usage leaves the spend unknown, streamed or
+    # not. The reservation is what admission already counted against the
+    # window, so it stays; releasing it would hand back capacity that may well
+    # have been consumed.
     path = stream_factory(max_tokens=128, reasoning_effort="none")
     response = _post(path, {"model": "m", "messages": []})
     assert response.status_code == 200
     _wait_until(lambda: _entries(transcripts))
-    assert _used_tokens(registry) == 0
+    assert _used_tokens(registry) >= 128
 
 
 def test_a_non_streamed_response_charges_its_reported_usage(
@@ -896,3 +908,52 @@ def test_a_relay_that_cannot_send_its_headers_closes_the_connection():
     handler = _Broken()
     assert handler._relay(200, [], _StreamingResponse([b"x"])) == ""
     assert handler.close_connection is True
+
+
+def test_a_refused_body_leaves_the_connection_usable(stream_factory, upstream):
+    path = stream_factory()
+    client = _connect(path)
+    try:
+        fp = client.makefile("rb")
+        body = b"[1, 2]"
+        client.sendall(
+            b"POST /api/v1/chat/completions HTTP/1.1\r\nHost: localhost\r\n"
+            b"Content-Type: application/json\r\n"
+            b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n\r\n" + body
+        )
+        status, headers, payload = _read_message(fp)
+        assert status.startswith("HTTP/1.1 400")
+        assert headers["content-length"] == str(len(payload))
+        assert json.loads(payload)["error"]["message"] == "request body is not a json object"
+
+        client.sendall(_raw_request({"model": "m", "messages": []}))
+        status, headers, payload = _read_message(fp)
+        assert status.startswith("HTTP/1.1 200")
+        assert json.loads(payload)["choices"][0]["message"]["content"] == "hi"
+    finally:
+        client.close()
+
+
+def test_core_is_neither_admitted_nor_charged(core_server, registry, transcripts):
+    # core.sock is uncapped by design (CLAUDE.md invariant 3): the key budget is
+    # its ceiling. With a registry attached, dropping either `stream != "core"`
+    # guard would start metering it, so this pins the exemption itself rather
+    # than relying on "core" being a reserved declaration name.
+    registry.apply({"aux": {"budget": 1, "token_budget": 1}}, {})
+
+    for _ in range(3):
+        client = _connect(core_server)
+        try:
+            client.sendall(_raw_request({"model": "m", "messages": []}))
+            fp = client.makefile("rb")
+            status, _, _ = _read_message(fp)
+        finally:
+            client.close()
+        assert status.startswith("HTTP/1.1 200")
+
+    # core is always listed as a socket, but carries no allowance of either
+    # kind and accrues no history.
+    reported = registry.state()["streams"]["core"]
+    assert "budget" not in reported and "tokens" not in reported
+    assert registry._token_histories.get("core", []) == []
+    assert registry._histories.get("core", []) == []
