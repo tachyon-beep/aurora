@@ -143,14 +143,25 @@ def repair_send_view(messages):
     return out
 
 
+EXHAUSTION_PHRASES = (
+    "insufficient credit",
+    "insufficient_quota",
+    "quota exceeded",
+    "exceeded your current quota",
+)
+
+
 def classify_error(exc):
     """Classify an API exception as transient, model, or invalid_request.
 
     A 400 or 404 whose message names the model by identity (phrases such as
     "not a valid model", "model not found", "no endpoints found", or both
-    "model" and "does not exist") is a model error. Any other status from
-    400 up to (but not including) 500, except 408 and 429, is a permanent
-    request fault. 408, 429, 5xx, and missing status codes are transient.
+    "model" and "does not exist") is a model error. A spent credit balance is
+    transient whatever status carries it, by 402 or by an EXHAUSTION_PHRASES
+    message: the request is well formed and repairing it changes nothing.
+    Any other status from 400 up to (but not including) 500, except 402, 408
+    and 429, is a permanent request fault. 402, 408, 429, 5xx, and missing
+    status codes are transient.
     """
     status = getattr(exc, "status_code", None)
     text = str(exc).lower()
@@ -161,7 +172,9 @@ def classify_error(exc):
         or ("model" in text and "does not exist" in text)
     ):
         return "model"
-    if status is not None and 400 <= status < 500 and status not in (408, 429):
+    if any(phrase in text for phrase in EXHAUSTION_PHRASES):
+        return "transient"
+    if status is not None and 400 <= status < 500 and status not in (402, 408, 429):
         return "invalid_request"
     return "transient"
 

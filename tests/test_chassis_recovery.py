@@ -59,6 +59,43 @@ def test_retryable_4xx_faults_stay_transient():
     assert chassis.classify_error(_StatusError("too many requests", 429)) == "transient"
 
 
+def test_payment_required_is_transient():
+    """An exhausted credit balance is a wait, not a fault in the request. Classed
+    as invalid_request it would repair a blameless body, end the incarnation with
+    a tombstone, and walk the tier ladder over a billing event."""
+    assert chassis.classify_error(_StatusError("Payment Required", 402)) == "transient"
+
+
+def test_credit_exhaustion_messages_are_transient_under_any_status():
+    """Providers differ on the status they attach to an empty balance, so the
+    message decides when the code does not."""
+    for message in (
+        "Insufficient credits to complete this request",
+        "insufficient_quota",
+        "quota exceeded for this key",
+        "You exceeded your current quota, please check your billing details",
+    ):
+        assert chassis.classify_error(_StatusError(message, 400)) == "transient", message
+        assert chassis.classify_error(_StatusError(message, 403)) == "transient", message
+
+
+def test_payment_required_does_not_repair_or_swap_the_model(monkeypatch):
+    """The send view is blameless, so a 402 must not consume the deep-repair
+    retry or the model swap; it retries as-is and ends as an environment
+    failure, which exits 44 and leaves the session intact."""
+    monkeypatch.setenv("LLM_MODEL", "other/model")
+    poisoned = [{"role": "system", "content": "s"}]
+    client, completions = _client([_StatusError("Payment Required", 402)] * 10)
+    api_kwargs = {"model": "m", "messages": list(poisoned)}
+
+    with pytest.raises(chassis.EnvironmentFailure):
+        chassis.create_with_recovery(client, api_kwargs, poisoned, sleep=lambda s: None)
+
+    assert len(completions.calls) == chassis.TRANSIENT_RETRIES + 1
+    assert api_kwargs["model"] == "m"
+    assert all(call["messages"] == poisoned for call in completions.calls)
+
+
 def _response():
     message = types.SimpleNamespace(content="hi", tool_calls=None, reasoning_content=None)
     return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
