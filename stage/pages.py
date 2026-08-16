@@ -449,7 +449,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 
 /* commentary:start */
 /* NOW: the generated read of the current beat is the panel's subject; its
-   evidence sits under it; the byline names it as the stage's. */
+   evidence sits under it. */
 #now { display: flex; flex-direction: column; }
 #now-colour { margin: 0; font: 500 22px/30px var(--sans); color: var(--paper);
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3;
@@ -457,11 +457,6 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #now-evidence { margin-top: 8px; font: 400 13px/18px var(--mono); letter-spacing: .06em;
   text-transform: uppercase; color: var(--paper-dim); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
-#now-by { margin-top: auto; display: flex; align-items: center; gap: 6px;
-  font: 400 13px/18px var(--mono); letter-spacing: .08em; color: var(--paper-faint); }
-#now-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--paper-faint);
-  display: inline-block; flex: none; }
-#now-dot.fresh { background: var(--vital); }
 /* commentary:end */
 
 /* ---------- ribbon ---------- */
@@ -724,7 +719,6 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
       <div class="ptitle"><span>NOW</span></div>
       <p id="now-colour" aria-live="polite"></p>
       <div id="now-evidence"></div>
-      <div id="now-by"><i id="now-dot"></i><span>&mdash; the stage, not the subject</span></div>
     </section>
   </aside>
 
@@ -1657,15 +1651,13 @@ function rotateLineageFoot(nowMs) {
 
 /* ---------- now ---------- */
 /* NOW: the generated colour line is the subject; the evidence line prefers
-   the beat's counted fact and falls back to the play phrase; the dot is lit
-   only for a generated line, never for the no-key template. */
+   the beat's counted fact and falls back to the play phrase. */
 function renderNow() {
   var c = (snap.commentary || {}), play = c.play || {}, colour = c.colour || {};
   setText($("now-colour"), colour.text || "");
   var line = colour.evidence || play.phrase || "waiting for the first word";
   var age = play.epoch == null ? null : Math.max(0, clock() / 1000 - play.epoch);
   setText($("now-evidence"), line + (age == null ? "" : " · " + dur(age)));
-  setClass($("now-dot"), "fresh", !!colour.generated);
 }
 
 /* ---------- eye ---------- */

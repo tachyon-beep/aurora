@@ -1473,12 +1473,10 @@ global.snap = { commentary: { play: { phrase: "running call_model", epoch: NOW /
 renderNow();
 out.colour = fake("now-colour").textContent;
 out.evidence = fake("now-evidence").textContent;
-out.fresh = fake("now-dot")._fresh;
 global.snap = { commentary: { play: { phrase: "thinking it over", epoch: null },
   colour: { text: "Template.", generated: false, evidence: "" } } };
 renderNow();
 out.phrase_fallback = fake("now-evidence").textContent;
-out.not_fresh = fake("now-dot")._fresh;
 global.snap = { commentary: {} };
 renderNow();
 out.empty = fake("now-evidence").textContent;
@@ -1487,13 +1485,11 @@ process.stdout.write(JSON.stringify(out));
 
 
 @needs_node
-def test_now_prefers_evidence_over_phrase_and_lights_only_generated_lines(tmp_path):
+def test_now_prefers_evidence_over_phrase(tmp_path):
     out = _run(NOW_HARNESS.replace("__BLOCK__", _now_block()), tmp_path)
     assert out["colour"] == "It repeats."
     assert out["evidence"] == "run_shell x3 in a row · 16s"
-    assert out["fresh"] is True
     assert out["phrase_fallback"] == "thinking it over"
-    assert out["not_fresh"] is False
     assert out["empty"] == "waiting for the first word"
 
 

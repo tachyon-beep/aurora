@@ -13,13 +13,21 @@ def test_the_commentary_never_borrows_the_subjects_registers():
     end = HTML.index("/* commentary:end */")
     block = HTML[start:end]
     assert "#now-colour" in block, "the sentinels do not span the whole block"
-    assert "#now-by" in block, "the sentinels do not span the whole block"
+    assert "#now-evidence" in block, "the sentinels do not span the whole block"
     for token in ("--think", "--say", "--act", "--serif"):
         assert token not in block, token
 
 
-def test_the_commentator_is_bylined_as_not_the_subject():
-    assert "the stage, not the subject" in HTML
+def test_the_now_panel_carries_no_byline():
+    """Operator ruling 2026-08-17: the NOW box shows the line and its evidence only.
+    The masthead rotation still suffixes the colour line with "— the stage" when it
+    carries it, so the generated register stays attributed where it travels."""
+    now = HTML[
+        HTML.index('<section id="now"') : HTML.index("</section>", HTML.index('<section id="now"'))
+    ]
+    assert "the stage, not the subject" not in now
+    assert 'id="now-by"' not in HTML and 'id="now-dot"' not in HTML
+    assert '" — the stage"' in HTML
 
 
 def test_the_page_never_writes_commentary_with_inner_html():
@@ -345,7 +353,6 @@ BROADCAST_TYPE_FLOOR = 13
 # added the lineage chart's bar labels and foot and the now panel's evidence
 # line (`.bl`, `#lineage-foot`, `.g-eyebrow`, `.g-facts`, `#now-evidence`).
 BROADCAST_SMALL_TYPE = (
-    "#now-by",
     "#state-word",
     "#provenance",
     ".ptitle",
@@ -454,7 +461,6 @@ def test_the_colour_line_is_the_now_panels_subject_and_is_announced():
     assert "22px/30px" in block, block
     assert "line-clamp: 3" in block, block
     assert 'id="now-evidence"' in HTML
-    assert 'id="now-dot"' in HTML
 
 
 def test_the_state_strip_left_the_rail_for_the_masthead():

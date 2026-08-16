@@ -109,8 +109,9 @@ One panel, height 216 px at 1080p:
 3. **Evidence line**, 13 px mono: the beat's counted fact when it has one
    (`run_shell ×3 in a row`), else the play phrase (`running call_model`), followed by
    `· 16s` age. The play tag is deleted.
-4. Byline: `— the stage, not the subject`, with the fresh dot lit while the colour line
-   is generated (not the no-key template).
+4. No byline (operator ruling 2026-08-17: the box shows the line and its evidence only;
+   the masthead rotation still suffixes the colour line with "— the stage" when it carries
+   it, so the generated register stays attributed where it travels).
 
 **Colour-line call context (added 2026-08-17, operator request during the container check —
 "can we give the summariser the contents of the command as well so it can explain what it's
