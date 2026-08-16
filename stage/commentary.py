@@ -116,6 +116,39 @@ def _tool_counts(turns):
     return counts
 
 
+ARGS_CHARS = 200
+
+
+def _newest_call(turns, tool=None):
+    """The newest (name, arguments) call in turns, restricted to tool when given."""
+    for turn in reversed(turns):
+        calls = turn.get("tool_calls") or [] if isinstance(turn, dict) else []
+        for call in reversed(calls):
+            if not isinstance(call, dict) or not call.get("name"):
+                continue
+            name = str(call.get("name"))[:TOOL_NAME_CAP]
+            if tool is not None and name != tool:
+                continue
+            arguments = call.get("arguments")
+            return name, (str(arguments) if arguments else None)
+    return None, None
+
+
+def _attach_call(beat, turns):
+    """Add the newest relevant tool call to a beat as prompt context.
+
+    For a beat that names a tool, the newest call of that tool; otherwise the
+    newest call in the newest turn. call and args are context only: _prompt
+    renders them for the model but _digest ignores them, so a change of
+    arguments never invalidates the cached line — the line picks the fresh
+    arguments up when it next regenerates.
+    """
+    name, arguments = _newest_call(turns, beat.get("tool"))
+    beat["call"] = name
+    beat["args"] = _field(arguments, ARGS_CHARS) if name is not None and arguments else None
+    return beat
+
+
 def _beat(kind, tool=None, detail=None, count=None, span=None, novelty="repeat", epoch=None):
     """One beat, with the id that binds the colour cache."""
     return {
@@ -127,6 +160,8 @@ def _beat(kind, tool=None, detail=None, count=None, span=None, novelty="repeat",
         "span_seconds": span,
         "novelty": novelty,
         "epoch": epoch,
+        "call": None,
+        "args": None,
     }
 
 
@@ -135,7 +170,7 @@ def working_beat_id():
     return _beat("working")["id"]
 
 
-def detect_beat(turns, stats, diode, published, now, spoken=None):
+def _detect_beat(turns, stats, diode, published, now, spoken=None):
     """The loudest true thing happening right now. Pure; never returns None.
 
     turns must already be filtered to loop turns, oldest first.
@@ -260,6 +295,16 @@ def detect_beat(turns, stats, diode, published, now, spoken=None):
     return _beat("working", count=stats.get("turns_this_life"), epoch=_newest_epoch(turns))
 
 
+def detect_beat(turns, stats, diode, published, now, spoken=None):
+    """The loudest true thing happening right now, with its newest call attached.
+
+    Pure; never returns None. turns must already be filtered to loop turns,
+    oldest first.
+    """
+    beat = _detect_beat(turns, stats, diode, published, now, spoken=spoken)
+    return _attach_call(beat, [t for t in (turns or []) if isinstance(t, dict)])
+
+
 def template_line(beat):
     """The fixed prose line for a beat's kind; the no-key fallback.
 
@@ -350,7 +395,11 @@ COLOUR_SYSTEM_PROMPT = (
     "now. Write exactly one sentence of at most 140 characters interpreting that "
     "beat for a viewer who has just arrived. Refer to the agent in the third "
     "person. State only what the beat supports and never invent an event it does "
-    "not describe. " + llm.RECORDS_FRAMING + " Do not use markdown, headings, "
+    "not describe. The beat may name the agent's newest tool call and its "
+    "arguments; use them to say concretely what it is doing — the command, the "
+    "file, the query — quoting at most a few words verbatim. "
+    + llm.RECORDS_FRAMING
+    + " Do not use markdown, headings, "
     "lists, or emoji. Do not address the viewer. Output only the sentence."
 )
 
@@ -382,7 +431,7 @@ def publish_beat(beat):
         _PENDING["beat"] = dict(beat) if isinstance(beat, dict) else None
 
 
-def _field(value):
+def _field(value, cap=FIELD_CHARS):
     """One prompt value: flattened to a single line, no fence markers, clamped.
 
     The agent controls some of these values (a tool name, a diode command) end
@@ -404,17 +453,23 @@ def _field(value):
         if stripped == text:
             break
         text = stripped
-    return text[:FIELD_CHARS]
+    return text[:cap]
 
 
-def _prompt(beat):
+def _prompt(beat, context=True):
     """The beat and its evidence as key: value lines, wrapped for the model.
 
-    Only kind, tool, detail, and novelty are ever rendered, in that order,
-    skipping any that are missing — never count or span, which change every
-    turn and would make the cache digest churn, and never turn text,
-    reasoning, a tombstone note, or a published statement. Every value passes
-    through _field, so the fence cannot be broken by evidence the agent chose.
+    kind, tool, detail, novelty are the digest fields; call and args are
+    context the model sees but the digest ignores, so a change of arguments
+    regenerates the line only when it next ages out.
+
+    Only kind, tool, detail, and novelty are ever rendered as digest fields,
+    in that order, skipping any that are missing — never count or span, which
+    change every turn and would make the cache digest churn, and never turn
+    text, reasoning, a tombstone note, or a published statement. When context
+    is true, call and args follow, each rendered only when present. Every
+    value passes through _field, so the fence cannot be broken by evidence the
+    agent chose.
     """
     fields = []
     for key in ("kind", "tool", "detail", "novelty"):
@@ -422,12 +477,19 @@ def _prompt(beat):
         if value is None or value == "":
             continue
         fields.append(f"{key}: {_field(value)}")
+    if context:
+        call = beat.get("call")
+        if call:
+            fields.append(f"call: {_field(call)}")
+        args = beat.get("args")
+        if args:
+            fields.append(f"args: {_field(args, ARGS_CHARS)}")
     return "BEGIN BEAT\n" + "\n".join(fields) + "\nEND BEAT"
 
 
 def _digest(beat):
     """A stable fingerprint of exactly the prompt the model would be handed."""
-    return hashlib.sha256(_prompt(beat).encode("utf-8")).hexdigest()
+    return hashlib.sha256(_prompt(beat, context=False).encode("utf-8")).hexdigest()
 
 
 def _refresh_if_due(state, now=None):
