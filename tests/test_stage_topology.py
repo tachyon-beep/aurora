@@ -1,3 +1,6 @@
+import re
+
+
 def _read(path):
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
@@ -73,10 +76,19 @@ def test_speech_credential_is_absent_from_the_agent_image():
 
 
 def test_agent_work_allocation_and_memory_move_together():
+    # /work is RAM-backed and its pages count against the container's memory
+    # cgroup, so a /work filled to its size must still leave room to run.
+    # Asserted as the relationship rather than as two literals, so raising one
+    # without the other fails here instead of drifting quietly.
     text = _read("docker-compose.yml")
     agent_block = text.split("\n  agent:\n")[1].split("\n  diode:\n")[0]
-    assert "/work:size=4g,uid=1000,gid=1000" in agent_block
-    assert "mem_limit: 5g" in agent_block
+
+    work = re.search(r"/work:size=(\d+)g,uid=1000,gid=1000", agent_block)
+    mem = re.search(r"mem_limit: (\d+)g", agent_block)
+
+    assert work is not None, "agent /work tmpfs is not sized in gigabytes"
+    assert mem is not None, "agent mem_limit is not set in gigabytes"
+    assert int(work.group(1)) < int(mem.group(1))
 
 
 def _agent_block(text):

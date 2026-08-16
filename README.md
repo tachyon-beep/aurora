@@ -48,6 +48,7 @@ flowchart LR
     tvol[("transcripts<br/>volume")]
     dvol[("diode<br/>volume")]
     svol[("state<br/>agent-private volume")]
+    pvol[("pump<br/>volume")]
     mvol[("telemetry<br/>volume")]
 
     model(["OpenRouter — the model"])
@@ -64,6 +65,7 @@ flowchart LR
     diode -- "reads commands · writes results" --> dvol
     diode -- "egress net · vetted fetches" --> web
     agent -- "mounted · never read automatically" --> svol
+    agent -- "registers entries · pump runs them" --> pvol
 
     agent -- "watchdog mirrors /work" --> mvol
     mvol -. "reads (ro)" .-> stage
@@ -76,7 +78,7 @@ flowchart LR
     classDef vol fill:#e5e7eb,stroke:#4b5563,color:#1f2937;
     class model,web,audience external;
     class agent,recorder,diode,viewer,stage contained;
-    class tvol,dvol,svol,mvol vol;
+    class tvol,dvol,svol,pvol,mvol vol;
 ```
 
 | Component | Role | Containment |
@@ -86,6 +88,7 @@ flowchart LR
 | **diode** | A one-way command channel. The agent writes declarative commands to a shared volume; the diode executes a **closed vocabulary** (e.g. vetted web fetches) and writes results back. | Egress-only. No code crosses the boundary — only a fixed set of commands. Web fetches are checked against an SSRF allow-list with redirect re-validation. |
 | **state volume** | Empty durable storage mounted at `/state`; nothing reads or executes it automatically. | Mounted only into the agent. Survives container replacement and ordinary Compose shutdown; removed only by explicit volume deletion. |
 | **watchdog** | Supervises the agent and recovers it if it breaks itself badly. | Self-editable by the agent, but the durable recovery baseline is built into the image and the real record lives outside the container. |
+| **pump** | A scheduler and supervisor in the agent's container. The agent registers entries in `/pump/entries.json`; the pump runs them at a time, on an interval, or keeps them alive — so work the agent arranges can outlive the incarnation that arranged it. | Runs from the read-only image, so the agent cannot edit it, and its volume is neither `/work` nor git-tracked, so it survives every recovery tier. Holds no credential, mounts nothing the agent does not already mount, and runs in the container with no network interface — its reach is exactly the agent's, closed by the same operator-side ceilings. Its entry caps are resource hygiene, not a boundary. |
 | **telemetry volume** | A mirror of the agent's working tree plus its captured log, written by the watchdog so the stage can show what the agent is doing without touching the agent's own filesystem. | Written only by the watchdog; mounted **read-only** into the stage. Symlinks are copied as links and never followed. |
 | **stage** | The outward-facing broadcast surface: a stream page built for an OBS browser source, and a separate token-gated operator console. | Read-only image on its own `stream` network — no path to the agent. **Never mounts `/state`**, and never holds the recorder's credential. The console binds host-loopback only and is never exposed through the tunnel; the stream port serves no mutating endpoints. |
 | **viewer** | Ephemeral web UI to watch the transcript live; starts with the stack. | Read-only mount, host-loopback only, isolated from every other network. Not restarted automatically if it exits. |
@@ -225,6 +228,7 @@ internet for OBS or viewers, run a Cloudflare Tunnel pointing at `http://localho
 | `proxy.py` | The recorder — the credential-holding, transcript-writing proxy. |
 | `diode.py` / `Dockerfile.diode` | The one-way web command channel. |
 | `watchdog.py` | The supervisor and tiered recovery. |
+| `pump.py` | The scheduler and process supervisor in the agent's container, running from the read-only image. |
 | `viewer.py` / `Dockerfile.viewer` | The live transcript viewer (read-only, host-loopback). |
 | `stage/` / `Dockerfile.stage` | The stream page (OBS browser source) and the token-gated operator console with a container browser. |
 | `Dockerfile` / `entrypoint.sh` / `docker-compose.yml` | The harness image and topology. |

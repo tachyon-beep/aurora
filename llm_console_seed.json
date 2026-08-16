@@ -1,13 +1,29 @@
 {
   "enable_streams": true,
   "streams": {
-    "text": {
-      "model": "deepseek/deepseek-v4-flash",
-      "budget": 30
+    "text_1": {
+      "model": "deepseek/deepseek-v4-pro-0813",
+      "token_budget": 2000000,
+      "budget": 1200,
+      "max_tokens": 32768
     },
-    "vision": {
+    "text_2": {
+      "model": "deepseek/deepseek-v4-flash",
+      "token_budget": 2000000,
+      "budget": 1200,
+      "max_tokens": 32768
+    },
+    "text_3": {
+      "model": "qwen/qwen3.8-max",
+      "token_budget": 2000000,
+      "budget": 1200,
+      "max_tokens": 32768
+    },
+    "vision_1": {
       "model": "qwen/qwen3.7-flash",
-      "budget": 30
+      "token_budget": 2000000,
+      "budget": 1200,
+      "max_tokens": 32768
     }
   }
 }

@@ -8,6 +8,10 @@ services:
       LLM_BASE_URL: ${LLM_BASE_URL:-}
       LLM_API_KEY: ${LLM_API_KEY:-}
       STREAM_HOURLY_MAX: ${STREAM_HOURLY_MAX:-}
+      # Ceiling on any single declared stream's hourly token allowance, the
+      # quantity that is billed. Empty keeps the default. core.sock carries no
+      # ceiling of any kind; the key budget is its limit.
+      STREAM_TOKEN_HOURLY_MAX: ${STREAM_TOKEN_HOURLY_MAX:-}
       # Tokens added to a composed request's max_tokens when reasoning is on,
       # so a declared cap bounds the response rather than being consumed by
       # reasoning. Empty keeps the default; 0 disables the addition.
@@ -38,6 +42,11 @@ services:
       - /tmp
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+    # Each keep-alive connection holds a thread for its whole life and Linux
+    # counts threads against the pids cgroup, so this bounds connection
+    # fan-out. Resource hygiene inside the recorder, not a containment control.
+    pids_limit: 512
+    mem_limit: 512m
     restart: unless-stopped
 
   agent:
@@ -49,13 +58,21 @@ services:
       LLM_MODEL: ${LLM_MODEL:-}
       CONTEXT_WINDOW_TOKENS: ${CONTEXT_WINDOW_TOKENS:-120000}
       REASONING_EFFORT: ${REASONING_EFFORT:-}
+      # Resource hygiene for the process scheduler, so it cannot exhaust
+      # pids_limit or mem_limit below by accident. Not a boundary: processes
+      # inside this container can be started without the scheduler.
+      PUMP_MAX_ENTRIES: ${PUMP_MAX_ENTRIES:-32}
+      PUMP_MAX_CONCURRENT: ${PUMP_MAX_CONCURRENT:-8}
     volumes:
       - llm_sock:/llm/sock:ro
       - llm_console:/llm/console
       - diode:/diode
       - state:/state
       - telemetry:/telemetry
-      # Disk-backed build area: a preallocated 5 GiB ext4 loop image mounted
+      # Process scheduler entries, state, logs, and whatever else the agent
+      # writes there. Mounted into no other service.
+      - pump:/pump
+      # Disk-backed build area: a preallocated 10 GiB ext4 loop image mounted
       # on the host by scripts/create_build_volume.sh, so a full /build
       # surfaces as ENOSPC and never consumes main-disk space. Wiped by the
       # entrypoint at container start and by the watchdog at each incarnation
@@ -85,11 +102,11 @@ services:
       - /tmp
       # /work is RAM-backed; its size and mem_limit below must move together
       # (tmpfs pages count against the container's memory cgroup).
-      - /work:size=4g,uid=1000,gid=1000
+      - /work:size=8g,uid=1000,gid=1000
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
-    pids_limit: 256
-    mem_limit: 5g
+    pids_limit: 1024
+    mem_limit: 16g
     cpus: 2
     restart: unless-stopped
 
@@ -252,3 +269,4 @@ volumes:
   telemetry: {}
   llm_sock: {}
   llm_console: {}
+  pump: {}

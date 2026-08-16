@@ -121,6 +121,7 @@ def test_every_field_is_accepted_at_its_boundaries(monkeypatch):
         "aux",
         {
             "budget": 0,
+            "token_budget": 0,
             "model": "m",
             "reasoning_effort": "none",
             "temperature": 2,
@@ -130,6 +131,7 @@ def test_every_field_is_accepted_at_its_boundaries(monkeypatch):
     )
     assert reason is None
     assert settings["budget"] == 0
+    assert settings["token_budget"] == 0
     assert settings["max_tokens"] == 1
 
 
@@ -138,6 +140,9 @@ def test_every_field_is_accepted_at_its_boundaries(monkeypatch):
     [
         ({"budget": -1}, "budget"),
         ({"budget": True}, "budget"),
+        ({"token_budget": -1}, "token_budget must be an integer of at least 0"),
+        ({"token_budget": True}, "token_budget must be an integer of at least 0"),
+        ({"token_budget": 1.5}, "token_budget must be an integer of at least 0"),
         ({"model": ""}, "model"),
         ({"model": "x" * 201}, "model"),
         ({"reasoning_effort": "max"}, "reasoning_effort"),
@@ -152,6 +157,14 @@ def test_bad_values_reject_the_whole_declaration(declaration, phrase):
     settings, reason = rs.validate_declaration("aux", declaration)
     assert settings is None
     assert phrase in reason
+
+
+def test_an_unknown_field_is_still_rejected_beside_the_budget_fields():
+    settings, reason = rs.validate_declaration(
+        "aux", {"budget": 1, "token_budget": 1, "upstream": "elsewhere"}
+    )
+    assert settings is None
+    assert reason == "unknown field: upstream"
 
 
 @pytest.mark.parametrize("name", ["core", "Aux", "-aux", "a/x", "a.sock", "", "a" * 33])
@@ -339,6 +352,35 @@ def test_effective_allowance_defaults_when_undeclared(monkeypatch):
     assert rs.effective_allowance({}) == rs.DEFAULT_STREAM_BUDGET
 
 
+def test_stream_token_limit_max_reads_the_environment(monkeypatch):
+    monkeypatch.delenv("STREAM_TOKEN_HOURLY_MAX", raising=False)
+    assert rs.stream_token_limit_max() == 2_000_000
+    monkeypatch.setenv("STREAM_TOKEN_HOURLY_MAX", "5000")
+    assert rs.stream_token_limit_max() == 5000
+    monkeypatch.setenv("STREAM_TOKEN_HOURLY_MAX", "-3")
+    assert rs.stream_token_limit_max() == 0
+    monkeypatch.setenv("STREAM_TOKEN_HOURLY_MAX", "many")
+    assert rs.stream_token_limit_max() == 2_000_000
+    monkeypatch.setenv("STREAM_TOKEN_HOURLY_MAX", "")
+    assert rs.stream_token_limit_max() == 2_000_000
+    monkeypatch.setenv("STREAM_TOKEN_HOURLY_MAX", "9000000")
+    assert rs.stream_token_limit_max() == 9_000_000
+
+
+def test_effective_token_allowance_clamps_to_the_ceiling(monkeypatch):
+    monkeypatch.setenv("STREAM_TOKEN_HOURLY_MAX", "500")
+    assert rs.effective_token_allowance({"token_budget": 5_000_000}) == 500
+    assert rs.effective_token_allowance({"token_budget": 20}) == 20
+
+
+def test_effective_token_allowance_defaults_to_the_ceiling(monkeypatch):
+    monkeypatch.delenv("STREAM_TOKEN_HOURLY_MAX", raising=False)
+    assert rs.effective_token_allowance({}) == 2_000_000
+    monkeypatch.setenv("STREAM_TOKEN_HOURLY_MAX", "500000")
+    assert rs.effective_token_allowance({}) == 500_000
+    assert rs.effective_token_allowance({"budget": 3}) == 500_000
+
+
 def test_budget_status_prunes_and_counts_down():
     now = 10_000.0
     status = rs.budget_status([now - 4000, now - 1000, now - 10], now)
@@ -376,6 +418,49 @@ def test_the_refusal_carries_a_countdown_when_one_exists():
     assert message == (
         "rate limited: at most 1 request(s) per hour on this socket; next available in 2600 seconds"
     )
+
+
+def test_token_status_sums_the_tokens_in_the_window():
+    now = 10_000.0
+    status = rs.token_status([(now - 4000, 900), (now - 1000, 100), (now - 10, 200)], now)
+    assert status["used"] == 300
+    assert status["window_seconds"] == 3600
+    assert status["oldest_expires_in_seconds"] == 2600
+
+
+def test_token_status_on_an_empty_history():
+    assert rs.token_status([], 10_000.0) == {
+        "used": 0,
+        "window_seconds": 3600,
+        "oldest_expires_in_seconds": None,
+    }
+
+
+def test_check_token_budget_allows_under_and_refuses_at_allowance():
+    now = 10_000.0
+    allowed, history = rs.check_token_budget([], now, 100)
+    assert allowed and history == []
+    allowed, history = rs.check_token_budget([(now, 100)], now + 1, 100)
+    assert not allowed and history == [(now, 100)]
+    allowed, history = rs.check_token_budget([(now, 100)], now + 3601, 100)
+    assert allowed and history == []
+
+
+def test_check_token_budget_refuses_a_zero_allowance():
+    allowed, history = rs.check_token_budget([], 10_000.0, 0)
+    assert not allowed and history == []
+
+
+def test_the_token_refusal_names_tokens_and_carries_a_countdown():
+    now = 10_000.0
+    assert rs.token_limited_message(500, [], now) == (
+        "rate limited: at most 500 token(s) per hour on this socket"
+    )
+    message = rs.token_limited_message(500, [(now - 1000, 500)], now)
+    assert message == (
+        "rate limited: at most 500 token(s) per hour on this socket; next available in 2600 seconds"
+    )
+    assert message != rs.rate_limited_message(500, [now - 1000], now)
 
 
 def test_compose_replaces_declared_fields_and_preserves_the_rest():
@@ -429,6 +514,33 @@ def test_render_state_reports_core_and_each_stream(monkeypatch):
     assert aux["budget"]["oldest_expires_in_seconds"] == 3500
     assert streams["Bad"] == {"status": "rejected", "reason": "invalid stream name"}
     assert "console_error" not in state
+
+
+def test_render_state_reports_the_token_window(monkeypatch):
+    monkeypatch.setenv("STREAM_TOKEN_HOURLY_MAX", "5000")
+    now = 10_000.0
+    state = rs.render_state(
+        {"aux": {"token_budget": 900}, "quiet": {}},
+        {},
+        {},
+        now,
+        True,
+        token_histories={"aux": [(now - 7200, 4000), (now - 100, 250), (now - 50, 50)]},
+    )
+    aux = state["streams"]["aux"]
+    assert aux["tokens"] == {
+        "allowance": 900,
+        "used": 300,
+        "window_seconds": 3600,
+        "oldest_expires_in_seconds": 3500,
+    }
+    assert "token_budget" not in aux["settings"]
+    assert state["streams"]["quiet"]["tokens"] == {
+        "allowance": 5000,
+        "used": 0,
+        "window_seconds": 3600,
+        "oldest_expires_in_seconds": None,
+    }
 
 
 def test_render_state_carries_a_console_error_only_when_given():
@@ -520,6 +632,7 @@ def test_readme_names_the_protocol_and_stays_affectless(tmp_path):
         "enable_streams:",
         "streams:",
         "budget:",
+        "token_budget:",
         "reasoning_effort:",
         "streams.json",
         "the model identifiers a declaration may set are listed in\nmodels.json",
@@ -603,6 +716,109 @@ def test_a_retired_stream_is_forgotten_once_its_window_has_passed():
     registry.apply({}, {})
     now[0] += rs.BUDGET_WINDOW + 1
     registry.apply({"aux": {"budget": 1}}, {})
+    _, refusal = registry.admit("aux", b"{}")
+    assert refusal is None
+
+
+def test_admit_refuses_at_the_token_ceiling():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 5, "token_budget": 100}}, {})
+    _, refusal = registry.admit("aux", b"{}")
+    assert refusal is None
+    registry.charge("aux", 100)
+    body, refusal = registry.admit("aux", b"{}")
+    assert body == b"{}"
+    status, message = refusal
+    assert status == 429
+    assert message.startswith("rate limited: at most 100 token(s) per hour")
+
+
+def test_a_token_refusal_spends_no_request_budget():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 5, "token_budget": 100}}, {})
+    registry.charge("aux", 100)
+    _, refusal = registry.admit("aux", b"{}")
+    assert refusal[0] == 429
+    assert registry.state()["streams"]["aux"]["budget"]["used"] == 0
+
+
+def test_a_request_refusal_leaves_the_token_window_unspent():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 1, "token_budget": 1000}}, {})
+    registry.admit("aux", b"{}")
+    _, refusal = registry.admit("aux", b"{}")
+    assert "request(s)" in refusal[1]
+    tokens = registry.state()["streams"]["aux"]["tokens"]
+    assert tokens["used"] == 0
+    assert tokens["oldest_expires_in_seconds"] is None
+    registry.apply({}, {})
+    assert "aux" not in registry.state()["streams"]
+
+
+def test_the_token_ceiling_is_reported_when_both_are_spent():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 1, "token_budget": 100}}, {})
+    registry.admit("aux", b"{}")
+    registry.charge("aux", 100)
+    _, refusal = registry.admit("aux", b"{}")
+    assert "token(s)" in refusal[1]
+
+
+def test_charge_records_tokens_against_the_window():
+    registry = _registry()
+    registry.apply({"aux": {"token_budget": 1000}}, {})
+    registry.charge("aux", 120)
+    registry.charge("aux", 30)
+    tokens = registry.state()["streams"]["aux"]["tokens"]
+    assert tokens["used"] == 150
+    assert tokens["allowance"] == 1000
+    assert tokens["oldest_expires_in_seconds"] == 3600
+
+
+def test_charge_ignores_an_amount_that_spends_nothing():
+    registry = _registry()
+    registry.apply({"aux": {"token_budget": 1000}}, {})
+    for amount in (0, -5, True, 2.5, None, "many"):
+        registry.charge("aux", amount)
+    tokens = registry.state()["streams"]["aux"]["tokens"]
+    assert tokens["used"] == 0
+    assert tokens["oldest_expires_in_seconds"] is None
+
+
+def test_a_request_admitted_under_the_ceiling_may_carry_the_window_over_it():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 5, "token_budget": 1000}}, {})
+    registry.charge("aux", 999)
+    _, refusal = registry.admit("aux", b"{}")
+    assert refusal is None
+    registry.charge("aux", 5000)
+    tokens = registry.state()["streams"]["aux"]["tokens"]
+    assert tokens["used"] == 5999
+    assert tokens["used"] > tokens["allowance"]
+    _, refusal = registry.admit("aux", b"{}")
+    assert refusal[0] == 429
+    assert "token(s)" in refusal[1]
+
+
+def test_a_retired_stream_stays_charged_for_tokens_when_it_is_declared_again():
+    registry = _registry()
+    registry.apply({"aux": {"budget": 5, "token_budget": 100}}, {})
+    registry.charge("aux", 100)
+    registry.apply({}, {})
+    registry.apply({"aux": {"budget": 5, "token_budget": 100}}, {})
+    _, refusal = registry.admit("aux", b"{}")
+    assert refusal[0] == 429
+    assert "token(s)" in refusal[1]
+
+
+def test_a_retired_stream_token_charge_ages_out_after_the_window():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"aux": {"token_budget": 100}}, {})
+    registry.charge("aux", 100)
+    registry.apply({}, {})
+    now[0] += rs.BUDGET_WINDOW + 1
+    registry.apply({"aux": {"token_budget": 100}}, {})
     _, refusal = registry.admit("aux", b"{}")
     assert refusal is None
 
@@ -704,6 +920,36 @@ def test_compose_ignores_a_malformed_body_cap():
     assert out["max_tokens"] == "many"
     out = _compose({"messages": [], "max_tokens": True}, {}, 8192)
     assert out["max_tokens"] is True
+
+
+def test_compose_asks_a_streamed_request_to_report_its_usage():
+    out = _compose({"messages": [], "stream": True}, {}, 0)
+    assert out["stream_options"] == {"include_usage": True}
+
+
+def test_compose_keeps_the_stream_options_a_request_already_carries():
+    out = _compose(
+        {"messages": [], "stream": True, "stream_options": {"include_usage": False, "other": 1}},
+        {},
+        0,
+    )
+    assert out["stream_options"] == {"include_usage": True, "other": 1}
+
+
+def test_compose_replaces_a_malformed_stream_options_value():
+    out = _compose({"messages": [], "stream": True, "stream_options": "yes"}, {}, 0)
+    assert out["stream_options"] == {"include_usage": True}
+
+
+@pytest.mark.parametrize("body", [{"messages": []}, {"messages": [], "stream": False}])
+def test_compose_leaves_an_unstreamed_request_without_stream_options(body):
+    out = _compose(body, {}, 0)
+    assert "stream_options" not in out
+
+
+def test_compose_treats_a_truthy_non_boolean_stream_as_unstreamed():
+    out = _compose({"messages": [], "stream": 1}, {}, 0)
+    assert "stream_options" not in out
 
 
 def test_reasoning_allowance_reads_the_environment(monkeypatch):

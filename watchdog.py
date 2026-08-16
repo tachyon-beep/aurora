@@ -340,6 +340,13 @@ def reap_children(agent):
     agent, translate the wait status into Popen.returncode so a later
     agent.poll() still reports the exit (otherwise poll() would hit ECHILD and
     wrongly treat the agent as still running).
+
+    The agent is not the only child here. entrypoint.sh starts the scheduler at
+    /usr/local/bin/pump.py in a background loop before exec'ing this file, so
+    that loop is also a child of PID 1, and processes the scheduler starts
+    reparent here when their own parent exits. Both arrive through this
+    waitpid, which is why the reaped pid is compared against the agent's rather
+    than assumed to be it.
     """
     while True:
         try:

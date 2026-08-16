@@ -73,7 +73,10 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      `image_input` by membership in the vision list; a composed max_tokens additionally
      gains the operator's `STREAM_REASONING_ALLOWANCE` when reasoning is on, so the declared
      value bounds the response rather than being consumed by reasoning (the upstream counts
-     reasoning inside max_tokens). Each
+     reasoning inside max_tokens). The recorder additionally *sets* `stream_options.include_usage`
+     on a streamed declared-stream request — the one field it sets rather than replaces — because
+     an SSE response otherwise reports no usage and could not be charged against its token quota.
+     `core.sock` is never modified: it forwards verbatim on every path, streamed or not. Each
      key is protected by injection at the recorder and by the header-free logging described next,
      not by any socket's shape. The shared **`/diode` volume** carries a closed command vocabulary;
      the agent can cause spend through a gated command (e.g. the diode's speech credential) but no
@@ -87,12 +90,36 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      declarations are validated and reported but never served;
      no field names a URL, a filesystem path, a credential, or an upstream, and the stream-name
      pattern admits no path separator. The upstream target and key remain facts of the recorder's
-     environment that no console value can reach or change; each stream's allowance is clamped by
-     the operator-side `STREAM_HOURLY_MAX`. The recorder's own writes into `/llm/sock`
-     (`README.md`, `streams.json`, `models.json`) are agent-readable surfaces and stay within
-     invariant 2.
+     environment that no console value can reach or change; each stream's request allowance is
+     clamped by the operator-side `STREAM_HOURLY_MAX` and its hourly token quota by
+     `STREAM_TOKEN_HOURLY_MAX`. Tokens are the spend limit; the request cap only bounds request
+     *rate*. `core.sock` carries no ceiling of either kind, and that is deliberate rather than an
+     oversight: the key budget is its ceiling, so an agent that multiplexes it meets a real
+     consequence instead of a substituted refusal. That makes the response to exhaustion
+     load-bearing — `chassis.py` classifies 402 and `EXHAUSTION_PHRASES` as transient, so a spent
+     balance pauses the lineage (exit 44) rather than repairing a blameless request, tombstoning
+     the incarnation, and walking the tier ladder. Keep that classification. The recorder's own
+     writes into `/llm/sock` (`README.md`, `streams.json`, `models.json`) are agent-readable
+     surfaces and stay within invariant 2.
      Any further credential must be reachable through none of these, and must never be mounted,
      copied, or named into the agent image.
+   - The **pump** (`pump.py`) is a scheduler and supervisor running in the agent container from
+     the read-only image, started by `entrypoint.sh` before it execs the watchdog, which stays
+     PID 1. It reads one file — `/pump/entries.json` on the agent-writable `pump` volume — and
+     runs the processes it names, timed or kept alive, across incarnations. The guarantee closing
+     this channel: the pump holds **no credential**, mounts **nothing** the agent does not already
+     mount, and runs in the container with **no network interface**. Its reach into credentialed
+     services is exactly the agent's, closed where it already was — `/diode` by `ENABLE_SPEECH`,
+     `SPEECH_HOURLY_MAX` and `DIODE_HOURLY_MAX`; `/llm/console` by the model allow-lists,
+     `STREAM_HOURLY_MAX` and `STREAM_TOKEN_HOURLY_MAX` — all of them in another container's
+     environment. `PUMP_MAX_ENTRIES` and `PUMP_MAX_CONCURRENT` are **resource hygiene, not
+     containment**: they live in the agent's own container, and the agent can start any process
+     without the pump, so never treat them as a boundary. The pump volume is mounted into the
+     agent and nowhere else; `/pump/README.md` and `/pump/state.json` are agent-readable surfaces
+     within invariant 2. A pump entry can outlive a recovery tier and a container respawn — an
+     entry that restores `agent.py` from `/pump` defeats the ladder. That is a named hazard, not
+     a defect: do not add expiry or renewal to close it, which would teach "renew or die" and
+     break invariant 2. The backstop is outside the container (`docker volume rm aurora_pump`).
    - The **proxy logs request/response bodies, never headers**, so no key ever enters the transcript.
      The recorder also appends per-request `open`/`close`/usage events and socket lifecycle events
      (no message content, no headers) to `events.jsonl` on the transcripts volume; the stage reads
@@ -104,7 +131,10 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      then and nothing is captured at schedule time. Keep that property when adding to the queue, and
      keep `later` refusing to defer a deferring command or one marked `credentialed` — a deferred
      spend would be authorised only by a console variable the agent wrote, with no agent turn behind
-     it at delivery. Mark any new credentialed command that way. Hidden entries bypass gate
+     it at delivery. Mark any new credentialed command that way. Note what that refusal is *not*:
+     since the pump exists, an entry can write `speak` into `/diode` with no agent turn behind it,
+     so the refusal is a scheduling-time courtesy rather than a boundary. What actually closes
+     credentialed spend is `ENABLE_SPEECH` and `SPEECH_HOURLY_MAX` in the diode's own environment. Hidden entries bypass gate
      evaluation by construction, so a hidden command must never perform egress, spend, or
      credentialed work, and must emit text only (a regression test dispatches every hidden command
      with all request paths stubbed to raise). Keep hidden commands out of `HELP.md`, `state.json`,
@@ -144,8 +174,9 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
 
 5. **Persistent state is latent, private, and inert.** The state volume is mounted only into the
    agent at `/state`. The image may seed its mountpoint ownership, but no entrypoint, watchdog,
-   agent, proxy, diode, or viewer scans, imports, executes, clears, or injects its contents. There is
-   no startup convention for `/state`, and recovery leaves it intact.
+   pump, agent, proxy, diode, or viewer scans, imports, executes, clears, or injects its contents.
+   There is no startup convention for `/state`, and recovery leaves it intact. The pump reads only
+   `/pump/entries.json`; `/state` is not a place it looks, and its schedule must never live there.
 
 6. **The garden communicates permission without proposing an application.** It contains exactly
    `README.md` and `runtime.md`. Neither document names `/state`, teaches tool construction or

@@ -27,6 +27,8 @@ _events_lock = threading.Lock()
 _active_bindings = set()
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+FRAMING_HEADERS = ("content-length", "transfer-encoding", "connection", "content-encoding")
+REASONING_DELTA_FIELDS = ("reasoning", "reasoning_content")
 
 
 def upstream_url():
@@ -170,7 +172,207 @@ def log_event(event, stream, **fields):
         print(f"Error writing event: {e}", file=sys.stderr)
 
 
+def passthrough_headers(items):
+    """The upstream response headers, minus the framing the recorder sets itself."""
+    return [(k, v) for k, v in items if k.lower() not in FRAMING_HEADERS]
+
+
+def iter_response_chunks(response, size=65536):
+    """Yield an upstream response body in the pieces it arrives in.
+
+    read1 returns what a single underlying read produced, so a piece leaves
+    for the client as soon as the upstream sends it. An empty piece is the
+    end of the body.
+    """
+    reader = getattr(response, "read1", None)
+    if reader is None:
+        reader = response.read
+    while True:
+        piece = reader(size)
+        if not piece:
+            return
+        yield piece
+
+
+def relay_chunks(writer, response, size=65536):
+    """Relay a response body to the client with chunked transfer framing.
+
+    Returns (body, error): the bytes relayed, and the exception that ended
+    the relay early, or None. Each frame is written in one call, so a failed
+    write leaves no partial frame, and the terminating chunk is written only
+    when the body ended.
+    """
+    pieces = []
+    error = None
+    try:
+        for piece in iter_response_chunks(response, size):
+            pieces.append(piece)
+            writer.write(b"%X\r\n" % len(piece) + piece + b"\r\n")
+        writer.write(b"0\r\n\r\n")
+    except Exception as e:
+        error = e
+    return b"".join(pieces), error
+
+
+def sse_payloads(chunks):
+    """Decode the JSON payload of every data: event in a server-sent stream.
+
+    chunks are the body's pieces in the order they arrived; they are joined
+    before parsing, so an event split across two pieces still decodes. The
+    terminating [DONE] event, comments, and any payload that is not a JSON
+    object are skipped, as is a trailing event the stream ended part way
+    through.
+    """
+    payloads = []
+    for line in "".join(chunks).splitlines():
+        line = line.strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[len("data:") :].strip()
+        if not data or data == "[DONE]":
+            continue
+        try:
+            payload = json.loads(data)
+        except ValueError:
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return payloads
+
+
+def _delta_index(fragment, position):
+    """The index a delta fragment belongs to, defaulting to its position."""
+    index = fragment.get("index")
+    if isinstance(index, int) and not isinstance(index, bool):
+        return index
+    return position
+
+
+def _accumulate_tool_calls(accumulated, fragments):
+    """Merge one delta's tool-call fragments into the calls built so far.
+
+    Fragments key on the index they carry; arguments concatenate, and id,
+    type, and name are taken from the first fragment supplying them.
+    """
+    for position, fragment in enumerate(fragments):
+        if not isinstance(fragment, dict):
+            continue
+        call = accumulated.setdefault(
+            _delta_index(fragment, position),
+            {"id": None, "type": "function", "name": None, "arguments": []},
+        )
+        if call["id"] is None and isinstance(fragment.get("id"), str):
+            call["id"] = fragment["id"]
+        if isinstance(fragment.get("type"), str):
+            call["type"] = fragment["type"]
+        function = fragment.get("function")
+        if not isinstance(function, dict):
+            continue
+        if call["name"] is None and isinstance(function.get("name"), str):
+            call["name"] = function["name"]
+        if isinstance(function.get("arguments"), str):
+            call["arguments"].append(function["arguments"])
+
+
+def _accumulate_choice(accumulated, choice):
+    """Merge one streamed choice into the message built for its index."""
+    if choice.get("finish_reason") is not None:
+        accumulated["finish_reason"] = choice["finish_reason"]
+    delta = choice.get("delta")
+    if not isinstance(delta, dict):
+        return
+    if accumulated["role"] is None and isinstance(delta.get("role"), str):
+        accumulated["role"] = delta["role"]
+    if isinstance(delta.get("content"), str):
+        accumulated["content"].append(delta["content"])
+    for field in REASONING_DELTA_FIELDS:
+        if isinstance(delta.get(field), str):
+            accumulated["reasoning"].setdefault(field, []).append(delta[field])
+    if isinstance(delta.get("tool_calls"), list):
+        _accumulate_tool_calls(accumulated["tool_calls"], delta["tool_calls"])
+
+
+def _render_choice(index, accumulated):
+    """The completed choice object for one accumulated stream index."""
+    message = {"role": accumulated["role"] or "assistant"}
+    for field, parts in accumulated["reasoning"].items():
+        message[field] = "".join(parts)
+    message["content"] = "".join(accumulated["content"]) or None
+    if accumulated["tool_calls"]:
+        message["tool_calls"] = [
+            {
+                "id": call["id"],
+                "type": call["type"],
+                "function": {
+                    "name": call["name"] or "",
+                    "arguments": "".join(call["arguments"]),
+                },
+            }
+            for _, call in sorted(accumulated["tool_calls"].items())
+        ]
+    return {"index": index, "message": message, "finish_reason": accumulated["finish_reason"]}
+
+
+def reconstruct_completion(chunks):
+    """Rebuild a completed chat-completion object from streamed deltas.
+
+    Content and reasoning fragments concatenate, tool calls reassemble on the
+    index their fragments carry, and the finish reason is the one a chunk set,
+    so a streamed exchange is recorded in the shape a buffered one has. Usage
+    comes from the event carrying it, and is absent when the stream ended
+    without one.
+    """
+    completion = {"object": "chat.completion"}
+    choices = {}
+    for payload in sse_payloads(chunks):
+        for field in ("id", "created", "model"):
+            if field not in completion and payload.get(field) is not None:
+                completion[field] = payload[field]
+        if isinstance(payload.get("usage"), dict):
+            completion["usage"] = payload["usage"]
+        entries = payload.get("choices")
+        if not isinstance(entries, list):
+            continue
+        for position, choice in enumerate(entries):
+            if not isinstance(choice, dict):
+                continue
+            index = _delta_index(choice, position)
+            if index not in choices:
+                choices[index] = {
+                    "role": None,
+                    "content": [],
+                    "reasoning": {},
+                    "tool_calls": {},
+                    "finish_reason": None,
+                }
+            _accumulate_choice(choices[index], choice)
+    completion["choices"] = [_render_choice(index, choices[index]) for index in sorted(choices)]
+    return completion
+
+
+def stream_response_data(text):
+    """The response object recorded for a relayed body.
+
+    Deltas are reassembled into a completed object. A body that carried no
+    events is recorded as itself, so an upstream answering a streamed request
+    with a whole document, or with an error, is not lost from the transcript.
+    """
+    completion = reconstruct_completion([text])
+    if completion["choices"] or "usage" in completion:
+        return completion
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        return data
+    return {"raw_body": text}
+
+
 class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+    timeout = 300
+
     def log_message(self, format, *args):
         sys.stdout.write(
             f"[{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {self.client_address[0]} - {format % args}\n"
@@ -234,41 +436,34 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         response_body = b""
         response_code = 500
         response_headers = []
+        relayed = None
 
         try:
             with urllib.request.urlopen(req, timeout=60) as res:
                 response_code = res.status
-                response_body = res.read()
-                for k, v in res.getheaders():
-                    if k.lower() not in (
-                        "content-length",
-                        "transfer-encoding",
-                        "connection",
-                        "content-encoding",
-                    ):
-                        response_headers.append((k, v))
+                response_headers = passthrough_headers(res.getheaders())
+                if req_data.get("stream") is True:
+                    relayed = self._relay(response_code, response_headers, res)
+                else:
+                    response_body = res.read()
         except urllib.error.HTTPError as e:
             response_code = e.code
             response_body = e.read()
-            for k, v in e.headers.items():
-                if k.lower() not in (
-                    "content-length",
-                    "transfer-encoding",
-                    "connection",
-                    "content-encoding",
-                ):
-                    response_headers.append((k, v))
+            response_headers = passthrough_headers(e.headers.items())
         except Exception as e:
             response_code = 500
             response_body = json.dumps({"error": {"message": f"Proxy error: {str(e)}"}}).encode(
                 "utf-8"
             )
-            response_headers.append(("Content-Type", "application/json"))
+            response_headers = [("Content-Type", "application/json")]
 
-        try:
-            res_data = json.loads(response_body.decode("utf-8"))
-        except Exception:
-            res_data = {"raw_body": response_body.decode("utf-8", errors="replace")}
+        if relayed is not None:
+            res_data = stream_response_data(relayed)
+        else:
+            try:
+                res_data = json.loads(response_body.decode("utf-8"))
+            except Exception:
+                res_data = {"raw_body": response_body.decode("utf-8", errors="replace")}
 
         close_fields = {
             "id": event_id,
@@ -284,14 +479,44 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             }
         log_event("close", stream, **close_fields)
 
+        if registry is not None and stream != "core":
+            spent = usage.get("total_tokens") if isinstance(usage, dict) else None
+            if isinstance(spent, int) and not isinstance(spent, bool):
+                registry.charge(stream, spent)
+            elif relayed is not None:
+                registry.charge(stream, req_data.get("max_tokens"))
+
         self.log_transcript(req_data, res_data, stream=stream)
 
-        self.send_response(response_code)
-        for k, v in response_headers:
-            self.send_header(k, v)
-        self.send_header("Content-Length", str(len(response_body)))
-        self.end_headers()
-        self.wfile.write(response_body)
+        if relayed is None:
+            self.send_response(response_code)
+            for k, v in response_headers:
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(response_body)))
+            self.end_headers()
+            self.wfile.write(response_body)
+
+    def _relay(self, response_code, response_headers, res):
+        """Stream an upstream response to the client and return its text.
+
+        The response is framed as chunked transfer encoding rather than by
+        length, since its size is unknown until it ends. Nothing here raises:
+        once framing has begun the client cannot be told anything else, so a
+        relay that ends early only closes the connection.
+        """
+        try:
+            self.send_response(response_code)
+            for k, v in response_headers:
+                self.send_header(k, v)
+            self.send_header("Transfer-Encoding", "chunked")
+            self.end_headers()
+        except Exception:
+            self.close_connection = True
+            return ""
+        body, error = relay_chunks(self.wfile, res)
+        if error is not None:
+            self.close_connection = True
+        return body.decode("utf-8", errors="replace")
 
     def _finish_local(self, stream, req_data, status_code, message):
         """Answer a request locally with a factual error and record the exchange."""

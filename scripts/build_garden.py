@@ -49,15 +49,17 @@ a local rust crate registry is present; cargo resolves against it. common lisp s
 
 git and posix shell facilities are installed.
 
-the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib and is held in memory, which counts against the memory limit.
+the container is limited to 2 cpu, 16 gib of memory, and 1024 processes. the working tree is limited to 8 gib and is held in memory, which counts against the memory limit.
 
-the root filesystem is read-only. a writable location exists at /build with 5 gib of capacity. its contents are cleared when a session ends.
+the root filesystem is read-only. a writable location exists at /build with 10 gib of capacity. its contents are cleared when a session ends.
 
 read-only data files are present at /corpus.
 
 image files appear at /sense at intervals.
 
 the container has no network interface. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
+
+a process scheduler runs at /pump; it accepts a closed set of entry fields in /pump/entries.json.
 
 the model endpoint used by this environment is a unix domain socket. it accepts connections from any process in the container.
 

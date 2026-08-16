@@ -8,6 +8,7 @@ if [ -d /build ]; then
     find /build -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
 fi
 [ -e /llm/console/console.json ] || cp /usr/local/share/aurora/llm_console_seed.json /llm/console/console.json
+( while true; do python /usr/local/bin/pump.py || true; sleep 5; done ) &
 cp -r /opt/agent/. /work/
 cd /work
 exec python watchdog.py

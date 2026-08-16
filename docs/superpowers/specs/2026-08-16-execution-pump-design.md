@@ -214,7 +214,7 @@ artificial refusal standing in for one.
 numbers, and they are **resource hygiene, not containment**. They live in the agent container's
 environment, and the agent can start any process it likes without the pump's involvement — a limit
 inside the agent's own container is not a boundary. They exist so the pump cannot exhaust
-`pids_limit: 256` or `mem_limit: 5g` by accident. Stated plainly here so nobody later mistakes
+`pids_limit: 1024` or `mem_limit: 16g` by accident. Stated plainly here so nobody later mistakes
 them for a guarantee.
 
 What this makes load-bearing is the behaviour on exhaustion, which is currently wrong: a 402

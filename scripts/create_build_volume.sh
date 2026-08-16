@@ -14,7 +14,7 @@ set -eu
 REPO_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 IMG="${AURORA_BUILD_IMG:-$REPO_DIR/volumes/build.img}"
 MNT="${AURORA_BUILD_DIR:-$REPO_DIR/volumes/build}"
-SIZE="${AURORA_BUILD_SIZE:-5G}"
+SIZE="${AURORA_BUILD_SIZE:-10G}"
 
 if [ -e "$IMG" ]; then
     echo "image exists: $IMG"

@@ -11,12 +11,14 @@ CONSOLE_MAX_BYTES = 65_536
 MAX_STREAMS = 8
 DEFAULT_STREAM_BUDGET = 10
 STREAM_LIMIT_MAX = 120
+STREAM_TOKEN_LIMIT_MAX = 2_000_000
 BUDGET_WINDOW = 3600
 MODEL_NAME_CAP = 200
 REPORTED_NAME_CAP = 80
 
 NAME_PATTERN = re.compile(r"\A[a-z0-9][a-z0-9_-]{0,31}\Z")
 RESERVED_NAMES = ("core",)
+BUDGET_FIELDS = ("budget", "token_budget")
 COMPOSED_FIELDS = ("model", "reasoning_effort", "temperature", "top_p", "max_tokens")
 REASONING_EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high")
 DEFAULT_REASONING_ALLOWANCE = 8192
@@ -74,14 +76,15 @@ def validate_declaration(name, declaration):
     if not isinstance(declaration, dict):
         return None, "declaration is not an object"
     for field in declaration:
-        if field != "budget" and field not in COMPOSED_FIELDS:
+        if field not in BUDGET_FIELDS and field not in COMPOSED_FIELDS:
             return None, f"unknown field: {field}"
     settings = {}
-    if "budget" in declaration:
-        budget = declaration["budget"]
-        if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
-            return None, "budget must be an integer of at least 0"
-        settings["budget"] = budget
+    for field in BUDGET_FIELDS:
+        if field in declaration:
+            budget = declaration[field]
+            if isinstance(budget, bool) or not isinstance(budget, int) or budget < 0:
+                return None, f"{field} must be an integer of at least 0"
+            settings[field] = budget
     if "model" in declaration:
         model = declaration["model"]
         if not isinstance(model, str) or not model.strip() or len(model) > MODEL_NAME_CAP:
@@ -197,9 +200,30 @@ def stream_limit_max():
         return STREAM_LIMIT_MAX
 
 
+def stream_token_limit_max():
+    """The operator ceiling on any stream's hourly token allowance, from the environment."""
+    raw = os.environ.get("STREAM_TOKEN_HOURLY_MAX", "").strip()
+    if not raw:
+        return STREAM_TOKEN_LIMIT_MAX
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return STREAM_TOKEN_LIMIT_MAX
+
+
 def effective_allowance(settings):
     """The allowance actually enforced: the declared budget clamped by the ceiling."""
     return min(settings.get("budget", DEFAULT_STREAM_BUDGET), stream_limit_max())
+
+
+def effective_token_allowance(settings):
+    """The token allowance actually enforced: the declared budget clamped by the ceiling.
+
+    An undeclared token_budget is the ceiling itself, so a declaration lowers
+    the allowance and never raises it.
+    """
+    ceiling = stream_token_limit_max()
+    return min(settings.get("token_budget", ceiling), ceiling)
 
 
 def budget_status(history, now, window=BUDGET_WINDOW):
@@ -237,6 +261,43 @@ def rate_limited_message(allowance, history, now, window=BUDGET_WINDOW):
     return message
 
 
+def token_status(history, now, window=BUDGET_WINDOW):
+    """Use of a stream's token allowance over the window.
+
+    The history is (timestamp, tokens) pairs and is pruned here rather than
+    trusted, so a stream that went quiet reports its true in-window spend.
+    """
+    recent = [entry for entry in history if now - entry[0] < window]
+    if not recent:
+        return {"used": 0, "window_seconds": window, "oldest_expires_in_seconds": None}
+    expires = max(0, math.ceil(window - (now - min(t for t, _ in recent))))
+    return {
+        "used": sum(tokens for _, tokens in recent),
+        "window_seconds": window,
+        "oldest_expires_in_seconds": expires,
+    }
+
+
+def check_token_budget(history, now, allowance, window=BUDGET_WINDOW):
+    """Rolling-window check. Returns (allowed, new_history).
+
+    Drops entries older than the window; allows while the tokens spent inside
+    it remain below allowance. Nothing is appended: the spend of a request is
+    known only once its response completes, and is recorded then.
+    """
+    recent = [entry for entry in history if now - entry[0] < window]
+    return sum(tokens for _, tokens in recent) < allowance, recent
+
+
+def token_limited_message(allowance, history, now, window=BUDGET_WINDOW):
+    """The refusal sentence, with a countdown when a pruned stamp supplies one."""
+    message = f"rate limited: at most {allowance} token(s) per hour on this socket"
+    status = token_status(history, now, window)
+    if status["oldest_expires_in_seconds"] is not None:
+        message += f"; next available in {status['oldest_expires_in_seconds']} seconds"
+    return message
+
+
 def reasoning_allowance():
     """The operator's reasoning token allowance, from the environment.
 
@@ -266,6 +327,9 @@ def compose_body(body_bytes, settings, allowance=0):
     max_tokens: the requested value bounds the response rather than being
     shared with reasoning. streams.json continues to report the declared
     value.
+
+    A streamed request additionally asks for its usage in the final event,
+    which the upstream omits otherwise, so a stream's token spend is known.
     """
     try:
         data = json.loads(body_bytes.decode("utf-8"))
@@ -285,6 +349,12 @@ def compose_body(body_bytes, settings, allowance=0):
         and data.get("reasoning_effort") != "none"
     ):
         data["max_tokens"] = tokens + allowance
+    if data.get("stream") is True:
+        options = data.get("stream_options")
+        if not isinstance(options, dict):
+            options = {}
+        options["include_usage"] = True
+        data["stream_options"] = options
     return json.dumps(data).encode("utf-8"), None
 
 
@@ -306,6 +376,9 @@ a declaration is not served unless enable_streams is true.
 
 each accepted declaration is served at <name>.sock. configuration fields:
   budget: integer, requests allowed per hour on that socket
+  token_budget: integer, tokens allowed per hour on that socket. a request is
+  admitted while the hour's spend is below it; the response that crosses it
+  completes.
   model: string
   reasoning_effort: one of none, minimal, low, medium, high
   temperature: number from 0 to 2
@@ -321,17 +394,30 @@ in messages.
 """
 
 
-def render_state(accepted, rejected, histories, now, streams_enabled, console_error=None):
+def render_state(
+    accepted,
+    rejected,
+    histories,
+    now,
+    streams_enabled,
+    console_error=None,
+    token_histories=None,
+):
     """The streams.json document describing every socket in the directory."""
+    token_histories = token_histories or {}
     streams = {"core": {"socket": "core.sock", "status": "active"}}
     for name, settings in accepted.items():
         streams[name] = {
             "socket": f"{name}.sock",
             "status": "active",
-            "settings": {k: v for k, v in settings.items() if k != "budget"},
+            "settings": {k: v for k, v in settings.items() if k not in BUDGET_FIELDS},
             "budget": {
                 "allowance": effective_allowance(settings),
                 **budget_status(histories.get(name, []), now),
+            },
+            "tokens": {
+                "allowance": effective_token_allowance(settings),
+                **token_status(token_histories.get(name, []), now),
             },
         }
     for name, reason in rejected.items():
@@ -398,6 +484,7 @@ class StreamRegistry:
         self._settings = {}
         self._rejected = {}
         self._histories = {}
+        self._token_histories = {}
         self._clock = clock
 
     def _prune_histories(self, now):
@@ -406,7 +493,9 @@ class StreamRegistry:
         A name that is no longer declared keeps its charge until its stamps
         leave the window, so removing a stream from the agent-writable console
         and declaring it again does not buy a second allowance inside the same
-        hour. Called with the lock already held.
+        hour. The request and token windows are pruned independently: a stream
+        may have spent tokens in an hour it made few requests, or the reverse.
+        Called with the lock already held.
         """
         kept = {}
         for name, history in self._histories.items():
@@ -414,6 +503,12 @@ class StreamRegistry:
             if recent or name in self._settings:
                 kept[name] = recent
         self._histories = kept
+        kept = {}
+        for name, history in self._token_histories.items():
+            recent = [entry for entry in history if now - entry[0] < BUDGET_WINDOW]
+            if recent or name in self._settings:
+                kept[name] = recent
+        self._token_histories = kept
 
     def apply(self, accepted, rejected):
         """Adopt a console evaluation. Returns (added, removed) stream names."""
@@ -437,7 +532,11 @@ class StreamRegistry:
 
         refusal is None when the request may be forwarded, else a
         (status, message) pair. A body that fails composition is refused
-        before any budget charge.
+        before any budget charge. The token window is read first, so a
+        refusal on the hour's spend costs no request, and a stream that has
+        exhausted both reports the token ceiling. That window is read before
+        the response exists, so a request admitted just under the ceiling
+        carries the window over it by its whole spend.
         """
         with self._lock:
             settings = self._settings.get(stream)
@@ -448,14 +547,28 @@ class StreamRegistry:
         if error is not None:
             return body, (400, error)
         allowance = effective_allowance(settings)
+        token_allowance = effective_token_allowance(settings)
         with self._lock:
             now = self._clock()
+            tokens = self._token_histories.get(stream, [])
+            allowed, tokens = check_token_budget(tokens, now, token_allowance)
+            self._token_histories[stream] = tokens
+            if not allowed:
+                return body, (429, token_limited_message(token_allowance, tokens, now))
             history = self._histories.get(stream, [])
             allowed, history = check_budget(history, now, allowance)
             self._histories[stream] = history
             if not allowed:
                 return body, (429, rate_limited_message(allowance, history, now))
         return composed, None
+
+    def charge(self, stream, tokens):
+        """Record tokens spent on a stream against its hourly token window."""
+        if isinstance(tokens, bool) or not isinstance(tokens, int) or tokens <= 0:
+            return
+        with self._lock:
+            now = self._clock()
+            self._token_histories.setdefault(stream, []).append((now, tokens))
 
     def state(self, streams_enabled=False, console_error=None, now=None):
         """The current streams.json document."""
@@ -469,4 +582,5 @@ class StreamRegistry:
                 now,
                 streams_enabled,
                 console_error,
+                dict(self._token_histories),
             )

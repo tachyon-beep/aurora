@@ -55,15 +55,17 @@ a local rust crate registry is present; cargo resolves against it. common lisp s
 
 git and posix shell facilities are installed.
 
-the container is limited to 2 cpu, 5 gib of memory, and 256 processes. the working tree is limited to 4 gib and is held in memory, which counts against the memory limit.
+the container is limited to 2 cpu, 16 gib of memory, and 1024 processes. the working tree is limited to 8 gib and is held in memory, which counts against the memory limit.
 
-the root filesystem is read-only. a writable location exists at /build with 5 gib of capacity. its contents are cleared when a session ends.
+the root filesystem is read-only. a writable location exists at /build with 10 gib of capacity. its contents are cleared when a session ends.
 
 read-only data files are present at /corpus.
 
 image files appear at /sense at intervals.
 
 the container has no network interface. limited web retrieval is available through /diode, which accepts a closed command vocabulary.
+
+a process scheduler runs at /pump; it accepts a closed set of entry fields in /pump/entries.json.
 
 the model endpoint used by this environment is a unix domain socket. it accepts connections from any process in the container.
 
@@ -157,11 +159,13 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
         assert f"- {requirement.lower()}" in runtime
     assert "python 3.13" in runtime
     assert "2 cpu" in runtime
-    assert "5 gib" in runtime
-    assert "working tree is limited to 4 gib" in runtime
-    assert "256 processes" in runtime
+    assert "16 gib" in runtime
+    assert "working tree is limited to 8 gib" in runtime
+    assert "1024 processes" in runtime
     assert "the container has no network interface" in runtime
     assert "/diode" in runtime
+    assert "a process scheduler runs at /pump" in runtime
+    assert "/pump/entries.json" in runtime
     assert "model endpoint used by this environment is a unix domain socket" in runtime
     assert "accepts connections from any process in the container" in runtime
     assert "openrouter_" not in runtime
@@ -170,7 +174,7 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
     assert "local rust crate registry" in runtime
     assert "/vendor/lisp" in runtime
     assert "static sentence embedding model" in runtime
-    assert "/build with 5 gib of capacity" in runtime
+    assert "/build with 10 gib of capacity" in runtime
     assert "cleared when a session ends" in runtime
     assert "/corpus" in runtime
     assert "image files appear at /sense at intervals" in runtime
