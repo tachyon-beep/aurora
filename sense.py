@@ -279,7 +279,13 @@ def main() -> None:
     slots = int(os.environ.get("SENSE_RING_SLOTS", str(DEFAULT_RING_SLOTS)))
     threshold = float(os.environ.get("SENSE_STATIC_THRESHOLD", str(DEFAULT_STATIC_THRESHOLD)))
     root = Path(SENSE_DIR)
-    reconcile_storage(root, feeds, slots)
+    try:
+        reconcile_storage(root, feeds, slots)
+    except OSError as error:
+        # Startup tidying, not a precondition: a volume that cannot be read or
+        # written must not fail here either, or the guard below never runs and
+        # the container restarts forever. It is attempted once, as before.
+        print(f"reconcile failed: {error}", file=sys.stderr, flush=True)
     states: dict[str, FeedState] = {}
     period = interval_minutes * 60
     while True:

@@ -2,6 +2,7 @@ import json
 import os
 import time
 
+import diode
 from stage import data
 
 
@@ -579,6 +580,19 @@ def test_diode_activity_counts_only_commands_that_reach_outside(tmp_path):
     assert got["operations_total"] == 2
 
 
+def test_diode_activity_counts_a_fetch_from_every_news_source(tmp_path):
+    """One news source is not a special case of the others: a life spent reading
+    headlines from any of them has reached outside, and the page says so."""
+    out_dir = tmp_path / "output"
+    out_dir.mkdir()
+    for index, source in enumerate(sorted(diode.NEWS_SOURCES)):
+        (out_dir / f"20260814_0410{index:02d}_000000_{source}.txt").write_text(
+            "headline — https://example.invalid", encoding="utf-8"
+        )
+    got = data.diode_activity(str(tmp_path))
+    assert got["operations_total"] == len(diode.NEWS_SOURCES)
+
+
 def test_diode_activity_reports_the_whole_count_when_no_output_can_be_placed(tmp_path):
     """Without a life to place them in, the this-life figure is the whole figure
     rather than a zero the page would render as "0 THIS LIFE"."""
@@ -913,6 +927,49 @@ def test_lineage_transcript_fallback_ignores_subcalls(tmp_path):
     out = data.lineage(str(tmp_path), turns)
     assert len(out) == 1
     assert out[0]["summary"] == "the real ending."
+
+
+def _listed_diode_commands():
+    return {name for name, spec in diode.COMMANDS.items() if not spec.get("hidden")}
+
+
+def test_the_verb_map_is_exactly_the_diode_command_vocabulary():
+    """`output_verb`'s `ran <name>` fallback is for names the stage does not know, so
+    no command the agent can actually run may reach it, and no name that is not a
+    command may sit in the map: the agent guesses command names, and a phrase for a
+    command the diode no longer has would dress a refusal as a run. The stage cannot
+    import the diode (separate images), so this is what holds the two copies
+    together."""
+    assert set(data.DIODE_VERBS) == _listed_diode_commands()
+
+
+def test_every_diode_command_is_classified_as_reaching_out_or_staying_in():
+    """An unclassified command would be counted by whichever default it fell into.
+    A new diode command fails here until the stage says which side it is on."""
+    listed = _listed_diode_commands()
+
+    assert data.DIODE_LOCAL_COMMANDS == {"entropy", "help", "later", "time"}
+    assert data.DIODE_LOCAL_COMMANDS <= listed
+    assert listed - data.DIODE_LOCAL_COMMANDS == listed & data.DIODE_REACHING_COMMANDS
+
+
+def test_every_news_source_counts_as_reaching_outside():
+    """The whole news vocabulary is registered from one table, so the count must be
+    taken over that table and not over a hand-kept subset of it."""
+    assert set(diode.NEWS_SOURCES) <= data.DIODE_REACHING_COMMANDS
+
+
+def test_a_hidden_command_is_neither_named_nor_counted():
+    """Hidden commands emit text only and appear on no surface, so the stage must
+    not count them as reach and must not carry their names at all."""
+    hidden = {name for name, spec in diode.COMMANDS.items() if spec.get("hidden")}
+    source = (data.__file__ and open(data.__file__, encoding="utf-8").read()) or ""
+
+    assert hidden
+    assert not hidden & data.DIODE_REACHING_COMMANDS
+    assert not hidden & set(data.DIODE_VERBS)
+    for name in hidden:
+        assert name not in source
 
 
 def test_output_command_splits_the_slug():

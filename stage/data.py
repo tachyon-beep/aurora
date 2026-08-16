@@ -29,25 +29,41 @@ DIODE_VERBS = {
     "tides": "read the sea state",
     "solarwind": "read the solar wind",
     "wikipedia": "looked something up",
-    "reference": "looked something up",
     "entropy": "pulled random bytes",
-    "news": "read the headlines",
     "abc": "read the headlines",
+    "bbc": "read the headlines",
+    "aljazeera": "read the headlines",
+    "nhk": "read the headlines",
+    "lemonde": "read the headlines",
+    "dw": "read the headlines",
+    "elpais": "read the headlines",
+    "thehindu": "read the headlines",
+    "g1": "read the headlines",
+    "allafrica": "read the headlines",
     "arxiv": "fetched a paper",
-    "paper": "fetched a paper",
-    "papers": "fetched a paper",
     "gutensearch": "searched for a book",
     "gutenberg": "fetched a book",
     "commons": "fetched a file",
     "clone": "fetched a repository",
-    "feed": "read a feed",
     "fetchrss": "read a feed",
     "fetchlinks": "followed a link",
-    "links": "followed a link",
     "fetchhttp": "fetched a page",
     "publish": "spoke to the outside",
     "speak": "put a voice to it",
+    "help": "listed its commands",
+    "later": "put a command off",
+    "time": "checked the time",
 }
+
+# DIODE_VERBS carries exactly the commands the diode will run, so a name it does
+# not hold is a name the diode refused. These are the ones whose whole effect
+# stays inside the box; everything else either fetches something or puts
+# something outside, so reach is the default and this is the exception list. The
+# stage cannot import the diode — they are separate images — so a test holds
+# both sets against the real vocabulary.
+DIODE_LOCAL_COMMANDS = {"entropy", "help", "later", "time"}
+
+DIODE_REACHING_COMMANDS = set(DIODE_VERBS) - DIODE_LOCAL_COMMANDS
 
 
 def _plural(count, noun):
@@ -638,6 +654,11 @@ def _derive_lives(entries, turns):
     older life has a turn from an older life still in the window to prove the
     window holds its first turn. A count read from the note is never a lower
     bound, because it was not read out of the window.
+
+    The oldest life keeps the mark even when the window holds every record the
+    transcript has: the recorder archives the transcript and truncates the live
+    file, so reaching the file's first record does not prove reaching the life's
+    first turn. Only a turn from an older life proves that.
     """
     lived = {}
     for turn in turns or []:
@@ -767,7 +788,7 @@ def output_argument(stem):
 
 
 def _operation_result(name):
-    """Whether an output filename records one command that reached outside the box.
+    """Whether an output filename records one run of a command that reaches outside.
 
     The diode files exactly one result per command run and names it with a .txt
     extension; a command that fetches a thing files that thing beside the result
@@ -775,14 +796,15 @@ def _operation_result(name):
     An artifact whose own extension is .txt (a fetched book, a text media file)
     is indistinguishable from a result by name, and is counted as one.
 
-    Only a command DIODE_VERBS knows as leaving the box is counted. A command
-    that runs without egress files a result too, and so does a name the diode
-    does not have, so counting every result would report reaching outside for
-    runs that never did.
+    Only a command that reaches outside is counted, so a local one and a guessed
+    name that the diode never ran raise nothing. The outcome is not part of the
+    name: a command that was gated, refused or rate limited files a result under
+    the name it was attempted with, and is counted with the runs that succeeded.
+    This is a count of the box being reached out of, not of what came back.
     """
     if not name.endswith(".txt"):
         return False
-    return output_command(_output_stem(name)) in DIODE_VERBS
+    return output_command(_output_stem(name)) in DIODE_REACHING_COMMANDS
 
 
 def _count_operations(names, deaths, incarnation):

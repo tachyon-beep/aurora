@@ -9,9 +9,9 @@ RUN apt-get update \
 COPY vendor/ /tmp/vendor/
 COPY requirements-agent.txt /tmp/requirements-agent.txt
 RUN set -- /tmp/vendor/wheels/*.whl; \
-    if [ -e "$1" ]; then pip install --no-cache-dir "$@"; fi; \
-    pip install --no-cache-dir -r /tmp/requirements-agent.txt; \
-    rm -rf /tmp/vendor /tmp/requirements-agent.txt
+    if [ -e "$1" ]; then pip install --no-cache-dir "$@"; fi \
+    && pip install --no-cache-dir -r /tmp/requirements-agent.txt \
+    && rm -rf /tmp/vendor /tmp/requirements-agent.txt
 
 # Cargo resolves against the local registry mounted read-only at /vendor;
 # caches and build artifacts land on the disk-backed /build volume because

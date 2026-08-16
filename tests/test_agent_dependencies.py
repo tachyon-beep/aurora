@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 
@@ -81,9 +82,9 @@ def test_dockerfile_installs_agent_dependency_manifest() -> None:
     manifest_copy = "COPY requirements-agent.txt /tmp/requirements-agent.txt"
     manifest_install_run = (
         "RUN set -- /tmp/vendor/wheels/*.whl; "
-        'if [ -e "$1" ]; then pip install --no-cache-dir "$@"; fi; '
-        "pip install --no-cache-dir -r /tmp/requirements-agent.txt; "
-        "rm -rf /tmp/vendor /tmp/requirements-agent.txt"
+        'if [ -e "$1" ]; then pip install --no-cache-dir "$@"; fi '
+        "&& pip install --no-cache-dir -r /tmp/requirements-agent.txt "
+        "&& rm -rf /tmp/vendor /tmp/requirements-agent.txt"
     )
 
     manifest_copies = [
@@ -121,6 +122,90 @@ def test_local_wheels_are_optional_for_a_clean_checkout() -> None:
     )
     assert vendor_copy_index < install_index
     assert 'if [ -e "$1" ]; then pip install --no-cache-dir "$@"; fi' in instructions[install_index]
+
+
+def _install_body() -> str:
+    """The shell body Docker runs for the dependency install layer."""
+    runs = [
+        instruction
+        for instruction in _dockerfile_instructions()
+        if instruction.split(maxsplit=1)[0].upper() == "RUN" and "pip install" in instruction
+    ]
+    assert len(runs) == 1
+    return runs[0].removeprefix("RUN ")
+
+
+def _run_install(tmp_path, *, wheel: bool, pip_exit: int) -> tuple[int, list[str]]:
+    """Run the install layer's body with pip stubbed, off any real /tmp.
+
+    Docker runs a RUN instruction through `/bin/sh -c` with no `-e`, so running the
+    body the same way is what shows whether a failed install fails the build. Every
+    absolute path is rewritten under tmp_path first, because the body ends in an
+    `rm -rf` of the paths it names.
+    """
+    body = _install_body()
+    sandbox = str(tmp_path)
+    rewritten = body.replace("/tmp/", f"{sandbox}/tmp/")
+    assert body.count("/tmp/") == rewritten.count(f"{sandbox}/tmp/")
+
+    wheels = tmp_path / "tmp" / "vendor" / "wheels"
+    wheels.mkdir(parents=True)
+    if wheel:
+        (wheels / "example-1.0-py3-none-any.whl").write_text("", encoding="utf-8")
+    (tmp_path / "tmp" / "requirements-agent.txt").write_text("example\n", encoding="utf-8")
+
+    stub_dir = tmp_path / "bin"
+    stub_dir.mkdir()
+    calls = tmp_path / "calls"
+    stub = stub_dir / "pip"
+    stub.write_text(f'#!/bin/sh\necho "$@" >> "{calls}"\nexit {pip_exit}\n', encoding="utf-8")
+    stub.chmod(0o755)
+
+    result = subprocess.run(
+        ["/bin/sh", "-c", rewritten],
+        env={"PATH": f"{stub_dir}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+    )
+    recorded = calls.read_text(encoding="utf-8").splitlines() if calls.exists() else []
+    return result.returncode, recorded
+
+
+def test_a_failed_manifest_install_fails_the_build(tmp_path) -> None:
+    """The layer's exit status must be the install's, not that of the cleanup after it."""
+    code, calls = _run_install(tmp_path, wheel=False, pip_exit=1)
+
+    assert len(calls) == 1
+    assert code != 0
+
+
+def test_a_failed_wheel_install_fails_the_build(tmp_path) -> None:
+    """A wheel install that fails must stop the layer rather than fall through to the index."""
+    code, calls = _run_install(tmp_path, wheel=True, pip_exit=1)
+
+    assert len(calls) == 1
+    assert code != 0
+
+
+def test_a_clean_checkout_installs_the_manifest_alone(tmp_path) -> None:
+    """No vendored wheel is not a failure: the empty glob is skipped and the build goes on."""
+    code, calls = _run_install(tmp_path, wheel=False, pip_exit=0)
+
+    assert code == 0
+    assert calls == [
+        "install --no-cache-dir -r " + str(tmp_path / "tmp" / "requirements-agent.txt")
+    ]
+    assert not (tmp_path / "tmp" / "vendor").exists()
+    assert not (tmp_path / "tmp" / "requirements-agent.txt").exists()
+
+
+def test_a_vendored_wheel_is_installed_before_the_manifest(tmp_path) -> None:
+    code, calls = _run_install(tmp_path, wheel=True, pip_exit=0)
+
+    assert code == 0
+    assert len(calls) == 2
+    assert calls[0].endswith("example-1.0-py3-none-any.whl")
+    assert calls[1].endswith("requirements-agent.txt")
 
 
 def test_dockerignore_includes_agent_dependency_manifest() -> None:

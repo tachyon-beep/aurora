@@ -346,6 +346,27 @@ def test_main_reconciles_storage_before_the_first_capture_cycle(tmp_path, monkey
     assert calls[1] == "cycle"
 
 
+def test_main_carries_on_when_storage_cannot_be_reconciled(tmp_path, monkeypatch, capsys):
+    """A volume the service cannot read reports and continues into the cycle loop.
+
+    Reconciliation is startup tidying, not a precondition. Raising out of main here
+    would exit before the loop whose own guard exists to keep a misconfigured volume
+    from becoming a silent crash-restart loop under `restart: unless-stopped`.
+    """
+    calls = []
+    monkeypatch.setattr(sense, "SENSE_DIR", str(tmp_path / "absent"))
+    monkeypatch.setenv("SENSE_FEEDS", '[{"dir":"cam","id":"x"}]')
+    monkeypatch.setattr(sense, "run_cycle", lambda *args, **kwargs: calls.append("cycle"))
+    monkeypatch.setattr(sense.time, "time", lambda: 0.0)
+    monkeypatch.setattr(sense.time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopIteration))
+
+    with pytest.raises(StopIteration):
+        sense.main()
+
+    assert calls == ["cycle"]
+    assert "reconcile failed" in capsys.readouterr().err
+
+
 # cycle scheduling
 
 
