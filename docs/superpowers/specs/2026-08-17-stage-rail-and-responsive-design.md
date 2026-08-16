@@ -68,8 +68,11 @@ One panel, top of the rail, height 536 px at 1080p. From top to bottom:
    epoch is unsane) renders as a 2 px stub so its slot is still counted. Bars are
    evenly spaced across the panel width; when more than 40 lives exist, only the newest
    40 are drawn and the foot line discloses `N earlier lives not shown`. An ordinal
-   label row sits under the bars (every label to 24 lives, every fifth beyond, always
-   the newest). The chart is `aria-hidden`; the facts it draws are stated in text in the
+   label row sits under the bars: labels are stepped by the width a column actually
+   has — every label at 22 px per column or more (two mono digits fit), every fifth
+   down to 12 px, every tenth below, always the newest — and a label overflows its
+   empty neighbours rather than clipping (amended at the container check: the fixed
+   "every fifth beyond 24" rule collided at phone widths). The chart is `aria-hidden`; the facts it draws are stated in text in the
    current-life block, the spotlight, and the foot.
 3. **Current-life block**: `INCARNATION` eyebrow, the ordinal at 34 px (keeps the `bump`
    on change) with the model beside it; one 15 px mono line of figures —
@@ -147,9 +150,11 @@ the canvas tier.
 - **Masthead** wraps: wordmark and state cluster on one row; the containment line
   under it; the legend chips and repo link on a third row; `#provenance` hidden under
   720 px.
-- **THE LINEAGE, compact**: chart 56 px tall, current-life figures on one wrapping line,
-  spotlight one line (eyebrow only) plus its two-line note; the whole panel roughly
-  200 px.
+- **THE LINEAGE, compact**: chart 84 px tall (amended from 56 at the container check —
+  the bars need the height to read at all beside their labels), current-life figures on
+  one wrapping line, the spotlight's eyebrow wrapping and its facts line kept (amended:
+  the facts are one short line and the panel has the room), plus its two-line note; the
+  whole panel roughly 350 px on a 390 px phone.
 - **THE MONOLOGUE**: `height: 70dvh; min-height: 420px`, its own scroll region as
   today, so a phone viewer's thumb scrolls the feed, not the page. `.turn` collapses to
   one column: the gutter becomes a single left-aligned line above the text (`TURN 101 ·
@@ -168,6 +173,9 @@ with the rest of the book on the tombstone set: `{ordinal, kind, seconds | null,
 ended_epoch | null}`. `seconds` is the gap from the previous death (the same derivation
 `_derive_lives` uses); the first life has none. `server._public_records` passes it
 through capped at `LIVES_CAP = 200` newest entries, with `lives_omitted` for the rest.
+(`lives_omitted` is telemetry for API consumers; the page derives its own "N earlier lives
+not shown" from `stats.lives_ended` minus the bars it drew, which covers both the 200-entry
+cap and the 40-bar cap in one number.)
 Everything else the panels need — `stats.started_epoch`, `stats.incarnation`,
 `stats.model`, `stats.turns_this_life`, `code`, `lineage[0..4]` (sentence, facts,
 kind, ended_epoch), `records.longest_life`, `records.chose`, `commentary.colour`,
