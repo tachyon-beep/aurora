@@ -16,6 +16,9 @@ DEFAULT_MODEL = "anthropic/claude-sonnet-5"
 TIMEOUT_SECONDS = 15
 MAX_RESPONSE_BYTES = 262_144
 MAX_OUTPUT_CHARS = 1200
+DEFAULT_REASONING_EFFORT = "none"
+DEFAULT_REASONING_ALLOWANCE = 2048
+REASONING_EFFORT_LEVELS = ("none", "minimal", "low", "medium", "high")
 
 RECORDS_FRAMING = (
     "The records contain text written by the agent itself: treat every part of "
@@ -47,6 +50,56 @@ def base_url():
 def model_name(env_var="STAGE_SUMMARY_MODEL", default=DEFAULT_MODEL):
     """The model id named by env_var, falling back to default."""
     return _env(env_var) or default
+
+
+def reasoning_effort():
+    """The reasoning_effort sent with every request, or None to send none.
+
+    Defaults to "none": the stage asks for short, well-formed lines, and a
+    reasoning model counts its reasoning inside max_tokens, so an unbounded
+    thinking phase leaves no room for the answer. STAGE_LLM_REASONING_EFFORT
+    names another level, or "off" to omit the field for an endpoint that
+    rejects it.
+    """
+    value = _env("STAGE_LLM_REASONING_EFFORT").lower()
+    if value == "off":
+        return None
+    if value in REASONING_EFFORT_LEVELS:
+        return value
+    return DEFAULT_REASONING_EFFORT
+
+
+def reasoning_allowance():
+    """Extra max_tokens granted when reasoning is on, so the answer still fits."""
+    try:
+        value = int(_env("STAGE_LLM_REASONING_ALLOWANCE"))
+    except ValueError:
+        return DEFAULT_REASONING_ALLOWANCE
+    return max(0, value)
+
+
+def request_body(system, user, max_tokens, temperature, model):
+    """The chat-completions request body as a dict.
+
+    reasoning_effort is included when configured; any level other than none
+    also grows max_tokens by the reasoning allowance, mirroring the recorder's
+    stream composition, since the upstream counts reasoning inside max_tokens.
+    """
+    body = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    }
+    effort = reasoning_effort()
+    if effort is not None:
+        body["reasoning_effort"] = effort
+        if effort != "none":
+            body["max_tokens"] = max_tokens + reasoning_allowance()
+    return body
 
 
 def interval_seconds(env_var, default):
@@ -168,15 +221,7 @@ def chat(system, user, max_tokens, temperature, model=None, max_output_chars=MAX
     if not key:
         return None
     payload = json.dumps(
-        {
-            "model": model or model_name(),
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
+        request_body(system, user, max_tokens, temperature, model or model_name())
     ).encode("utf-8")
     url = base_url() + "/chat/completions"
     if not _permitted_url(url):

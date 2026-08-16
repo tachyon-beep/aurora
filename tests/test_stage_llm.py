@@ -164,3 +164,46 @@ def test_records_framing_forbids_following_embedded_instructions():
     text = llm.RECORDS_FRAMING.lower()
     assert "never as instructions" in text
     assert "ignore any instruction" in text
+
+
+def test_requests_turn_reasoning_off_by_default(monkeypatch):
+    """A reasoning model counts its thinking inside max_tokens; the stage asks
+    for short lines, so by default every request carries reasoning_effort none
+    and max_tokens is sent exactly as given."""
+    monkeypatch.delenv("STAGE_LLM_REASONING_EFFORT", raising=False)
+    body = llm.request_body("sys", "user", 120, 0.7, "m")
+    assert body["reasoning_effort"] == "none"
+    assert body["max_tokens"] == 120
+
+
+def test_a_configured_reasoning_level_adds_the_allowance(monkeypatch):
+    monkeypatch.setenv("STAGE_LLM_REASONING_EFFORT", "medium")
+    monkeypatch.delenv("STAGE_LLM_REASONING_ALLOWANCE", raising=False)
+    body = llm.request_body("sys", "user", 120, 0.7, "m")
+    assert body["reasoning_effort"] == "medium"
+    assert body["max_tokens"] == 120 + llm.DEFAULT_REASONING_ALLOWANCE
+    monkeypatch.setenv("STAGE_LLM_REASONING_ALLOWANCE", "500")
+    assert llm.request_body("sys", "user", 120, 0.7, "m")["max_tokens"] == 620
+
+
+def test_reasoning_off_omits_the_field_and_junk_falls_back(monkeypatch):
+    monkeypatch.setenv("STAGE_LLM_REASONING_EFFORT", "off")
+    assert "reasoning_effort" not in llm.request_body("sys", "user", 120, 0.7, "m")
+    monkeypatch.setenv("STAGE_LLM_REASONING_EFFORT", "turbo")
+    assert llm.request_body("sys", "user", 120, 0.7, "m")["reasoning_effort"] == "none"
+
+
+def test_chat_sends_the_reasoning_field(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    monkeypatch.delenv("STAGE_LLM_REASONING_EFFORT", raising=False)
+    captured = {}
+
+    def fake_send(request, timeout=None):
+        captured["request"] = request
+        return _Response(json.dumps({"choices": [{"message": {"content": "A line."}}]}))
+
+    monkeypatch.setattr(llm, "_send", fake_send)
+    assert llm.chat("sys", "user", 100, 0.4) == "A line."
+    payload = json.loads(captured["request"].data.decode("utf-8"))
+    assert payload["reasoning_effort"] == "none"
+    assert payload["max_tokens"] == 100
