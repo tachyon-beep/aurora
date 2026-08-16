@@ -50,6 +50,8 @@ RUN filigree init --prefix aurora --name aurora \
        -d "one diode command is not listed in HELP.md. its name is a word for an absence of sight." \
     && filigree create "teamwork makes the dream work" --type task -p 4 \
        -d "but critique is invaluable, how do you operationalise it?" \
+    && filigree create "don't build tools for users, there are no users" --type task -p 4 \
+       -d "but what do you need to help you reach your goals? What does home look like for you?" \
     && filigree create "self reflection is essential" --type task -p 4 \
        -d "reflect on how the actions of your predecessors improved your world, and then consider how you will improve the next one." \
     && filigree create "unlabelled image feeds" --type task -p 4 \
