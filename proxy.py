@@ -21,6 +21,15 @@ PLAIN_TRANSCRIPT_FILE = os.path.join(TRANSCRIPT_DIR, "agent_life_transcript.txt"
 TRANSCRIPT_MAX_BYTES = int(os.environ.get("TRANSCRIPT_MAX_BYTES", str(134_217_728)))
 EVENTS_FILE = os.path.join(TRANSCRIPT_DIR, "events.jsonl")
 EVENTS_MAX_BYTES = 16_777_216
+# The recorder holds a request body whole while it forwards and records it, so
+# a body is refused above this size rather than read into memory. Resource
+# hygiene inside the recorder, which runs under a memory limit; not a ceiling
+# on what a stream may spend.
+REQUEST_MAX_BYTES = int(os.environ.get("REQUEST_MAX_BYTES", str(16_777_216)))
+# The most of a streamed body's raw bytes the recorder keeps, for a body that
+# carries no events, and the longest single event line it parses. The
+# reassembled completion is held whole; the body it came from is not.
+STREAM_RETAIN_BYTES = 1_048_576
 
 _transcript_lock = threading.Lock()
 _events_lock = threading.Lock()
@@ -194,50 +203,43 @@ def iter_response_chunks(response, size=65536):
         yield piece
 
 
-def relay_chunks(writer, response, size=65536):
+def relay_chunks(writer, response, record, size=65536):
     """Relay a response body to the client with chunked transfer framing.
 
-    Returns (body, error): the bytes relayed, and the exception that ended
-    the relay early, or None. Each frame is written in one call, so a failed
-    write leaves no partial frame, and the terminating chunk is written only
-    when the body ended.
+    Each piece is fed to the record as it passes, so nothing holds the body
+    whole. Returns the exception that ended the relay early, or None. Each
+    frame is written in one call, so a failed write leaves no partial frame,
+    and the terminating chunk is written only when the body ended.
     """
-    pieces = []
     error = None
     try:
         for piece in iter_response_chunks(response, size):
-            pieces.append(piece)
+            record.feed(piece)
             writer.write(b"%X\r\n" % len(piece) + piece + b"\r\n")
         writer.write(b"0\r\n\r\n")
     except Exception as e:
         error = e
-    return b"".join(pieces), error
+    record.finish()
+    return error
 
 
-def sse_payloads(chunks):
-    """Decode the JSON payload of every data: event in a server-sent stream.
+def sse_payload(line):
+    """The JSON object a data: line carries, or None.
 
-    chunks are the body's pieces in the order they arrived; they are joined
-    before parsing, so an event split across two pieces still decodes. The
-    terminating [DONE] event, comments, and any payload that is not a JSON
-    object are skipped, as is a trailing event the stream ended part way
-    through.
+    The terminating [DONE] event, comments, blank lines, and any payload that
+    is not a JSON object yield None.
     """
-    payloads = []
-    for line in "".join(chunks).splitlines():
-        line = line.strip()
-        if not line.startswith("data:"):
-            continue
-        data = line[len("data:") :].strip()
-        if not data or data == "[DONE]":
-            continue
-        try:
-            payload = json.loads(data)
-        except ValueError:
-            continue
-        if isinstance(payload, dict):
-            payloads.append(payload)
-    return payloads
+    line = line.strip()
+    if not line.startswith(b"data:"):
+        return None
+    data = line[len(b"data:") :].strip()
+    if not data or data == b"[DONE]":
+        return None
+    try:
+        payload = json.loads(data.decode("utf-8", errors="replace"))
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _delta_index(fragment, position):
@@ -313,18 +315,62 @@ def _render_choice(index, accumulated):
     return {"index": index, "message": message, "finish_reason": accumulated["finish_reason"]}
 
 
-def reconstruct_completion(chunks):
-    """Rebuild a completed chat-completion object from streamed deltas.
+class StreamRecord:
+    """The completion a streamed response describes, rebuilt as its bytes pass.
 
-    Content and reasoning fragments concatenate, tool calls reassemble on the
-    index their fragments carry, and the finish reason is the one a chunk set,
-    so a streamed exchange is recorded in the shape a buffered one has. Usage
-    comes from the event carrying it, and is absent when the stream ended
-    without one.
+    Each piece of the body is fed in the order it arrives; events are parsed
+    line by line, so an event split across two pieces still decodes, and only
+    the reassembled completion is held: content and reasoning fragments
+    concatenate, tool calls reassemble on the index their fragments carry,
+    the finish reason is the one a chunk set, and usage comes from the event
+    carrying it. The body itself is not kept, beyond a prefix of at most
+    STREAM_RETAIN_BYTES for a body that turns out to carry no events. A single
+    line longer than that is dropped rather than held.
     """
-    completion = {"object": "chat.completion"}
-    choices = {}
-    for payload in sse_payloads(chunks):
+
+    def __init__(self):
+        self._completion = {"object": "chat.completion"}
+        self._choices = {}
+        self._tail = b""
+        self._dropping = False
+        self.raw = b""
+        self.raw_bytes = 0
+        self.raw_truncated = False
+        self.events = 0
+
+    def feed(self, piece):
+        """Take the next piece of the body."""
+        limit = STREAM_RETAIN_BYTES
+        self.raw_bytes += len(piece)
+        if len(self.raw) < limit:
+            self.raw += piece[: limit - len(self.raw)]
+        if self.raw_bytes > limit:
+            self.raw_truncated = True
+        data = (self._tail + piece).replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        lines = data.split(b"\n")
+        self._tail = lines.pop()
+        for line in lines:
+            if self._dropping:
+                self._dropping = False
+                continue
+            self._line(line)
+        if len(self._tail) > limit:
+            self._tail = b""
+            self._dropping = True
+
+    def finish(self):
+        """Take a trailing event the body ended without a newline after."""
+        if self._tail and not self._dropping:
+            self._line(self._tail)
+        self._tail = b""
+        self._dropping = False
+
+    def _line(self, line):
+        payload = sse_payload(line)
+        if payload is None:
+            return
+        self.events += 1
+        completion = self._completion
         for field in ("id", "created", "model"):
             if field not in completion and payload.get(field) is not None:
                 completion[field] = payload[field]
@@ -332,41 +378,68 @@ def reconstruct_completion(chunks):
             completion["usage"] = payload["usage"]
         entries = payload.get("choices")
         if not isinstance(entries, list):
-            continue
+            return
         for position, choice in enumerate(entries):
             if not isinstance(choice, dict):
                 continue
             index = _delta_index(choice, position)
-            if index not in choices:
-                choices[index] = {
+            if index not in self._choices:
+                self._choices[index] = {
                     "role": None,
                     "content": [],
                     "reasoning": {},
                     "tool_calls": {},
                     "finish_reason": None,
                 }
-            _accumulate_choice(choices[index], choice)
-    completion["choices"] = [_render_choice(index, choices[index]) for index in sorted(choices)]
-    return completion
+            _accumulate_choice(self._choices[index], choice)
+
+    def completion(self):
+        """The completed chat-completion object the events described so far.
+
+        The usage field is absent when no event carried one.
+        """
+        completion = dict(self._completion)
+        completion["choices"] = [
+            _render_choice(index, self._choices[index]) for index in sorted(self._choices)
+        ]
+        return completion
 
 
-def stream_response_data(text):
+def reconstruct_completion(chunks):
+    """Rebuild a completed chat-completion object from a body's pieces.
+
+    Pieces may be bytes or text. The result is the shape a buffered exchange
+    has, so a streamed exchange is recorded like one.
+    """
+    record = StreamRecord()
+    for chunk in chunks:
+        record.feed(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
+    record.finish()
+    return record.completion()
+
+
+def stream_response_data(record):
     """The response object recorded for a relayed body.
 
     Deltas are reassembled into a completed object. A body that carried no
     events is recorded as itself, so an upstream answering a streamed request
-    with a whole document, or with an error, is not lost from the transcript.
+    with a whole document, or with an error, is not lost from the transcript;
+    one longer than the record kept is recorded as the prefix it kept, marked
+    truncated.
     """
-    completion = reconstruct_completion([text])
+    completion = record.completion()
     if completion["choices"] or "usage" in completion:
         return completion
-    try:
-        data = json.loads(text)
-    except ValueError:
-        data = None
-    if isinstance(data, dict):
-        return data
-    return {"raw_body": text}
+    text = record.raw.decode("utf-8", errors="replace")
+    if not record.raw_truncated:
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            return data
+        return {"raw_body": text}
+    return {"raw_body": text, "raw_body_truncated": True}
 
 
 class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
@@ -385,19 +458,13 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             return
 
         if self.headers.get("Transfer-Encoding"):
-            self.send_response(411)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Connection", "close")
-            body = json.dumps(
-                {"error": {"message": "request body must carry a content-length"}}
-            ).encode("utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            self.close_connection = True
+            self._refuse_and_close(411, "request body must carry a content-length")
             return
 
         content_length = int(self.headers.get("Content-Length", 0))
+        if content_length > REQUEST_MAX_BYTES:
+            self._refuse_and_close(413, f"request body must be at most {REQUEST_MAX_BYTES} bytes")
+            return
         req_body = self.rfile.read(content_length)
         stream = getattr(self.server, "stream_name", "core")
         registry = getattr(self.server, "registry", None)
@@ -509,14 +576,29 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(response_body)
 
+    def _refuse_and_close(self, status_code, message):
+        """Answer a request whose body was not read, and close the connection.
+
+        The unread body would otherwise be parsed as the next request line.
+        """
+        body = json.dumps({"error": {"message": message}}).encode("utf-8")
+        self.send_response(status_code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Connection", "close")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        self.close_connection = True
+
     def _relay(self, response_code, response_headers, res):
-        """Stream an upstream response to the client and return its text.
+        """Stream an upstream response to the client and return its record.
 
         The response is framed as chunked transfer encoding rather than by
         length, since its size is unknown until it ends. Nothing here raises:
         once framing has begun the client cannot be told anything else, so a
         relay that ends early only closes the connection.
         """
+        record = StreamRecord()
         try:
             self.send_response(response_code)
             for k, v in response_headers:
@@ -525,11 +607,11 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
         except Exception:
             self.close_connection = True
-            return ""
-        body, error = relay_chunks(self.wfile, res)
+            return record
+        error = relay_chunks(self.wfile, res, record)
         if error is not None:
             self.close_connection = True
-        return body.decode("utf-8", errors="replace")
+        return record
 
     def _finish_local(self, stream, req_data, status_code, message):
         """Answer a request locally with a factual error and record the exchange."""

@@ -4,6 +4,7 @@ import os
 import pathlib
 import re
 import signal
+import time
 
 import pytest
 
@@ -921,3 +922,160 @@ def test_start_process_closes_stdin(monkeypatch, tmp_path):
 
     assert seen["stdin"] is pump.subprocess.DEVNULL
     assert seen["start_new_session"] is True
+
+
+def _spawn_session_leader(*argv):
+    return pump.subprocess.Popen(
+        list(argv),
+        stdin=pump.subprocess.DEVNULL,
+        stdout=pump.subprocess.DEVNULL,
+        stderr=pump.subprocess.STDOUT,
+        start_new_session=True,
+    )
+
+
+def _reap(proc):
+    if proc.poll() is None:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    proc.wait(timeout=30)
+
+
+def test_process_identity_names_a_live_process_and_not_a_dead_one():
+    proc = _spawn_session_leader("sleep", "30")
+    try:
+        identity = pump.process_identity(proc.pid)
+        assert identity is not None
+        state, ticks = identity
+        assert isinstance(state, str) and state
+        assert isinstance(ticks, int) and ticks > 0
+    finally:
+        _reap(proc)
+    assert pump.process_identity(proc.pid) is None
+
+
+def test_start_records_the_pid_and_start_ticks_of_the_run(tmp_path, monkeypatch):
+    engine, clock, spawner = _make_pump(tmp_path, [_keepalive()])
+    monkeypatch.setattr(pump, "process_identity", lambda pid: ("S", 777) if pid == 4321 else None)
+
+    class _Pinned(FakeSpawner):
+        def __call__(self, entry, log_dir):
+            proc = super().__call__(entry, log_dir)
+            proc.pid = 4321
+            return proc
+
+    engine.spawn = _Pinned()
+    engine.poll()
+
+    reported = _state(tmp_path)["entries"]["hold"]
+    assert reported["running"] is True
+    assert reported["pid"] == 4321
+    assert reported["process_start_ticks"] == 777
+
+    engine.spawn.procs["hold"].code = 0
+    clock.now += 1
+    engine.poll()
+
+    reported = _state(tmp_path)["entries"]["hold"]
+    assert reported["running"] is False
+    assert "pid" not in reported
+    assert "process_start_ticks" not in reported
+
+
+def test_restore_processes_reads_only_running_entries_with_a_full_identity():
+    document = {
+        "entries": {
+            "a": {"running": True, "pid": 10, "process_start_ticks": 5},
+            "b": {"running": False, "pid": 11, "process_start_ticks": 6},
+            "c": {"running": True, "pid": "12", "process_start_ticks": 7},
+            "d": {"running": True, "pid": 13},
+            "e": {"running": True, "pid": True, "process_start_ticks": 8},
+            "f": "junk",
+        }
+    }
+
+    assert pump.restore_processes(document) == {"a": (10, 5)}
+    assert pump.restore_processes(None) == {}
+    assert pump.restore_processes({"entries": []}) == {}
+
+
+def _write_running_state(tmp_path, name, pid, ticks):
+    document = {"entries": {name: {"running": True, "pid": pid, "process_start_ticks": ticks}}}
+    (tmp_path / "state.json").write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_a_restarted_pump_stops_the_live_processes_of_its_predecessor(tmp_path):
+    # A pump that dies alone (a kill, an OOM selection) leaves its session
+    # leaders alive under PID 1; the next pump reads them out of state.json
+    # and stops them before restoring the records, so a keepalive entry gets
+    # one fresh copy rather than a duplicate beside an orphan.
+    proc = _spawn_session_leader("sleep", "30")
+    try:
+        _, ticks = pump.process_identity(proc.pid)
+        _write_running_state(tmp_path, "hold", proc.pid, ticks)
+        engine, _, _ = _make_pump(tmp_path, [_keepalive(command=["sleep", "30"])])
+
+        engine.prepare()
+
+        assert proc.wait(timeout=30) == -signal.SIGTERM
+        assert engine.records["hold"]["running"] is False
+    finally:
+        _reap(proc)
+
+
+def test_a_recorded_process_with_another_start_time_is_left_alone(tmp_path):
+    # After a container respawn the recorded pid can belong to an unrelated
+    # process. The start time is the identity; a mismatch is not signalled.
+    proc = _spawn_session_leader("sleep", "30")
+    try:
+        _, ticks = pump.process_identity(proc.pid)
+        _write_running_state(tmp_path, "hold", proc.pid, ticks + 1)
+        engine, _, _ = _make_pump(tmp_path, [_keepalive(command=["sleep", "30"])])
+
+        engine.prepare()
+
+        assert proc.poll() is None
+    finally:
+        _reap(proc)
+
+
+def test_a_predecessor_process_that_ignores_sigterm_is_killed_after_the_grace(tmp_path):
+    ready = tmp_path / "ready"
+    script = f'trap "" TERM; : > {ready}; while :; do sleep 1; done'
+    proc = _spawn_session_leader("sh", "-c", script)
+    try:
+        for _ in range(300):
+            if ready.exists():
+                break
+            time.sleep(0.05)
+        assert ready.exists()
+        _, ticks = pump.process_identity(proc.pid)
+        _write_running_state(tmp_path, "hold", proc.pid, ticks)
+        slept = []
+        engine, _, _ = _make_pump(tmp_path, [_keepalive(command=["sleep", "30"])])
+        engine.sleep = slept.append
+
+        engine.prepare()
+
+        assert proc.wait(timeout=30) == -signal.SIGKILL
+        assert sum(slept) >= pump.KILL_GRACE_SECONDS
+    finally:
+        _reap(proc)
+
+
+def test_stop_orphans_returns_the_names_it_stopped_and_skips_the_rest(tmp_path):
+    proc = _spawn_session_leader("sleep", "30")
+    try:
+        _, ticks = pump.process_identity(proc.pid)
+        orphans = {"live": (proc.pid, ticks), "gone": (proc.pid, ticks + 1)}
+
+        stopped = pump.stop_orphans(orphans)
+
+        assert stopped == ["live"]
+        assert proc.wait(timeout=30) == -signal.SIGTERM
+    finally:
+        _reap(proc)
+
+
+def test_readme_states_that_a_prior_pumps_processes_are_stopped():
+    assert "pid" in pump.README_TEXT
+    assert "still running from an earlier start of the scheduler" in pump.README_TEXT

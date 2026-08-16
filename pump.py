@@ -45,6 +45,7 @@ BACKOFF_START = 1
 BACKOFF_MAX = 300
 STABILITY_SECONDS = 60
 KILL_GRACE_SECONDS = 5
+ORPHAN_POLL_SECONDS = 0.2
 
 MAX_ENTRIES = 32
 MAX_CONCURRENT = 8
@@ -241,6 +242,8 @@ def new_record():
     return {
         "spent": False,
         "running": False,
+        "pid": None,
+        "process_start_ticks": None,
         "last_start": None,
         "last_exit": None,
         "last_exit_time": None,
@@ -407,6 +410,76 @@ def signal_process(proc, sig):
         pass
 
 
+def signal_pid(pid, sig):
+    """Signal the group of a process known only by pid, or the process alone.
+
+    The same rule as signal_process: a group the pump itself belongs to is
+    never signalled as a group.
+    """
+    try:
+        group = os.getpgid(pid)
+        if group != os.getpgrp():
+            os.killpg(group, sig)
+        else:
+            os.kill(pid, sig)
+    except OSError:
+        pass
+
+
+def process_identity(pid):
+    """(state, start_ticks) of the process at pid from /proc, or None.
+
+    start_ticks is the kernel's start time of the process in clock ticks
+    since boot. Together with the pid it names one process: a later process
+    that reuses the pid starts later.
+    """
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return None
+    try:
+        with open(f"/proc/{pid}/stat", "rb") as f:
+            raw = f.read()
+    except (OSError, ValueError):
+        return None
+    _, _, tail = raw.rpartition(b")")
+    fields = tail.split()
+    if len(fields) < 20:
+        return None
+    try:
+        return fields[0].decode("ascii"), int(fields[19])
+    except (UnicodeDecodeError, ValueError):
+        return None
+
+
+def process_alive(pid, start_ticks):
+    """True when the process named by (pid, start_ticks) exists and has not exited."""
+    identity = process_identity(pid)
+    if identity is None:
+        return False
+    state, ticks = identity
+    return ticks == start_ticks and state not in ("Z", "X")
+
+
+def stop_orphans(orphans, sleep=time.sleep):
+    """Stop the processes of a prior pump that are still alive.
+
+    orphans maps an entry name to the (pid, start_ticks) its record carried.
+    Each live one is sent SIGTERM as a group, and SIGKILL once the grace
+    period passes without it exiting. Returns the names that were signalled.
+    """
+    live = {name: pair for name, pair in orphans.items() if process_alive(*pair)}
+    stopped = list(live)
+    for pid, _ in live.values():
+        signal_pid(pid, signal.SIGTERM)
+    waited = 0.0
+    while live and waited < KILL_GRACE_SECONDS:
+        sleep(ORPHAN_POLL_SECONDS)
+        waited += ORPHAN_POLL_SECONDS
+        live = {name: pair for name, pair in live.items() if process_alive(*pair)}
+    for pid, _ in live.values():
+        signal_pid(pid, signal.SIGKILL)
+    return stopped
+
+
 README_TEXT = """this directory is read by a process scheduler. entries.json describes the
 processes it starts. README.md, state.json, and the files under log/ are
 written by the scheduler.
@@ -440,7 +513,9 @@ a run in mode once or interval is sent SIGTERM once timeout_seconds have
 passed, and SIGKILL 5 seconds after that. a run in mode keepalive is not
 stopped by elapsed time. a run whose entry is removed from entries.json, or
 whose entry has enabled false, is stopped the same way. each process leads its
-own session, so a signal reaches the processes it started as well.
+own session, so a signal reaches the processes it started as well. a process
+still running from an earlier start of the scheduler is stopped the same way
+when the scheduler starts, before its entry is considered again.
 
 an object with an unknown field, an unknown mode, a value outside its bounds, a
 name an earlier object already used, or a position past the entry limit is
@@ -449,7 +524,8 @@ cannot be read or parsed leaves the previous set of entries in place.
 
 entries.json is read every 5 seconds, and state.json is rewritten on the same
 cycle. state.json carries, for each entry, its last start, its last exit code,
-whether it is running, when it is next due, and its current restart delay,
+whether it is running, the pid and the start time in clock ticks of a running
+process, when it is next due, and its current restart delay,
 together with the rejections, the outcome of the last read, and the limits on
 the number of entries and on how many run at the same time. the times in it are
 absolute and utc.
@@ -490,6 +566,9 @@ def render_state(entries, records, rejected, status, now):
             "next_due": format_timestamp(next_due(entry, record, now)),
             "backoff_seconds": record.get("backoff", 0),
         }
+        if item["running"] and record.get("pid") is not None:
+            item["pid"] = record["pid"]
+            item["process_start_ticks"] = record.get("process_start_ticks")
         if entry["mode"] == "once":
             item["spent"] = bool(record.get("spent"))
         if "timeout_seconds" in entry:
@@ -546,6 +625,31 @@ def restore_records(document):
     return records
 
 
+def restore_processes(document):
+    """The (pid, start_ticks) of each entry a state document reported running.
+
+    Only an entry carrying both integers is returned; these are the processes
+    a prior pump may have left behind.
+    """
+    processes = {}
+    if not isinstance(document, dict):
+        return processes
+    entries = document.get("entries")
+    if not isinstance(entries, dict):
+        return processes
+    for name, item in entries.items():
+        if not isinstance(name, str) or not isinstance(item, dict):
+            continue
+        if item.get("running") is not True:
+            continue
+        pid = item.get("pid")
+        ticks = item.get("process_start_ticks")
+        if not _integer(pid, 1, 2**31) or not _integer(ticks, 0, 2**63):
+            continue
+        processes[name] = (pid, ticks)
+    return processes
+
+
 def read_state(path):
     """The state document last written, or an empty one."""
     try:
@@ -564,13 +668,14 @@ def load_records(path):
 class Pump:
     """Runs the entries of a pump directory and reports what they did."""
 
-    def __init__(self, pump_dir=None, clock=time.time, spawn=None):
+    def __init__(self, pump_dir=None, clock=time.time, spawn=None, sleep=time.sleep):
         self.dir = pump_dir if pump_dir is not None else PUMP_DIR
         self.entries_file = os.path.join(self.dir, ENTRIES_NAME)
         self.state_file = os.path.join(self.dir, STATE_NAME)
         self.readme_file = os.path.join(self.dir, README_NAME)
         self.log_dir = os.path.join(self.dir, LOG_DIR_NAME)
         self.clock = clock
+        self.sleep = sleep
         self.spawn = spawn if spawn is not None else start_process
         self.entries = []
         self.rejected = []
@@ -582,6 +687,11 @@ class Pump:
     def prepare(self):
         """Create the directories, publish the README, adopt the prior records.
 
+        A process the prior document reported running, and that is still
+        alive, was left behind by a pump that ended without stopping it. It
+        is stopped here, so the record it is restored under is true and the
+        entry is not started a second time beside it.
+
         The entries the prior document reported are held as well: until a
         readable entries file replaces them, they are what the state
         document keeps reporting.
@@ -592,6 +702,7 @@ class Pump:
         except OSError:
             pass
         document = read_state(self.state_file)
+        stop_orphans(restore_processes(document), sleep=self.sleep)
         self.records = restore_records(document)
         retained = document.get("entries")
         self.retained = retained if isinstance(retained, dict) else {}
@@ -623,6 +734,8 @@ class Pump:
                 self.runs.pop(name, None)
                 record = self.records.setdefault(name, new_record())
                 record["running"] = False
+                record["pid"] = None
+                record["process_start_ticks"] = None
                 record["last_exit"] = code
                 record["last_exit_time"] = now
                 record["terminated_at"] = None
@@ -680,6 +793,10 @@ class Pump:
                 record["backoff"] = next_backoff(record.get("backoff", 0), 0)
             return
         record["running"] = True
+        pid = getattr(proc, "pid", None)
+        identity = process_identity(pid)
+        record["pid"] = pid if isinstance(pid, int) else None
+        record["process_start_ticks"] = identity[1] if identity is not None else None
         self.runs[name] = proc
 
     def prune(self):

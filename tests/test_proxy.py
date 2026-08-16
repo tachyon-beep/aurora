@@ -434,21 +434,61 @@ def test_an_unknown_route_is_framed_and_closes_the_connection(core_server):
     assert headers.get("connection", "").lower() == "close"
 
 
-def test_sse_payloads_skips_the_terminator_and_undecodable_events():
+def test_reconstruction_skips_the_terminator_and_undecodable_events():
     chunks = [
         _event({"choices": [{"index": 0, "delta": {"content": "a"}}]}),
         "data: {not json\n\n",
         ": keep-alive comment\n\n",
         "data: [DONE]\n\n",
     ]
-    assert proxy.sse_payloads(chunks) == [{"choices": [{"index": 0, "delta": {"content": "a"}}]}]
+    completion = proxy.reconstruct_completion(chunks)
+    assert completion["choices"][0]["message"]["content"] == "a"
 
 
-def test_sse_payloads_reads_an_event_split_across_pieces():
+def test_reconstruction_reads_an_event_split_across_pieces():
     text = _event({"choices": [{"index": 0, "delta": {"content": "split"}}]})
-    assert proxy.sse_payloads([text[:12], text[12:]]) == [
-        {"choices": [{"index": 0, "delta": {"content": "split"}}]}
-    ]
+    completion = proxy.reconstruct_completion([text[:12], text[12:]])
+    assert completion["choices"][0]["message"]["content"] == "split"
+
+
+def test_reconstruction_reads_a_trailing_event_without_a_newline():
+    text = _event({"choices": [{"index": 0, "delta": {"content": "tail"}}]}).rstrip("\n")
+    completion = proxy.reconstruct_completion([text])
+    assert completion["choices"][0]["message"]["content"] == "tail"
+
+
+def test_stream_record_holds_the_completion_and_not_the_body(monkeypatch):
+    # The recorder used to hold the whole streamed body several times over
+    # while it relayed and then re-parsed it. The record is fed each piece as
+    # it passes and keeps what the deltas describe, plus a bounded prefix of
+    # the raw bytes for a body that carries no events.
+    monkeypatch.setattr(proxy, "STREAM_RETAIN_BYTES", 4096)
+    record = proxy.StreamRecord()
+    for i in range(500):
+        record.feed(_event({"choices": [{"index": 0, "delta": {"content": f"{i:03d} "}}]}).encode())
+    record.feed(b"data: [DONE]\n\n")
+    record.finish()
+
+    completion = record.completion()
+    assert completion["choices"][0]["message"]["content"] == "".join(
+        f"{i:03d} " for i in range(500)
+    )
+    assert record.raw_bytes > 4096
+    assert len(record.raw) <= 4096
+    assert record.raw_truncated is True
+    assert record.events == 500
+
+
+def test_stream_record_drops_an_oversized_line_and_resumes(monkeypatch):
+    monkeypatch.setattr(proxy, "STREAM_RETAIN_BYTES", 256)
+    record = proxy.StreamRecord()
+    record.feed(b"data: " + b"x" * 1000)
+    record.feed(b"y" * 1000 + b"\n\n")
+    record.feed(_event({"choices": [{"index": 0, "delta": {"content": "after"}}]}).encode())
+    record.finish()
+
+    assert record.completion()["choices"][0]["message"]["content"] == "after"
+    assert record.events == 1
 
 
 def test_reconstruct_completion_concatenates_content_and_reasoning():
@@ -606,9 +646,10 @@ def test_relay_chunks_frames_each_piece_and_terminates():
         def write(self, data):
             written.append(data)
 
-    body, error = proxy.relay_chunks(_Writer(), _StreamingResponse([b"ab", b"cde"]))
+    record = proxy.StreamRecord()
+    error = proxy.relay_chunks(_Writer(), _StreamingResponse([b"ab", b"cde"]), record)
     assert error is None
-    assert body == b"abcde"
+    assert record.raw == b"abcde"
     assert written == [b"2\r\nab\r\n", b"3\r\ncde\r\n", b"0\r\n\r\n"]
 
 
@@ -621,9 +662,10 @@ def test_relay_chunks_writes_no_terminator_after_a_failed_write():
                 raise BrokenPipeError("client went away")
             written.append(data)
 
-    body, error = proxy.relay_chunks(_Writer(), _StreamingResponse([b"ab", b"cde"]))
+    record = proxy.StreamRecord()
+    error = proxy.relay_chunks(_Writer(), _StreamingResponse([b"ab", b"cde"]), record)
     assert isinstance(error, BrokenPipeError)
-    assert body == b"abcde"
+    assert record.raw == b"abcde"
     assert written == [b"2\r\nab\r\n"]
 
 
@@ -834,16 +876,31 @@ def test_headers_never_reach_the_transcript_or_events(stream_factory, upstream, 
         assert "authorization" not in text.lower()
 
 
+def _record(text):
+    record = proxy.StreamRecord()
+    record.feed(text.encode("utf-8"))
+    record.finish()
+    return record
+
+
 def test_stream_response_data_reassembles_the_deltas():
     text = _event({"choices": [{"index": 0, "delta": {"content": "hi"}}]})
-    assert proxy.stream_response_data(text)["choices"][0]["message"]["content"] == "hi"
+    assert proxy.stream_response_data(_record(text))["choices"][0]["message"]["content"] == "hi"
 
 
 def test_stream_response_data_keeps_a_body_that_carried_no_events():
-    assert proxy.stream_response_data('{"error": {"message": "no"}}') == {
+    assert proxy.stream_response_data(_record('{"error": {"message": "no"}}')) == {
         "error": {"message": "no"}
     }
-    assert proxy.stream_response_data("data: {broken\n\n") == {"raw_body": "data: {broken\n\n"}
+    assert proxy.stream_response_data(_record("data: {broken\n\n")) == {
+        "raw_body": "data: {broken\n\n"
+    }
+
+
+def test_stream_response_data_notes_a_raw_body_it_could_not_keep_whole(monkeypatch):
+    monkeypatch.setattr(proxy, "STREAM_RETAIN_BYTES", 8)
+    data = proxy.stream_response_data(_record("0123456789abcdef"))
+    assert data == {"raw_body": "01234567", "raw_body_truncated": True}
 
 
 def test_an_upstream_error_event_reaches_the_transcript(
@@ -906,7 +963,8 @@ def test_a_relay_that_cannot_send_its_headers_closes_the_connection():
             raise BrokenPipeError("client went away")
 
     handler = _Broken()
-    assert handler._relay(200, [], _StreamingResponse([b"x"])) == ""
+    record = handler._relay(200, [], _StreamingResponse([b"x"]))
+    assert record.raw == b"" and record.events == 0
     assert handler.close_connection is True
 
 
@@ -983,3 +1041,36 @@ def test_a_chunked_request_body_is_refused_and_closes_the_connection(core_server
     assert headers.get("connection") == "close"
     assert b"chunked" in body.lower() or b"length" in body.lower()
     assert trailing == b""
+
+
+def test_a_request_body_above_the_cap_is_refused_and_closes_the_connection(
+    core_server, monkeypatch, upstream
+):
+    # Content-Length is the agent's to set, and the recorder read the whole
+    # body into memory before doing anything else with it. The cap keeps a
+    # single request from taking the recorder past its memory limit; the
+    # unread body is left in the socket, so the connection closes.
+    monkeypatch.setattr(proxy, "REQUEST_MAX_BYTES", 64)
+    payload = {"model": "m", "messages": [{"role": "user", "content": "x" * 200}]}
+    client = _connect(core_server)
+    try:
+        client.sendall(_raw_request(payload))
+        fp = client.makefile("rb")
+        status, headers, body = _read_message(fp)
+        trailing = fp.read()
+    finally:
+        client.close()
+
+    assert status.startswith("HTTP/1.1 413")
+    assert headers.get("connection") == "close"
+    assert b"64" in body
+    assert trailing == b""
+    assert "data" not in upstream["seen"]
+
+
+def test_a_request_body_at_the_cap_is_forwarded(core_server, monkeypatch, upstream):
+    monkeypatch.setattr(proxy, "REQUEST_MAX_BYTES", 4096)
+    payload = {"model": "m", "messages": [{"role": "user", "content": "x" * 100}]}
+    response = _post(core_server, payload)
+    assert response.status_code == 200
+    assert json.loads(upstream["seen"]["data"]) == payload
