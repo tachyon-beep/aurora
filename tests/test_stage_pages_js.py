@@ -1558,3 +1558,39 @@ def test_the_eye_gates_on_sense_and_caches_its_src(tmp_path):
     assert out["src_sets_after_new"] == 2
     assert out["caption_new"] == "THE EYE · feed 2 · 2s ago"
     assert out["hidden_again"] is True
+
+
+def _tiers_block():
+    return _block("/* ---------- tiers ---------- */", "/* ---------- lanes ---------- */")
+
+
+TIERS_HARNESS = """
+var root = { attrs: {}, setAttribute: function (k, v) { this.attrs[k] = v; } };
+var stage = { style: {} }, body = { style: {} };
+global.document = { documentElement: root, body: body };
+global.window = { innerWidth: 1920, addEventListener: function () {} };
+global.$ = function (id) { return id === "stage" ? stage : null; };
+
+__BLOCK__
+
+var out = {};
+function at(w) { global.window.innerWidth = w; return fitStage(); }
+out.t1920 = at(1920); out.s1920 = stage.style.transform; out.h1920 = body.style.height;
+out.t2560 = at(2560); out.s2560 = stage.style.transform;
+out.t1440 = at(1440); out.s1440 = stage.style.transform; out.h1440 = body.style.height;
+out.t1200 = at(1200); out.s1200 = stage.style.transform;
+out.t1199 = at(1199); out.s1199 = stage.style.transform; out.h1199 = body.style.height;
+out.t390 = at(390); out.attr = root.attrs["data-tier"];
+process.stdout.write(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_tier_handler_scales_only_between_1200_and_1919(tmp_path):
+    out = _run(TIERS_HARNESS.replace("__BLOCK__", _tiers_block()), tmp_path)
+    assert (out["t1920"], out["s1920"], out["h1920"]) == ("canvas", "", "")
+    assert (out["t2560"], out["s2560"]) == ("canvas", "")
+    assert out["t1440"] == "scaled" and out["s1440"] == "scale(0.7500)" and out["h1440"] == "810px"
+    assert out["t1200"] == "scaled" and out["s1200"] == "scale(0.6250)"
+    assert (out["t1199"], out["s1199"], out["h1199"]) == ("flow", "", "")
+    assert out["t390"] == "flow" and out["attr"] == "flow"

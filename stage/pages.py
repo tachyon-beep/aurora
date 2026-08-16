@@ -591,6 +591,55 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .blk-think.open .clamp { border-left: 3px solid var(--think); }
 .blk-say.open .clamp { border-left: 3px solid var(--say); }
 
+/* ---------- layout tiers ---------- */
+/* canvas (>=1920): the 1920x1080 grid above, pixel for pixel — what OBS loads.
+   scaled (1200-1919): the same canvas scaled to the viewport width by
+   fitStage(), so a laptop sees the whole broadcast composition.
+   flow (<1200): a single fluid column that scrolls; media queries only. */
+@media (max-width: 1919px) {
+  html, body { width: auto; height: auto; overflow: auto; }
+  #stage { width: 1920px; transform-origin: 0 0; }
+}
+@media (max-width: 1199px) {
+  #stage { width: auto; height: auto; transform: none !important; display: flex;
+    flex-direction: column; gap: 14px; padding: 12px; }
+  #masthead { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; order: 0; }
+  #mh-a { flex-wrap: wrap; gap: 10px 14px; }
+  #wordmark { font-size: 22px; line-height: 28px; letter-spacing: .14em; }
+  .vrule { display: none; }
+  #premise { order: 3; width: 100%; max-width: none; font-size: 14px; line-height: 20px; }
+  #mh-b { flex-wrap: wrap; gap: 8px 18px; }
+  #provenance { white-space: normal; flex: 1 1 100%; margin-left: 0; }
+  #rail { display: contents; }
+  #lineage { order: 1; flex: none; gap: 8px; }
+  #chart { height: 84px; }
+  #spot { flex: none; }
+  #monologue { order: 2; height: 70dvh; min-height: 420px; }
+  #now { order: 3; min-height: 150px; }
+  #ribbon { order: 4; display: grid; grid-template-columns: 1fr; gap: 14px; }
+  #ribbon .panel { min-height: 136px; }
+  #eye { display: none; }
+  #coldstart { padding-left: 12px; }
+  .turn { grid-template-columns: 1fr; padding: 10px 0 12px; }
+  .turn.is-edit, .turn.is-error, .turn.is-end { grid-template-columns: 1fr; padding-left: 10px; }
+  .gutter { grid-column: 1; text-align: left; display: flex; flex-wrap: wrap; gap: 0 10px;
+    margin-bottom: 4px; }
+  .gutter .g-mark { display: inline; }
+  .col { grid-column: 1; }
+  .clamp.think { font-size: 17px; line-height: 26px; }
+  .blk-think::before { left: -8px; }
+  .blk-think.tail .clamp { max-height: 364px; }
+  .clamp.say { font-size: 16px; line-height: 24px; }
+  .tool { font-size: 13px; line-height: 19px; }
+  #pulse-spark { width: 140px; }
+  #return-live { min-height: 44px; padding: 10px 14px; }
+}
+@media (min-width: 720px) and (max-width: 1199px) {
+  #ribbon { grid-template-columns: 1fr 1.6fr 1fr; }
+}
+@media (max-width: 719px) {
+  #provenance, #repo { display: none; }
+}
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
@@ -2014,6 +2063,30 @@ function tick() {
   if ((st.turns_this_life || 0) === 0) renderColdStart();
 }
 
+/* ---------- tiers ---------- */
+/* Three layouts from one page: the 1920x1080 canvas OBS loads, the same
+   canvas scaled to a laptop, and a single scrolling column for a phone. The
+   CSS media queries carry the flow tier; this handler only applies the scale
+   in between and stamps the tier for anything that needs to know. */
+var CANVAS_W = 1920, CANVAS_H = 1080, FLOW_MAX = 1199;
+function tierFor(width) {
+  return width >= CANVAS_W ? "canvas" : width > FLOW_MAX ? "scaled" : "flow";
+}
+function fitStage() {
+  var w = window.innerWidth, tier = tierFor(w), stage = $("stage");
+  document.documentElement.setAttribute("data-tier", tier);
+  if (tier === "scaled") {
+    var s = w / CANVAS_W;
+    stage.style.transform = "scale(" + s.toFixed(4) + ")";
+    document.body.style.height = Math.round(CANVAS_H * s) + "px";
+  } else {
+    stage.style.transform = "";
+    document.body.style.height = "";
+  }
+  return tier;
+}
+window.addEventListener("resize", fitStage);
+
 /* ---------- lanes ---------- */
 function laneCount(n) {
   n = Number(n) || 0;
@@ -2130,6 +2203,7 @@ window.addEventListener("load", function () {
   for (var i = 0; i < list.length; i++) list[i].__measured = false;
   requestAnimationFrame(measureTruncation);
 });
+fitStage();
 poll();
 setInterval(poll, 2000);
 setInterval(tick, 250);

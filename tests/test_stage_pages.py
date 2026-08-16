@@ -799,3 +799,36 @@ def test_console_load_restores_focus_into_the_rebuilt_tree():
     body = CONSOLE[start:end]
     assert "document.activeElement" in body, body
     assert re.search(r"hadFocus\b.*\.focus\(\)", body, re.S), body
+
+
+def test_the_page_has_three_layout_tiers():
+    css = HTML[HTML.index("<style>") : HTML.index("</style>")]
+    assert "@media (max-width: 1919px)" in css
+    assert "@media (max-width: 1199px)" in css
+    flow = css[css.index("@media (max-width: 1199px)") :]
+    assert "#rail { display: contents; }" in flow
+    for rule in (
+        "#lineage { order: 1;",
+        "#monologue { order: 2;",
+        "#now { order: 3;",
+        "#ribbon { order: 4;",
+    ):
+        assert rule in flow, rule
+    assert "#eye { display: none; }" in flow
+    assert "70dvh" in flow
+    assert "min-height: 44px" in flow, "the return-to-live chip must be a touch target"
+
+
+def test_the_flow_tier_collapses_the_turn_gutter_into_a_row():
+    css = HTML[HTML.index("@media (max-width: 1199px)") : HTML.index("</style>")]
+    assert ".turn { grid-template-columns: 1fr;" in css
+    assert ".col { grid-column: 1; }" in css
+    assert ".gutter { grid-column: 1; text-align: left;" in css
+
+
+def test_the_canvas_tier_alone_hides_overflow():
+    css = HTML[HTML.index("<style>") : HTML.index("</style>")]
+    base = css[: css.index("@media (max-width: 1919px)")]
+    assert "html, body { width: 1920px; height: 1080px;" in base
+    scaled = css[css.index("@media (max-width: 1919px)") : css.index("@media (max-width: 1199px)")]
+    assert "html, body { width: auto; height: auto; overflow: auto; }" in scaled
