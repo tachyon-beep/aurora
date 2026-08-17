@@ -381,6 +381,7 @@ BROADCAST_SMALL_TYPE = (
     ".chip b",
     ".divider span",
     "#repo",
+    "#to-blog",
     "#to-telemetry",
 )
 
@@ -871,11 +872,14 @@ def test_bar_labels_overflow_their_cell_rather_than_clip():
     assert "overflow: hidden" not in block
 
 
-def test_the_masthead_links_to_the_telemetry_panel():
-    """The one link on the broadcast page: internal, to the at-home panel. OBS
-    renders it as text; a phone or laptop viewer can follow it."""
+def test_the_masthead_links_left_to_the_blog_and_right_to_the_telemetry_panel():
+    """The two links on the broadcast page, both internal: the blog at the left
+    end of the masthead's second row, the at-home panel at its right end. OBS
+    renders them as text; a phone or laptop viewer can follow them."""
+    assert '<a id="to-blog" href="/blog">← blog</a>' in HTML
     assert '<a id="to-telemetry" href="/telemetry">telemetry →</a>' in HTML
-    assert HTML.count("<a ") == 1
+    assert HTML.count("<a ") == 2
+    assert HTML.index('id="to-blog"') < HTML.index('class="chip c-think"')
 
 
 def test_the_lineage_foot_never_wraps():

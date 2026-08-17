@@ -49,6 +49,7 @@ DIODE_VERBS = {
     "fetchlinks": "followed a link",
     "fetchhttp": "fetched a page",
     "publish": "spoke to the outside",
+    "post": "posted to the blog",
     "speak": "put a voice to it",
     "help": "listed its commands",
     "later": "put a command off",

@@ -17,6 +17,7 @@ STATE_FILE = os.path.join(DIODE_DIR, "state.json")
 HELP_FILE = os.path.join(DIODE_DIR, "HELP.md")
 OUTPUT_DIR = os.path.join(DIODE_DIR, "output")
 PUBLISHED_DIR = os.path.join(DIODE_DIR, "published")
+BLOG_DIR = os.path.join(DIODE_DIR, "blog")
 SPOKEN_DIR = os.path.join(DIODE_DIR, "spoken")
 PENDING_FILE = os.path.join(DIODE_DIR, "pending.json")
 BLIND_TEXT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "blind_eternities.txt")
@@ -36,6 +37,7 @@ FEED_ITEM_CAP = 20
 FEED_TITLE_CAP = 300
 FEED_SUMMARY_CAP = 500
 PUBLISH_TEXT_CAP = 4000
+POST_TEXT_CAP = 20_000
 
 ECHO_DELAY_MAX = 604800
 ECHO_TEXT_CAP = 4000
@@ -370,6 +372,11 @@ COMMANDS = {
         "gate": lambda v: bool(v.get("enable_publishing")),
         "help": "publish <text> -> make text available outside the container",
     },
+    "post": {
+        "gate": lambda v: bool(v.get("enable_publishing")),
+        "help": "post <markdown> -> make a markdown article available outside the container; "
+        "mermaid code fences are rendered as diagrams",
+    },
     "speak": {
         "gate": _speech_gate,
         "help": "speak <text> -> make text available outside the container as audio",
@@ -507,7 +514,7 @@ def write_help(variables):
     lines.append("  enable_papers: true, makes the arxiv command available")
     lines.append("  enable_news: true, makes the news headline commands available")
     lines.append("  enable_entropy: true, makes the entropy command available")
-    lines.append("  enable_publishing: true, makes the publish command available")
+    lines.append("  enable_publishing: true, makes the publish and post commands available")
     lines.append("  enable_scheduling: true, makes the delayed command available")
     lines.append("  enable_clone: true, makes the repository fetch command available")
     lines.append("  enable_instruments: true, makes the instrument commands available")
@@ -525,11 +532,16 @@ def write_state(variables, recent_fetches, budget=None, pending=0):
         output_count = len(os.listdir(OUTPUT_DIR))
     except OSError:
         output_count = 0
+    try:
+        post_count = len([n for n in os.listdir(BLOG_DIR) if n.endswith(".md")])
+    except OSError:
+        post_count = 0
     state = {
         "variables": variables,
         "available_commands": available_commands(variables),
         "recent_fetches": recent_fetches,
         "output_count": output_count,
+        "post_count": post_count,
     }
     if budget is not None:
         state["budget"] = budget
@@ -567,6 +579,16 @@ def write_published(text):
     os.makedirs(PUBLISHED_DIR, exist_ok=True)
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     path = os.path.join(PUBLISHED_DIR, f"{stamp}.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return path
+
+
+def write_post(text):
+    """Write markdown text to BLOG_DIR under a timestamped name, return the path."""
+    os.makedirs(BLOG_DIR, exist_ok=True)
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+    path = os.path.join(BLOG_DIR, f"{stamp}.md")
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     return path
@@ -1147,6 +1169,12 @@ def handle_command(command, variables, fetch_history):
             return "usage: publish <text>", fetch_history
         path = write_published(arg[:PUBLISH_TEXT_CAP])
         return f"recorded as {os.path.basename(path)}", fetch_history
+
+    if name == "post":
+        if not arg:
+            return "usage: post <markdown>", fetch_history
+        path = write_post(arg[:POST_TEXT_CAP])
+        return f"posted to blog/{os.path.basename(path)}", fetch_history
 
     if name == "speak":
         if not arg:

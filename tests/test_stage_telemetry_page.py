@@ -144,7 +144,10 @@ def test_motion_and_targets_respect_reduced_motion_and_the_narrow_tier():
     assert "#record-table thead { display: none; }" in narrow
     assert ".disc { min-height: 44px; }" in narrow
     assert "min-height: 56px" in STYLE  # the strip
-    assert "#to-stream { display: inline-flex; align-items: center; min-height: 44px" in STYLE
+    assert (
+        "#to-stream, #to-blog { display: inline-flex; align-items: center; min-height: 44px"
+        in STYLE
+    )
     # Nothing in the narrow tier lowers a target below 44 px.
     for rule in re.findall(r"[^{}]+\{[^}]*min-height:\s*(\d+)px[^}]*\}", narrow):
         assert int(rule) >= 44, narrow
@@ -168,6 +171,10 @@ def test_the_route_is_wired_on_the_stream_handler():
     handler = source[source.index("class StreamHandler") :]
     assert 'route == "/telemetry"' in handler
     assert "telemetry_page.TELEMETRY_PAGE_HTML" in handler
+
+
+def test_telemetry_strip_links_to_the_blog():
+    assert '<a id="to-blog" href="/blog">the blog →</a>' in telemetry_page.TELEMETRY_PAGE_HTML
 
 
 def test_pause_stops_the_clock_and_the_seam_and_units_are_structural():

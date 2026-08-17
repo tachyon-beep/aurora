@@ -12,7 +12,7 @@ import json
 
 from test_stage_server import call_stream_route
 
-from stage import commentary, data, llm, server, summary
+from stage import blog, commentary, data, llm, server, summary
 
 SECRET = "OUTSIDE_THE_MOUNT_c0ffee"
 
@@ -263,3 +263,17 @@ def test_snapshot_model_is_capped(tmp_path, monkeypatch):
     snapshot = server.stream_snapshot()
 
     assert len(snapshot["stats"]["model"]) <= server.MODEL_CAP
+
+
+def test_blog_posts_do_not_follow_a_symlink(tmp_path):
+    _work, diode, secret = _roots(tmp_path)
+    (diode / "blog").mkdir()
+    (diode / "blog" / "20260817_120000_000000.md").write_text("# fine", encoding="utf-8")
+    (diode / "blog" / "20260817_120001_000000.md").symlink_to(secret)
+
+    names, _ = blog.list_posts(str(diode))
+    rendered = [blog.read_post(str(diode), n) for n in names]
+
+    assert names == ["20260817_120000_000000"]
+    assert SECRET not in json.dumps(rendered)
+    assert blog.read_post(str(diode), "20260817_120001_000000") is None
