@@ -9,6 +9,7 @@ seed from the same lists the recorder reads removes that class of mismatch.
 
 import json
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -24,27 +25,52 @@ ALLOW_VISION = "STREAM_MODEL_ALLOW_VISION"
 # order and rejects everything past it.
 MAX_STREAMS = 8
 
+# A declared budget only ever lowers: effective_allowance takes the minimum of
+# it and the operator ceiling, and the entrypoint seeds the console once and
+# never again. A seeded value tracking the current ceiling would therefore
+# outlive it and cap a later, higher ceiling; a value at or above the highest
+# ceiling the template recommends leaves the ceiling in charge.
 TOKEN_BUDGET = 2000000
 BUDGET = 1200
 MAX_TOKENS = 32768
 
+_QUOTED = re.compile(r"\A(?:\"([^\"]*)\"|'([^']*)')")
+_INLINE_COMMENT = re.compile(r"\s#")
+
+
+def _value_text(raw: str) -> str:
+    """One assignment's value, read the way docker compose reads it.
+
+    A matched pair of surrounding quotes is stripped and anything past the
+    closing quote is a comment. An unquoted value ends at whitespace followed
+    by a hash, which compose also treats as a comment: keeping it would put the
+    comment text inside a model identifier the recorder does not permit.
+    """
+    value = raw.strip()
+    quoted = _QUOTED.match(value)
+    if quoted:
+        return quoted.group(1) if quoted.group(1) is not None else quoted.group(2)
+    return _INLINE_COMMENT.split(value, maxsplit=1)[0].strip()
+
 
 def env_value(key: str, path: Path) -> str | None:
-    """The value of an active assignment in an environment file.
+    """The value of the last active assignment of key in an environment file.
 
     A commented-out line is not an assignment: the stack does not carry it, so
-    reading one would declare models the recorder does not permit. A matched
-    pair of surrounding quotes is stripped, as docker compose strips it before
-    the recorder sees the value.
+    reading one would declare models the recorder does not permit. docker
+    compose builds a mapping from the file, so a key assigned more than once
+    carries its last value rather than its first, and an "export " prefix and
+    surrounding whitespace are not part of the name.
     """
     prefix = key + "="
-    for line in path.read_text(encoding="utf-8").splitlines():
+    value = None
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("export "):
+            line = line[len("export ") :].lstrip()
         if line.startswith(prefix):
-            value = line[len(prefix) :].strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            return value
-    return None
+            value = _value_text(line[len(prefix) :])
+    return value
 
 
 def split_models(raw: str | None) -> list[str]:
@@ -118,10 +144,12 @@ def build(dest: Path | None = None, source: Path | None = None) -> dict:
         ),
     }
     text = json.dumps(seed, indent=2) + "\n"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     handle, temporary = tempfile.mkstemp(dir=str(dest.parent), prefix=dest.name, suffix=".tmp")
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as f:
             f.write(text)
+        os.chmod(temporary, 0o644)
         os.replace(temporary, dest)
     except BaseException:
         try:

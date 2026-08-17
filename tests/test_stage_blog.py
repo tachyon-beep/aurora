@@ -170,6 +170,23 @@ def test_table_without_separator_is_a_paragraph():
     assert blog.render_markdown("| a | b |\n| c | d |") == "<p>| a | b |\n| c | d |</p>"
 
 
+def test_a_table_interrupts_a_paragraph():
+    """A table is a block start, so a header row must end the paragraph above it
+    rather than being swallowed into it as text."""
+    out = blog.render_markdown("intro\n| h1 | h2 |\n| -- | -- |\n| a | b |")
+    assert out.startswith("<p>intro</p>")
+    assert "<table>" in out
+
+
+def test_a_rule_under_prose_holding_a_pipe_is_not_a_table():
+    """GFM matches the delimiter row's cell count against the header's. Without
+    that check any line carrying a pipe followed by a rule becomes a table, and
+    a table interrupting a paragraph makes that reachable from ordinary text."""
+    assert blog.render_markdown("weighed a | b\n---\nrest") == (
+        "<p>weighed a | b</p>\n<hr>\n<p>rest</p>"
+    )
+
+
 def test_crlf_and_blank_lines_are_tolerated():
     assert blog.render_markdown("a\r\n\r\n\r\nb\r\n") == "<p>a</p>\n<p>b</p>"
     assert blog.render_markdown("") == ""

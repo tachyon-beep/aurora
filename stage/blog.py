@@ -96,16 +96,6 @@ def _is_block_start(line):
     )
 
 
-def _table_at(lines, i):
-    """True when lines[i] is a table header row and lines[i + 1] its delimiter row."""
-    return bool(
-        "|" in lines[i]
-        and i + 1 < len(lines)
-        and _TABLE_SEP.match(lines[i + 1])
-        and "-" in lines[i + 1]
-    )
-
-
 def _split_row(line):
     row = line.strip()
     if row.startswith("|"):
@@ -113,6 +103,22 @@ def _split_row(line):
     if row.endswith("|") and not row.endswith("\\|"):
         row = row[:-1]
     return [c.replace("\\|", "|").strip() for c in re.split(r"(?<!\\)\|", row)]
+
+
+def _table_at(lines, i):
+    """True when lines[i] is a table header row and lines[i + 1] its delimiter row.
+
+    The delimiter row must carry as many cells as the header, as GFM requires.
+    Without that a line of dashes under any prose holding a pipe reads as a
+    table, and since a table now interrupts a paragraph that is reachable from
+    ordinary text rather than only from a block start.
+    """
+    if "|" not in lines[i] or i + 1 >= len(lines):
+        return False
+    separator = lines[i + 1]
+    if not _TABLE_SEP.match(separator) or "-" not in separator:
+        return False
+    return len(_split_row(separator)) == len(_split_row(lines[i]))
 
 
 def _render_table(lines):
@@ -326,11 +332,14 @@ def _slug(name):
     A stem the sanitiser leaves untouched is used as it stands. Any other stem is
     truncated to leave room for a digest of the full name, so two files whose
     names differ only in punctuation or past the cap do not share an element id.
+    The digest is taken over surrogatepass bytes: a name carrying the surrogates
+    os.listdir produces for undecodable bytes would otherwise digest to the same
+    replacement characters as a name that holds those characters literally.
     """
     cleaned = re.sub(r"[^A-Za-z0-9_-]", "-", name)[:SLUG_MAX]
     if cleaned == name:
         return cleaned
-    digest = hashlib.sha256(name.encode("utf-8", "replace")).hexdigest()[:8]
+    digest = hashlib.sha256(name.encode("utf-8", "surrogatepass")).hexdigest()[:8]
     return f"{cleaned[: SLUG_MAX - len(digest) - 1]}-{digest}"
 
 

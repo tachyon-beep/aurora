@@ -61,8 +61,14 @@ def _generate(tmp_path, text, vision):
 
 @pytest.fixture
 def shipped(tmp_path):
-    """The seed the shipped .env.example produces, with its path on disk."""
-    return _generate(tmp_path, _example_value(ALLOW_KEYS[0]), _example_value(ALLOW_KEYS[1]))
+    """The seed the shipped .env.example produces, with its path on disk.
+
+    Generated from that file itself rather than from a copy carrying only the
+    two allow lists, so it stays the shipped seed whatever else the generator
+    reads next.
+    """
+    dest = tmp_path / "llm_console_seed.json"
+    return build_console_seed.build(dest=dest, source=EXAMPLE), dest
 
 
 def _stream_env(monkeypatch, text, vision):
@@ -327,6 +333,8 @@ def test_prepare_host_generates_the_seed():
 def test_seed_is_not_tracked_in_the_repository():
     """A tracked seed is the drift this generator removes: it would be committed
     against one operator's allow lists and read as current by the next."""
+    if not (ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
     tracked = subprocess.run(
         ["git", "ls-files", "llm_console_seed.json"],
         cwd=ROOT,
@@ -336,6 +344,73 @@ def test_seed_is_not_tracked_in_the_repository():
     )
 
     assert tracked.stdout.strip() == ""
+
+
+def _generated_seed():
+    """The seed on disk and the environment file it was generated from.
+
+    Every other test builds a seed in a temporary directory from .env.example,
+    which cannot see the file the image build actually copies: that one is
+    generated from the operator's own .env. A test that can only see the shipped
+    default cannot protect the deployment that is running.
+    """
+    path = build_console_seed.DEFAULT_DEST
+    if not path.exists():
+        pytest.skip("seed not generated; run scripts/prepare_host.sh")
+    return path, build_console_seed.source_path(ROOT)
+
+
+def test_generated_seed_on_disk_is_accepted_under_the_operator_allow_lists(monkeypatch):
+    """The seed the image copies must bind a socket per permitted model on the
+    operator's own lists, not only on the shipped ones."""
+    path, source = _generated_seed()
+    _stream_env(
+        monkeypatch,
+        build_console_seed.env_value(ALLOW_KEYS[0], source) or "",
+        build_console_seed.env_value(ALLOW_KEYS[1], source) or "",
+    )
+
+    declarations, enabled, error = rs.load_console(str(path))
+    accepted, rejected = rs.evaluate_console(declarations, enabled)
+
+    assert error is None
+    assert enabled is True
+    assert rejected == {}
+    assert set(accepted) == set(declarations)
+
+
+def test_generator_reads_the_last_assignment_of_a_key(tmp_path):
+    """docker compose builds a mapping from the file, so a key assigned twice
+    carries its last value. Reading the first would seed models the recorder
+    does not permit."""
+    source = tmp_path / ".env"
+    source.write_text(f"{ALLOW_KEYS[0]}=vendor/old\n{ALLOW_KEYS[0]}=vendor/new\n", encoding="utf-8")
+
+    seed = build_console_seed.build(dest=tmp_path / "seed.json", source=source)
+
+    assert [d["model"] for d in seed["streams"].values()] == ["vendor/new"]
+
+
+def test_generator_drops_an_inline_comment_and_an_export_prefix(tmp_path):
+    """compose treats whitespace followed by a hash as a comment and does not
+    read "export " as part of the name, so keeping either would put comment text
+    inside a model identifier or lose the assignment entirely."""
+    source = tmp_path / ".env"
+    source.write_text(
+        f"export {ALLOW_KEYS[0]}=vendor/one,vendor/two  # two models\n", encoding="utf-8"
+    )
+
+    seed = build_console_seed.build(dest=tmp_path / "seed.json", source=source)
+
+    assert [d["model"] for d in seed["streams"].values()] == ["vendor/one", "vendor/two"]
+
+
+def test_generated_seed_is_world_readable(tmp_path):
+    """The image COPY preserves the mode, and the entrypoint's cp carries it to
+    /llm/console/console.json, which a separate container reads."""
+    _, dest = _generate(tmp_path, "vendor/one", "")
+
+    assert dest.stat().st_mode & 0o044 == 0o044
 
 
 def test_seed_is_the_console_the_recorder_reads():

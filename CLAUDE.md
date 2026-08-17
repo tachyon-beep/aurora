@@ -232,9 +232,12 @@ are on the image allow-list alongside `chassis.py`.
   `scripts/prepare_host.sh`; a hand-edit to either is lost on the next run. The seed is built by
   `scripts/build_console_seed.py` from `STREAM_MODEL_ALLOW_TEXT`/`STREAM_MODEL_ALLOW_VISION` in
   `.env` (falling back to `.env.example`), one ordinally named stream per permitted model, so the
-  seed cannot drift from the lists the recorder enforces. Changing an allow list means rerunning
-  `prepare_host.sh` and `docker compose build`; the entrypoint seeds `/llm/console/console.json`
-  only when it is **absent**, so an existing console volume keeps whatever it already has.
+  seed cannot drift from the lists the recorder enforces. Per-stream budgets stay fixed and at or
+  above the operator ceilings the template recommends: a declared budget only ever lowers, and the
+  entrypoint seeds the console once, so a seeded value tracking today's ceiling would outlive it
+  and cap a later, higher one. Changing an allow list means rerunning `prepare_host.sh` and
+  `docker compose build`; the entrypoint seeds `/llm/console/console.json` only when it is
+  **absent**, so an existing console volume keeps whatever it already has.
 - Agent-image packages live in `requirements-agent.txt`; `scripts/build_garden.py` generates the
   garden runtime inventory from that manifest. Keep the approved set within 100 MiB of the
   pre-change image built on the same host. Do not add ML runtimes, local models, browser engines,

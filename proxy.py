@@ -708,7 +708,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             rotate_if_needed(TRANSCRIPT_FILE)
 
         plain_log_lines = []
-        timestamp = entry.get("timestamp", utc_timestamp())
+        timestamp = entry["timestamp"]
         plain_log_lines.append("=" * 80)
         plain_log_lines.append(f"TRANSACTION | {timestamp} | Model: {request_data.get('model')}")
         plain_log_lines.append("=" * 80)

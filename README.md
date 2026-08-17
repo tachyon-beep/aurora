@@ -165,8 +165,10 @@ docker compose up --build
 ```
 
 Preparation creates and mounts the preallocated 5 GiB `/build` image, creates the writable sense
-bind source, builds any missing offline Rust/Common Lisp/model assets, and generates the garden.
-Complete vendor assets are retained on later runs.
+bind source, builds any missing offline Rust/Common Lisp/model assets, and generates the garden
+and the llm console seed. Complete vendor assets are retained on later runs. The seed declares one
+stream per model named in `STREAM_MODEL_ALLOW_TEXT`/`STREAM_MODEL_ALLOW_VISION`, so changing an
+allow list means rerunning preparation and rebuilding the image.
 
 Documents placed in the repository's `books/` directory (gitignored; PDFs or anything else) are
 copied into the agent image at `/books`, read-only, on the next `docker compose build`.
@@ -251,8 +253,9 @@ internet for OBS or viewers, run a Cloudflare Tunnel pointing at `http://localho
 | `viewer.py` / `Dockerfile.viewer` | The live transcript viewer (read-only, host-loopback). |
 | `stage/` / `Dockerfile.stage` | The stream page (OBS browser source) and the token-gated operator console with a container browser. |
 | `Dockerfile` / `entrypoint.sh` / `docker-compose.yml` | The harness image and topology. |
-| `scripts/prepare_host.sh` | Provisions required bind mounts and offline vendor assets, then builds the garden. |
+| `scripts/prepare_host.sh` | Provisions required bind mounts and offline vendor assets, then builds the garden and the llm console seed. |
 | `scripts/build_garden.py` / `requirements-agent.txt` | Builds the two-document read-only garden and defines the lean package set installed in the harness image. |
+| `scripts/build_console_seed.py` | Builds the default llm console from the operator's stream allow lists and ceilings. |
 | `scripts/verify_container.sh` | Verifies containment invariants against a running stack. |
 | `site/` | The project landing page, deployed to GitHub Pages by `.github/workflows/pages.yml`. |
 | `tests/` | Test suite (not shipped into any image). |
