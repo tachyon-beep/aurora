@@ -1,3 +1,6 @@
+import json as _json
+import os as _os
+
 import pytest
 
 import video
@@ -254,3 +257,90 @@ def test_rate_limited_message_omits_the_wait_when_the_history_is_empty():
     assert "20" in text
     assert "still" in text
     assert "next available" not in text
+
+
+# console cycle
+
+
+@pytest.fixture
+def volume(tmp_path, monkeypatch):
+    """A /video volume rooted in tmp_path, with the module's paths pointed at it."""
+    monkeypatch.setattr(video, "VIDEO_DIR", str(tmp_path))
+    monkeypatch.setattr(video, "CONSOLE_FILE", str(tmp_path / "console.json"))
+    monkeypatch.setattr(video, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(video, "HELP_FILE", str(tmp_path / "HELP.md"))
+    monkeypatch.setattr(video, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(video, "STILLS_DIR", str(tmp_path / "stills"))
+    video.ensure_dirs()
+    return tmp_path
+
+
+def test_load_console_reads_commands_and_variables(volume):
+    (volume / "console.json").write_text(
+        _json.dumps({"commands": ["search tide pools"], "variables": {"enable_frames": True}})
+    )
+    commands, variables = video.load_console()
+    assert commands == ["search tide pools"]
+    assert variables == {"enable_frames": True}
+
+
+def test_load_console_tolerates_a_missing_file(volume):
+    assert video.load_console() == ([], {})
+
+
+def test_load_console_tolerates_malformed_json(volume):
+    (volume / "console.json").write_text("{not json")
+    assert video.load_console() == ([], {})
+
+
+def test_load_console_tolerates_wrong_types(volume):
+    (volume / "console.json").write_text(_json.dumps({"commands": "no", "variables": 7}))
+    assert video.load_console() == ([], {})
+
+
+def test_consume_batch_clears_commands_and_keeps_variables(volume):
+    (volume / "console.json").write_text(
+        _json.dumps({"commands": ["search x"], "variables": {"text_budget": 5}})
+    )
+    video.consume_batch()
+    data = _json.loads((volume / "console.json").read_text())
+    assert data["commands"] == []
+    assert data["variables"] == {"text_budget": 5}
+
+
+def test_write_output_names_the_command_and_returns_the_path(volume):
+    path = video.write_output("search tide pools", "one line")
+    assert _os.path.dirname(path) == str(volume / "output")
+    assert "search" in _os.path.basename(path)
+    assert open(path, encoding="utf-8").read() == "one line"
+
+
+def test_write_output_bounds_the_filename(volume):
+    path = video.write_output("search " + "a" * 500, "x")
+    assert len(_os.path.basename(path).encode("utf-8")) <= video.OUTPUT_NAME_MAX_BYTES
+
+
+# pruning
+
+
+def test_prune_tree_keeps_the_newest(volume):
+    stills = volume / "stills"
+    for i in range(5):
+        f = stills / f"frame{i}.jpg"
+        f.write_bytes(b"x")
+        _os.utime(f, (1000 + i, 1000 + i))
+    video.prune_tree(str(stills), keep=2, suffix=".jpg")
+    remaining = sorted(p.name for p in stills.iterdir())
+    assert remaining == ["frame3.jpg", "frame4.jpg"]
+
+
+def test_prune_tree_ignores_other_suffixes(volume):
+    stills = volume / "stills"
+    (stills / "a.jpg").write_bytes(b"x")
+    (stills / "keep.txt").write_text("x")
+    video.prune_tree(str(stills), keep=0, suffix=".jpg")
+    assert [p.name for p in stills.iterdir()] == ["keep.txt"]
+
+
+def test_prune_tree_tolerates_a_missing_directory(volume):
+    video.prune_tree(str(volume / "absent"), keep=1, suffix=".jpg")
