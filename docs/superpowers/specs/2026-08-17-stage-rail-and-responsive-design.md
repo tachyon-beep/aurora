@@ -91,7 +91,9 @@ One panel, top of the rail, height 536 px at 1080p. From top to bottom:
    existing `slide` entrance.
 5. **Foot** (16 px): the existing record-book rotation (`by their own notes, 14 of 14
    chose to die` / `longest life: incarnation 12 · 15m` / `N earlier lives not shown`)
-   on the existing 20 s cadence.
+   on the existing 20 s cadence. Amended 2026-08-17 by
+   `2026-08-17-life-census-and-notable-moments-design.md`: achievement nominations join
+   the rotation, newest first, at most three, bylined `— the stage`, only when one exists.
 
 The state strip (`● quiet · 4m 32s`) is removed from the rail: the masthead's state
 cluster is the one home for that fact.

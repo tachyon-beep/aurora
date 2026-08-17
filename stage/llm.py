@@ -215,8 +215,20 @@ def _parse_reply(raw, max_output_chars):
     return clean(message.get("content"), max_output_chars) or None
 
 
-def chat(system, user, max_tokens, temperature, model=None, max_output_chars=MAX_OUTPUT_CHARS):
-    """One chat completion. The cleaned reply text, or None on any failure."""
+def chat(
+    system,
+    user,
+    max_tokens,
+    temperature,
+    model=None,
+    max_output_chars=MAX_OUTPUT_CHARS,
+    timeout=TIMEOUT_SECONDS,
+):
+    """One chat completion. The cleaned reply text, or None on any failure.
+
+    timeout bounds the whole exchange; a caller sending a long prompt for a
+    long answer passes a larger one than the default.
+    """
     key = api_key()
     if not key:
         return None
@@ -233,7 +245,7 @@ def chat(system, user, max_tokens, temperature, model=None, max_output_chars=MAX
         method="POST",
     )
     try:
-        with _send(request, TIMEOUT_SECONDS) as response:
+        with _send(request, timeout) as response:
             if getattr(response, "status", 200) != 200:
                 return None
             raw = response.read(MAX_RESPONSE_BYTES)

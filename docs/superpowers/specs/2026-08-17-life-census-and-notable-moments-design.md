@@ -1,6 +1,6 @@
 # Life census and notable moments
 
-Date: 2026-08-17. Status: approved for build (John, 2026-08-17: "please take those onboard and
+Date: 2026-08-17. Status: implemented on branch `stage-ledger-and-panel`; approved for build (John, 2026-08-17: "please take those onboard and
 resolve them", following the rail rebuild's authorisation to reach into the containers). Tracker:
 aurora-80ae451859. Addendum to `2026-08-17-stage-rail-and-responsive-design.md`; the ux-critic's
 verdicts recorded on that issue (leaderboard → telemetry panel only; sparse achievements → one more

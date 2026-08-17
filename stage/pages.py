@@ -1568,7 +1568,7 @@ function renderLineage() {
   renderSource();
 
   var shownDead = Math.max(0, barLives.length - 1);
-  lineageFootLines = lineageFootFor(st, rec, shownDead);
+  lineageFootLines = lineageFootFor(st, rec, shownDead, snap.achievements);
   renderSpot(nowMs);
 }
 
@@ -1633,8 +1633,12 @@ function renderSpot(nowMs) {
 /* The record book foot rotates cross-life records so a returning viewer has
    something to track. The chose count comes from the record book, which is
    taken over every tombstone; stats counts it over the five lineage entries
-   only and is used just when the book is absent. */
-function lineageFootFor(st, book, shown) {
+   only and is used just when the book is absent. Achievement nominations —
+   the stage's own reading of a dead life's transcript, phrased as fact — join
+   the rotation only when one exists, newest first, at most FOOT_ACHIEVEMENTS,
+   each bylined because it is generated. */
+var FOOT_ACHIEVEMENTS = 3;
+function lineageFootFor(st, book, shown, achievements) {
   st = st || {}; book = book || {};
   var ended = st.lives_ended || 0;
   var chose = book.lives_ended ? (book.chose || 0) : (st.ended_by_choice || 0);
@@ -1644,6 +1648,12 @@ function lineageFootFor(st, book, shown) {
   var longest = book.longest_life;
   if (longest && longest.seconds != null) {
     lines.push("longest life: incarnation " + longest.ordinal + " · " + dur(longest.seconds));
+  }
+  var ach = achievements || [];
+  for (var i = 0; i < ach.length && i < FOOT_ACHIEVEMENTS; i++) {
+    var a = ach[i];
+    if (!a || a.ordinal == null || !a.line) continue;
+    lines.push("incarnation " + a.ordinal + ": " + norm(a.line) + " — the stage");
   }
   if (hiddenLives > 0) {
     lines.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");

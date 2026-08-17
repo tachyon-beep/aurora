@@ -1412,6 +1412,14 @@ rotateLineageFoot(60000); out.foot_wraps = fake("lineage-foot").textContent;
 
 out.steps = [labelStep(23, 366), labelStep(41, 658), labelStep(24, 658), labelStep(60, 366), labelStep(23, 0)];
 
+/* Achievement nominations join the foot rotation, newest first, bylined,
+   capped, and only when present. */
+out.foot_plain = lineageFootFor({ lives_ended: 3 }, { lives_ended: 3, chose: 2 }, 3, []);
+out.foot_ach = lineageFootFor({ lives_ended: 3 }, { lives_ended: 3, chose: 2 }, 3, [
+  { ordinal: 3, line: "first  agent-built\\nnetwork probe" },
+  { ordinal: 2, line: "b" }, { ordinal: 1, line: "c" }, { ordinal: 0, line: "d" },
+  { ordinal: 5, line: "" }, null ]);
+
 /* The census's exact self-edit count wins over the capped event list; a null
    census falls back to counting the events. */
 global.snap.stats.self_edits_this_life = 23;
@@ -1441,6 +1449,13 @@ def test_the_lineage_scales_colours_caps_and_walks(tmp_path):
     assert out["labels"] == ["1", "2", "3", "4", "5"]
     assert out["count"] == "5 LIVES SO FAR"
     assert out["figs"] == "alive 120s · 4 turns · 2 self-edits · 2 reached out"
+    assert out["foot_plain"] == ["by their own notes, 2 of 3 chose to die"]
+    assert out["foot_ach"] == [
+        "by their own notes, 2 of 3 chose to die",
+        "incarnation 3: first agent-built network probe — the stage",
+        "incarnation 2: b — the stage",
+        "incarnation 1: c — the stage",
+    ]
     assert "23 self-edits" in out["figs_census"]
     assert "1 self-edit ·" in out["figs_events"]
     assert out["ord"] == "5"

@@ -15,6 +15,7 @@ from stage import (
     desk,
     diag,
     diag_page,
+    moments,
     pages,
     records,
     sensecam,
@@ -500,6 +501,8 @@ DESK_DEPTH_CAP = 20
 DESK_VERDICTS_CAP = 5
 PULSE_BUCKET_COUNT = data.PULSE_WINDOW_SECONDS // data.PULSE_BUCKET_SECONDS
 FEED_CAP = 8
+ACHIEVEMENTS_CAP = 12
+ACHIEVEMENT_CHARS = 100
 
 
 def _public_pulse(pulse):
@@ -621,6 +624,29 @@ def _public_desk(package):
     }
 
 
+def _public_achievements(rows):
+    """The achievement nominations, newest first, every field enumerated and capped."""
+    out = []
+    for row in rows or []:
+        if len(out) >= ACHIEVEMENTS_CAP:
+            break
+        if not isinstance(row, dict):
+            continue
+        line = _clip(str(row.get("line") or ""), ACHIEVEMENT_CHARS)
+        ordinal = row.get("ordinal")
+        if not line or not isinstance(ordinal, int) or isinstance(ordinal, bool):
+            continue
+        generated = row.get("generated_at")
+        out.append(
+            {
+                "ordinal": ordinal,
+                "line": line,
+                "generated_at": float(generated) if isinstance(generated, (int, float)) else None,
+            }
+        )
+    return out
+
+
 def _public_sense(frame):
     """The newest sense frame as a servable reference, or None."""
     if not isinstance(frame, dict):
@@ -665,6 +691,7 @@ def _empty_snapshot(now):
         "pulse": _empty_pulse(),
         "records": _empty_records(),
         "desk": None,
+        "achievements": [],
         "sense": None,
         "diode": {
             "outputs": [],
@@ -754,6 +781,7 @@ def _assemble_snapshot(now):
         "pulse": _public_pulse(data.request_pulse(events_path(), now=now)),
         "records": _public_records(records.record_book(work, now=now)),
         "desk": _public_desk(desk.cached_verdicts()),
+        "achievements": _public_achievements(moments.achievements(ACHIEVEMENTS_CAP)),
         "sense": _public_sense(sensecam.newest_frame(SENSE_DIR, now=now)),
         "diode": {
             "outputs": diode["outputs"][:DISPLAY_OUTPUTS],
@@ -910,6 +938,10 @@ def main():
         pass
     try:
         census.start_background_refresh(transcript_path(), os.path.join(TELEMETRY_DIR, "work"))
+    except Exception:
+        pass
+    try:
+        moments.start_background_refresh(transcript_path(), os.path.join(TELEMETRY_DIR, "work"))
     except Exception:
         pass
     print(f"stage: stream on :{STREAM_PORT}, console on :{CONSOLE_PORT}")

@@ -468,6 +468,7 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "pulse",
         "records",
         "desk",
+        "achievements",
         "sense",
         "diode",
         "lineage",
@@ -785,6 +786,7 @@ def test_stream_snapshot_never_raises_on_missing_directories(tmp_path, monkeypat
         "pulse",
         "records",
         "desk",
+        "achievements",
         "sense",
         "diode",
         "lineage",
@@ -816,6 +818,7 @@ def test_stream_snapshot_returns_the_full_key_set_when_a_reader_fails(tmp_path, 
         "pulse",
         "records",
         "desk",
+        "achievements",
         "sense",
         "diode",
         "lineage",
@@ -1148,3 +1151,21 @@ def test_the_census_overlays_exact_life_figures_when_it_has_a_row(tmp_path, monk
 
 def test_the_empty_snapshot_carries_a_null_self_edit_count():
     assert server._empty_snapshot(1.0)["stats"]["self_edits_this_life"] is None
+
+
+def test_achievements_are_projected_newest_first_capped_and_validated():
+    rows = [
+        {"ordinal": i, "line": "did a thing " + str(i), "generated_at": 5.0}
+        for i in range(30, 0, -1)
+    ]
+    rows.insert(0, {"ordinal": True, "line": "bool ordinal"})
+    rows.insert(0, {"ordinal": 99, "line": ""})
+    rows.insert(0, "junk")
+    out = server._public_achievements(rows)
+    assert len(out) == server.ACHIEVEMENTS_CAP
+    assert out[0] == {"ordinal": 30, "line": "did a thing 30", "generated_at": 5.0}
+    long = server._public_achievements([{"ordinal": 1, "line": "x" * 500, "generated_at": "no"}])
+    assert len(long[0]["line"]) == server.ACHIEVEMENT_CHARS
+    assert long[0]["generated_at"] is None
+    assert server._public_achievements(None) == []
+    assert server._empty_snapshot(1.0)["achievements"] == []

@@ -83,11 +83,15 @@ def test_chat_sends_the_key_and_returns_the_cleaned_reply(monkeypatch):
 
     def fake_send(request, timeout=None):
         captured["request"] = request
+        captured["timeout"] = timeout
         body = json.dumps({"choices": [{"message": {"content": "  A line.  "}}]})
         return _Response(body)
 
     monkeypatch.setattr(llm, "_send", fake_send)
     assert llm.chat("sys", "user", 100, 0.4) == "A line."
+    assert captured["timeout"] == llm.TIMEOUT_SECONDS
+    assert llm.chat("sys", "user", 100, 0.4, timeout=60) == "A line."
+    assert captured["timeout"] == 60
     request = captured["request"]
     assert request.full_url == "https://openrouter.ai/api/v1/chat/completions"
     assert request.get_header("Authorization") == "Bearer " + STAGE_KEY

@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from stage import desk, llm
+from stage import desk, llm, moments
 
 RECORDER_SENTINEL = "sk-recorder-DO-NOT-LEAK-0001"
 STAGE_KEY = "sk-stage-summary-0002"
@@ -29,8 +29,13 @@ def _clean_desk_state(monkeypatch):
         raise AssertionError("the desk tests must never open a transport")
 
     monkeypatch.setattr(llm, "_send", no_network)
+    # The digest is settled by default so the desk tests exercise the desk;
+    # the waiting behaviour has its own tests below.
+    moments._reset_for_tests()
+    monkeypatch.setattr(desk.moments, "settled", lambda ordinal: True)
     yield
     desk._reset_for_tests()
+    moments._reset_for_tests()
 
 
 def _iso(epoch):
@@ -360,3 +365,62 @@ def test_a_failing_ordinal_backs_off_and_does_not_starve_older_lives(tmp_path, m
     assert desk._refresh_once(telemetry, transcript, mono=3 * desk.RETRY_SECONDS + 3.0) is False
     assert len(calls) == 5
     assert [v["ordinal"] for v in desk.cached_verdicts()["verdicts"]] == [2, 1]
+
+
+# --- the notable-moments digest -------------------------------------------
+
+
+def test_the_desk_waits_for_an_unsettled_digest(tmp_path, monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    calls = []
+
+    def fake_chat(system, user, *args, **kwargs):
+        calls.append(user)
+        return "STARS: 3 | Fine."
+
+    monkeypatch.setattr(desk.llm, "chat", fake_chat)
+    telemetry, transcript = _tree(tmp_path, [time.time() - 1000])
+    monkeypatch.setattr(desk.moments, "settled", lambda ordinal: False)
+    assert desk._refresh_once(telemetry, transcript) is False
+    assert calls == []
+    assert desk.cached_verdicts() is None
+    monkeypatch.setattr(desk.moments, "settled", lambda ordinal: True)
+    assert desk._refresh_once(telemetry, transcript) is True
+    assert desk.cached_verdicts()["verdicts"][0]["stars"] == 3
+
+
+def test_the_model_is_handed_the_moments_when_a_digest_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    handed = []
+
+    def fake_chat(system, user, *args, **kwargs):
+        handed.append(user)
+        return "STARS: 4 | It rewrote its registry and lived to tell."
+
+    monkeypatch.setattr(desk.llm, "chat", fake_chat)
+    telemetry, transcript = _tree(tmp_path, [time.time() - 1000])
+    moments._store(
+        1,
+        [
+            {"turn": 12, "stars": 4, "line": "Rewrote its own tool registry."},
+            {"turn": 20, "stars": 2, "line": "Read the garden. " * 40},
+        ],
+        None,
+        2,
+        2,
+    )
+    desk._refresh_once(telemetry, transcript)
+    user = handed[0]
+    assert "moment: turn 12 (4/5): Rewrote its own tool registry." in user
+    assert "moment: turn 20 (2/5): Read the garden." in user
+    assert len(user) < 1200
+    assert user.index("moment: turn 12") < user.index("END RECORDS")
+
+
+def test_the_prompt_omits_the_moments_block_without_a_digest():
+    evidence = {"line": "lived 5m", "depth": "tombstone_only"}
+    assert "moment:" not in desk._prompt(evidence, "a note")
+    assert "moment:" not in desk._prompt(evidence, "a note", {"moments": []})
+    assert "moment: turn 3 (5/5): x" in desk._prompt(
+        evidence, "", {"moments": [{"turn": 3, "stars": 5, "line": "x"}]}
+    )
