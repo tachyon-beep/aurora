@@ -31,6 +31,8 @@ fi
 
 if [ -x "$REPO_DIR/.venv/bin/python" ]; then
     "$REPO_DIR/.venv/bin/python" "$REPO_DIR/scripts/build_garden.py"
+    "$REPO_DIR/.venv/bin/python" "$REPO_DIR/scripts/build_console_seed.py"
 else
     python3 "$REPO_DIR/scripts/build_garden.py"
+    python3 "$REPO_DIR/scripts/build_console_seed.py"
 fi

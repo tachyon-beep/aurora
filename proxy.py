@@ -101,10 +101,15 @@ def build_forward_headers(headers, api_key):
     return forwarded
 
 
+def utc_timestamp():
+    """The current UTC time as an ISO-8601 string with a trailing Z."""
+    return datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def archive_name(path, stamp=None):
     """Return the timestamped gzip archive name for a transcript path."""
     if stamp is None:
-        stamp = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
     root, ext = os.path.splitext(path)
     return f"{root}-{stamp}{ext}.gz"
 
@@ -154,7 +159,7 @@ def log_event(event, stream, **fields):
     never message content or headers.
     """
     entry = {
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": utc_timestamp(),
         "event": event,
         "stream": stream,
     }
@@ -635,7 +640,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
 
         entry = {
-            "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+            "timestamp": utc_timestamp(),
             "stream": stream,
             "request": request_data,
             "response": response_data,
@@ -703,7 +708,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             rotate_if_needed(TRANSCRIPT_FILE)
 
         plain_log_lines = []
-        timestamp = entry.get("timestamp", datetime.datetime.utcnow().isoformat() + "Z")
+        timestamp = entry.get("timestamp", utc_timestamp())
         plain_log_lines.append("=" * 80)
         plain_log_lines.append(f"TRANSACTION | {timestamp} | Model: {request_data.get('model')}")
         plain_log_lines.append("=" * 80)

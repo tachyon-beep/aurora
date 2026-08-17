@@ -3,6 +3,7 @@ import importlib
 import io
 import json
 import os
+import re
 import socket
 import threading
 import time
@@ -69,6 +70,13 @@ def test_archive_name_is_timestamped_gz():
     proxy = _proxy()
     name = proxy.archive_name("/t/agent_life_transcript.jsonl", stamp="20260813_101500")
     assert name == "/t/agent_life_transcript-20260813_101500.jsonl.gz"
+
+
+def test_archive_name_default_stamp_is_compact_utc():
+    proxy = _proxy()
+    name = proxy.archive_name("/t/agent_life_transcript.jsonl")
+    stamp = name[len("/t/agent_life_transcript-") : -len(".jsonl.gz")]
+    assert re.fullmatch(r"\d{8}_\d{6}", stamp)
 
 
 def test_rotate_if_needed_below_threshold_is_noop(tmp_path):

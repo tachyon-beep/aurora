@@ -1,5 +1,7 @@
 import json
+import re
 import threading
+import warnings
 
 import httpx
 import pytest
@@ -105,6 +107,30 @@ def test_failed_lifecycle_event_write_does_not_change_active_bindings(
     proxy.log_event(event, "aux")
 
     assert proxy._active_bindings == expected
+
+
+def test_event_timestamp_parses_back_to_an_epoch(transcripts):
+    proxy.log_event("bind", "core")
+    (event,) = _events(transcripts)
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z", event["timestamp"])
+    assert stage_data.parse_epoch(event["timestamp"]) is not None
+
+
+def test_transcript_timestamp_parses_back_to_an_epoch(transcripts):
+    proxy.ProxyHTTPRequestHandler.log_transcript(None, {"messages": []}, {"choices": []})
+    lines = (transcripts / "transcript.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    (entry,) = [json.loads(line) for line in lines if line]
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z", entry["timestamp"])
+    assert stage_data.parse_epoch(entry["timestamp"]) is not None
+
+
+def test_recorder_timestamps_emit_no_deprecation_warning(transcripts):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        proxy.log_event("bind", "core")
+        proxy.ProxyHTTPRequestHandler.log_transcript(None, {"messages": []}, {"choices": []})
+        proxy.archive_name("/t/transcript.jsonl")
+    assert [w for w in caught if issubclass(w.category, DeprecationWarning)] == []
 
 
 def test_request_ids_are_distinct_hex():

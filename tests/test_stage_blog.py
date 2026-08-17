@@ -1,4 +1,5 @@
 import os
+import re
 import time
 
 import pytest
@@ -295,7 +296,22 @@ def test_read_post_without_heading_uses_the_stamp_and_odd_names_are_slugged(tmp_
     assert post["title"] == "hello world!"
     assert post["stamp"] == "hello world!"
     assert post["epoch"] is None
-    assert post["slug"] == "hello-world-"
+    assert post["slug"].startswith("hello-world-")
+    assert re.fullmatch(r"[A-Za-z0-9_-]+", post["slug"])
+
+
+def test_names_that_sanitise_alike_get_distinct_slugs(tmp_path):
+    """Element ids are built from the slug, so two names that differ only in
+    punctuation, or only past the length cap, must not collide."""
+    diode = _blog(tmp_path)
+    for name in ("a b", "a-b", "x" * 70 + "1", "x" * 70 + "2"):
+        (diode / "blog" / f"{name}.md").write_text("# t", encoding="utf-8")
+    slugs = [
+        blog.read_post(str(diode), n)["slug"]
+        for n in ("a b", "a-b", "x" * 70 + "1", "x" * 70 + "2")
+    ]
+    assert len(set(slugs)) == 4
+    assert all(len(s) <= blog.SLUG_MAX for s in slugs)
 
 
 def test_read_post_caps_bytes_and_marks_truncation(tmp_path, monkeypatch):

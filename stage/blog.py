@@ -7,6 +7,7 @@ URL. Anything the subset does not recognise renders as visible text.
 """
 
 import datetime
+import hashlib
 import html
 import os
 import re
@@ -92,6 +93,16 @@ def _is_block_start(line):
         or _HR.match(line)
         or _QUOTE.match(line)
         or _LIST_ITEM.match(line)
+    )
+
+
+def _table_at(lines, i):
+    """True when lines[i] is a table header row and lines[i + 1] its delimiter row."""
+    return bool(
+        "|" in lines[i]
+        and i + 1 < len(lines)
+        and _TABLE_SEP.match(lines[i + 1])
+        and "-" in lines[i + 1]
     )
 
 
@@ -235,7 +246,7 @@ def _render_blocks(lines, id_prefix, counter, depth=0):
                     f"<blockquote>{_render_blocks(quoted, id_prefix, counter, depth + 1)}</blockquote>"
                 )
             continue
-        if "|" in line and i + 1 < n and _TABLE_SEP.match(lines[i + 1]) and "-" in lines[i + 1]:
+        if _table_at(lines, i):
             table = [lines[i], lines[i + 1]]
             i += 2
             while i < n and lines[i].strip() and "|" in lines[i]:
@@ -249,7 +260,9 @@ def _render_blocks(lines, id_prefix, counter, depth=0):
             continue
         para = [line]
         i += 1
-        while i < n and lines[i].strip() and not _is_block_start(lines[i]):
+        while (
+            i < n and lines[i].strip() and not _is_block_start(lines[i]) and not _table_at(lines, i)
+        ):
             para.append(lines[i])
             i += 1
         out.append(f"<p>{render_inline(chr(10).join(para))}</p>")
@@ -308,7 +321,17 @@ def _stamp_label(name, epoch):
 
 
 def _slug(name):
-    return re.sub(r"[^A-Za-z0-9_-]", "-", name)[:SLUG_MAX]
+    """A bounded id-safe stem for name, distinct for names sanitising to the same text.
+
+    A stem the sanitiser leaves untouched is used as it stands. Any other stem is
+    truncated to leave room for a digest of the full name, so two files whose
+    names differ only in punctuation or past the cap do not share an element id.
+    """
+    cleaned = re.sub(r"[^A-Za-z0-9_-]", "-", name)[:SLUG_MAX]
+    if cleaned == name:
+        return cleaned
+    digest = hashlib.sha256(name.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"{cleaned[: SLUG_MAX - len(digest) - 1]}-{digest}"
 
 
 def list_posts(diode_dir):
