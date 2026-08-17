@@ -87,6 +87,9 @@ services:
       # Image frames captured on a ring of fixed slots by the sense service.
       # Written only by sense; read-only here.
       - ./volumes/sense:/sense:ro
+      # Recorded-video search, transcripts, and frames written by the video
+      # service. Mounted into the agent and that service alone.
+      - video:/video
     # No network interface at all: one loopback device and an empty routing
     # table. hostname/extra_hosts/dns keep the loopback development surface
     # usable - without them the container's own name does not resolve and
@@ -190,6 +193,40 @@ services:
     mem_limit: 512m
     restart: unless-stopped
 
+  video:
+    build:
+      context: .
+      dockerfile: Dockerfile.video
+    image: aurora-video
+    # docker-init as PID 1: python installs no SIGTERM handler, and without an
+    # init a stop would wait out the kill grace period mid-capture.
+    init: true
+    environment:
+      VIDEO_DIR: /video
+      # Hourly ceilings on the three allowances, however large a budget the
+      # agent writes to the console: the effective limit is
+      # min(console value, ceiling). Empty keeps the defaults of 1, 20 and 20.
+      # The video allowance rations switching videos; a binding persists until
+      # it is replaced.
+      VIDEO_HOURLY_MAX: ${VIDEO_HOURLY_MAX:-}
+      VIDEO_STILL_HOURLY_MAX: ${VIDEO_STILL_HOURLY_MAX:-}
+      VIDEO_TEXT_HOURLY_MAX: ${VIDEO_TEXT_HOURLY_MAX:-}
+      # yt-dlp cache lands on the tmpfs rather than the read-only rootfs.
+      XDG_CACHE_HOME: /tmp
+    volumes:
+      - video:/video
+    # Egress on a network of its own. No credential of any kind is present in
+    # this service's environment.
+    networks: [video_egress]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 512m
+    restart: unless-stopped
+
   viewer:
     build:
       context: .
@@ -265,6 +302,7 @@ networks:
   egress: {}
   stream: {}
   sense_egress: {}
+  video_egress: {}
 
 volumes:
   transcripts: {}
@@ -274,3 +312,4 @@ volumes:
   llm_sock: {}
   llm_console: {}
   pump: {}
+  video: {}
