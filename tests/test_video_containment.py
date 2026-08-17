@@ -366,3 +366,72 @@ def test_verify_script_checks_the_video_surface():
     text = read("scripts/verify_container.sh")
     assert "/video is present in the agent and writable" in text
     assert "video holds no credential" in text
+
+
+def _verify_script_video_block(text=None):
+    """The slice of verify_container.sh between the first video check's
+    header and the next (unrelated) check that follows the video block.
+
+    A label-only assertion (`"the header text" in text`) is satisfied by a
+    script that prints five reassuring headers and enforces nothing -- proven
+    by mutation: stripping every enforcement line out of this block while
+    keeping only its five `echo "==>` headers still passes
+    test_verify_script_checks_the_video_surface. The tests below assert
+    load-bearing command/FAIL-message text from each check's *body*, which
+    that mutation deletes, so they fail red against it.
+    """
+    if text is None:
+        text = read("scripts/verify_container.sh")
+    start = text.index('echo "==> /video is present in the agent and writable"')
+    end = text.index('echo "==> cargo builds a new project offline against /vendor"')
+    return text[start:end]
+
+
+def test_verify_script_video_writable_check_has_a_load_bearing_probe():
+    block = _verify_script_video_block()
+    assert "docker compose exec -T agent test -d /video" in block
+    assert "echo x > /video/_probe && rm -f /video/_probe" in block
+    assert 'echo "FAIL: /video is not writable by the agent"; exit 1' in block
+
+
+def test_verify_script_video_credential_check_is_a_shape_match_not_a_label():
+    block = _verify_script_video_block()
+    # A liveness guard: an unreachable video container must not read as "no
+    # credential found" because grep saw empty stdin from a failed exec.
+    assert "video_cid=$(docker compose ps -q video)" in block
+    assert '[ -n "$video_cid" ] || { echo "FAIL: video container not running"; exit 1; }' in block
+    # A shape match with one named exclusion for base-image noise (GPG_KEY),
+    # not an enumeration of today's known credential names -- an enumeration
+    # would miss any future credential added under a name not on the list.
+    assert "grep -Ev '^GPG_KEY='" in block
+    assert "grep -Eq '(KEY|TOKEN|SECRET|PASSWORD)='" in block
+    assert 'echo "FAIL: a credential is present in the video service environment"; exit 1' in block
+
+
+def test_verify_script_video_stage_mount_check_inspects_the_running_container():
+    block = _verify_script_video_block()
+    assert "stage_cid=$(docker compose ps -q stage)" in block
+    assert '[ -n "$stage_cid" ] || { echo "FAIL: stage container not running"; exit 1; }' in block
+    assert 'docker inspect "$stage_cid"' in block
+    assert '"Destination": "/video"' in block
+    assert 'echo "FAIL: stage mounts /video"; exit 1' in block
+
+
+def test_verify_script_video_network_check_is_checked_from_both_sides():
+    block = _verify_script_video_block()
+    assert 'docker inspect "$(docker compose ps -q video)"' in block
+    assert "*_default*)" in block
+    assert 'echo "FAIL: video is attached to the default network"; exit 1' in block
+    # One-sided (video not on the default network) is not the whole
+    # guarantee: moving the viewer onto video_egress instead of touching
+    # video's own networks must not evade the check.
+    assert 'docker inspect "$(docker compose ps -q viewer)"' in block
+    assert "*video_egress*)" in block
+    assert 'echo "FAIL: viewer is attached to video_egress"; exit 1' in block
+
+
+def test_verify_script_video_state_json_poll_has_an_explicit_failure_path():
+    block = _verify_script_video_block()
+    assert "docker compose exec -T agent test -f /video/state.json" in block
+    assert 'if [ "$video_state_ok" -ne 1 ]; then' in block
+    assert 'echo "FAIL: /video/state.json has not appeared"; exit 1' in block

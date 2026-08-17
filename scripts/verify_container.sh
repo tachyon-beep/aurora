@@ -188,13 +188,17 @@ fi
 
 echo "==> video holds no credential"
 # A shape match against the full container env ('(KEY|TOKEN|SECRET|PASSWORD)=')
-# would false-positive on GPG_KEY, which python:3.13-slim (video's base image)
-# sets to verify the CPython tarball -- that is image noise, not a leaked
-# credential. Named enumeration of this stack's actual credential variables,
-# matching the specific-name idiom the ELEVENLABS check below already uses,
-# checks the property that matters without tripping on base-image internals.
+# false-positives on GPG_KEY, which python:3.13-slim (video's base image) sets
+# to verify the CPython tarball -- that is image noise, not a leaked
+# credential. Excluding that one known name by shape keeps the check general
+# (it still catches a FUTURE credential-shaped variable under any name,
+# whether compose-declared or baked into Dockerfile.video's own ENV) rather
+# than narrowing it to a closed list of today's known credential names.
+video_cid=$(docker compose ps -q video)
+[ -n "$video_cid" ] || { echo "FAIL: video container not running"; exit 1; }
 if docker compose exec -T video env \
-  | grep -Eq 'ELEVENLABS|OPENROUTER|LLM_API_KEY|STAGE_CONSOLE_TOKEN|STAGE_SUMMARY_API_KEY|TUNNEL_TOKEN'; then
+  | grep -Ev '^GPG_KEY=' \
+  | grep -Eq '(KEY|TOKEN|SECRET|PASSWORD)='; then
   echo "FAIL: a credential is present in the video service environment"; exit 1
 fi
 
@@ -210,6 +214,14 @@ video_nets=$(docker inspect "$(docker compose ps -q video)" \
   --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')
 case "$video_nets" in
   *_default*) echo "FAIL: video is attached to the default network"; exit 1 ;;
+esac
+# One-sided so far (video not on the viewer's network); close it from the
+# other side too, so moving the viewer onto video_egress instead of touching
+# video's own networks does not evade the check.
+viewer_nets=$(docker inspect "$(docker compose ps -q viewer)" \
+  --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')
+case "$viewer_nets" in
+  *video_egress*) echo "FAIL: viewer is attached to video_egress"; exit 1 ;;
 esac
 
 echo "==> the video service publishes state.json"
