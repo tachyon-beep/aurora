@@ -221,9 +221,10 @@ def test_render_output_is_bounded_relative_to_input():
         ("**a** *b* `c` [d](https://e) ![f](https://g)\n") * 1200,
         ("```\n" + "x\n" + "```\n") * 6000,
     )
+    prefix = "p" + "x" * blog.SLUG_MAX + "-"
     for text in cases:
         start = time.perf_counter()
-        out = blog.render_markdown(text, id_prefix="p20260817_120000_000000-")
+        out = blog.render_markdown(text, id_prefix=prefix)
         assert time.perf_counter() - start < 1.0, text[:20]
         assert len(out) <= 32 * len(text) + 1024, (text[:20], len(text), len(out))
 
@@ -276,6 +277,15 @@ def test_read_post_title_stamp_html_and_slug(tmp_path):
     assert '<h1 id="p20260817_120000_000000-h1">Hello <em>world</em></h1>' in post["html"]
     assert "<p>body &lt;x&gt;</p>" in post["html"]
     assert post["truncated"] is False
+
+
+def test_slug_is_capped(tmp_path):
+    diode = _blog(tmp_path)
+    name = "a" * 200
+    (diode / "blog" / f"{name}.md").write_text("# t", encoding="utf-8")
+    post = blog.read_post(str(diode), name)
+    assert len(post["slug"]) == blog.SLUG_MAX
+    assert f'<h1 id="p{post["slug"]}-h1">' in post["html"]
 
 
 def test_read_post_without_heading_uses_the_stamp_and_odd_names_are_slugged(tmp_path):

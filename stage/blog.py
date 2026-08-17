@@ -16,6 +16,7 @@ from stage.data import contained_file
 POST_READ_BYTES = 65_536
 POSTS_MAX = 1000
 POSTS_PER_PAGE = 10
+SLUG_MAX = 64
 
 # Every class excludes its own closer and is length-capped, so no opener rescans past the next closer.
 _URL = r"[^\s()]{1,2048}(?:\([^\s()]{0,256}\)[^\s()]{0,2048})?"
@@ -307,7 +308,7 @@ def _stamp_label(name, epoch):
 
 
 def _slug(name):
-    return re.sub(r"[^A-Za-z0-9_-]", "-", name)
+    return re.sub(r"[^A-Za-z0-9_-]", "-", name)[:SLUG_MAX]
 
 
 def list_posts(diode_dir):
