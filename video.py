@@ -48,11 +48,41 @@ QUERY_FORBIDDEN = re.compile(r"[\x00-\x1f\x7f]")
 # The only hosts a resolved manifest may name.
 MANIFEST_HOST_SUFFIXES = ("googlevideo.com", "youtube.com")
 
+# A diagnostic-length bound, not a content bound: refusal text this service
+# authors about its own malformed input must not grow with the size of that
+# input, or an oversized argument becomes unbounded write amplification --
+# echoed whole into a ValueError message, then into the output file
+# handle_command's caller writes. 64 characters is ample to identify what was
+# rejected without reproducing it.
+REFUSAL_ECHO_MAX = 64
+
+
+def _bounded_text(text):
+    """A bounded copy of already-plain text for refusal messages.
+
+    Shared by _short below and by handle_command's unknown-command path
+    (whose echoed value -- command_word's output -- is always a plain
+    string already, so a repr would only add uninformative quoting).
+    """
+    if len(text) > REFUSAL_ECHO_MAX:
+        return text[:REFUSAL_ECHO_MAX] + "..."
+    return text
+
+
+def _short(value):
+    """A bounded repr for refusal text, so an oversized argument cannot be echoed whole.
+
+    Governs only diagnostics this service authors about its own input, never
+    third-party content -- the ingest-fidelity rule (bounded, never
+    laundered) is about what the world says, not what we say about it.
+    """
+    return _bounded_text(repr(value))
+
 
 def validated_video_id(value):
     """A video identifier: eleven URL-safe characters, nothing else."""
     if not isinstance(value, str) or VIDEO_ID_PATTERN.fullmatch(value) is None:
-        raise ValueError(f"invalid video id: {value!r}")
+        raise ValueError(f"invalid video id: {_short(value)}")
     return value
 
 
@@ -73,11 +103,11 @@ def validated_query(value):
 def validated_offset(value, duration):
     """An offset in seconds: a non-negative integer, bounded by the duration when one is known."""
     if isinstance(value, bool) or not isinstance(value, (str, int)):
-        raise ValueError(f"invalid offset: {value!r}")
+        raise ValueError(f"invalid offset: {_short(value)}")
     try:
         seconds = int(value)
     except (TypeError, ValueError):
-        raise ValueError(f"invalid offset: {value!r}") from None
+        raise ValueError(f"invalid offset: {_short(value)}") from None
     if seconds < 0:
         raise ValueError("offset before the start")
     if duration is not None and seconds > duration:
@@ -1003,7 +1033,7 @@ def handle_command(command, variables, state, now=None):
         variables = {}
     name = command_word(command)
     if name not in COMMANDS:
-        return UNKNOWN_COMMAND.format(name=name), state
+        return UNKNOWN_COMMAND.format(name=_bounded_text(name)), state
     if not COMMANDS[name]["gate"](variables):
         return f"command not available: {name}", state
     argument = command.strip()[len(name) :].strip()

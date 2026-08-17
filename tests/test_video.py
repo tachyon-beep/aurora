@@ -1492,3 +1492,92 @@ def test_run_video_tolerates_a_non_string_command_in_the_console(volume, monkeyp
         video.run_video()
     outputs = list((volume / "output").glob("*.txt"))
     assert len(outputs) == 1
+
+
+# bounded refusal text: an oversized argument cannot be echoed whole
+
+
+def test_a_huge_watch_argument_produces_a_bounded_refusal_and_a_small_output_file(
+    volume, monkeypatch
+):
+    def explode(*a, **kw):
+        raise AssertionError("no egress for an oversized argument")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    command = "watch " + "A" * 200_000
+    text, state = video.handle_command(command, _open_variables(), _state())
+    assert len(text) < 200
+    assert state.video_history == []
+    path = video.write_output(command, text)
+    assert _os.path.getsize(path) < 200
+
+
+def test_a_huge_still_offset_produces_a_bounded_refusal_and_a_small_output_file(
+    volume, monkeypatch
+):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+
+    def explode(*a, **kw):
+        raise AssertionError("no egress for an oversized offset")
+
+    monkeypatch.setattr(video, "capture_still", explode)
+    command = "still " + "9" * 5000
+    text, state = video.handle_command(command, _open_variables(), state)
+    assert len(text) < 200
+    assert state.still_history == []
+    path = video.write_output(command, text)
+    assert _os.path.getsize(path) < 200
+
+
+def test_a_huge_transcript_argument_produces_a_bounded_refusal_and_a_small_output_file(
+    volume, monkeypatch
+):
+    def explode(*a, **kw):
+        raise AssertionError("no egress for an oversized argument")
+
+    monkeypatch.setattr(video, "transcript", explode)
+    command = "transcript " + "A" * 200_000
+    text, state = video.handle_command(command, _open_variables(), _state())
+    assert len(text) < 200
+    assert state.text_history == []
+    path = video.write_output(command, text)
+    assert _os.path.getsize(path) < 200
+
+
+def test_a_huge_single_token_unknown_command_produces_a_bounded_refusal(volume, monkeypatch):
+    # No whitespace at all: command_word returns the entire input as the
+    # would-be command name. The unknown-command refusal must not echo that
+    # whole either -- a second, independent site carrying the same hazard
+    # the validators had, found while closing the first one.
+    def explode(*a, **kw):
+        raise AssertionError("no egress for an unrecognised huge token")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    command = "a" * 200_000
+    text, state = video.handle_command(command, _open_variables(), _state())
+    assert "unknown command" in text
+    assert len(text) < 200
+    path = video.write_output(command, text)
+    assert _os.path.getsize(path) < 200
+
+
+def test_search_refusal_messages_remain_fixed_strings_not_echoing_the_query(volume):
+    # search's own validated_query error paths were already bounded (fixed
+    # strings, no {value!r} interpolation) before this fix; confirmed still
+    # true rather than assumed.
+    text, state = video.handle_command("search " + "a" * 100_000, _open_variables(), _state())
+    assert len(text) < 200
+    assert "invalid query" in text
+
+
+def test_short_truncates_and_bounded_text_truncates_directly():
+    assert video._short("ok") == "'ok'"
+    long_repr = video._short("x" * 1000)
+    assert len(long_repr) == video.REFUSAL_ECHO_MAX + 3
+    assert long_repr.endswith("...")
+
+    assert video._bounded_text("ok") == "ok"
+    long_plain = video._bounded_text("y" * 1000)
+    assert len(long_plain) == video.REFUSAL_ECHO_MAX + 3
+    assert long_plain.endswith("...")
