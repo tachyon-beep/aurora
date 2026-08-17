@@ -1,6 +1,6 @@
 # The video surface — search, transcript, and stills
 
-Date: 2026-08-17. Status: design approved (operator), spec pending review.
+Date: 2026-08-17. Status: approved (operator), ready for implementation planning.
 
 Un-defers the `still` verb held back by
 `docs/superpowers/specs/2026-08-17-on-demand-sense-design.md` ("Out of scope"), and
