@@ -161,7 +161,7 @@ def test_one_call_per_iteration_and_a_stable_cache(tmp_path, monkeypatch):
     assert len(calls) == 3
 
 
-def test_verdicts_are_bounded_to_the_top_five(tmp_path, monkeypatch):
+def test_verdicts_are_bounded_to_the_newest_twelve(tmp_path, monkeypatch):
     monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
     calls = []
 
@@ -171,13 +171,26 @@ def test_verdicts_are_bounded_to_the_top_five(tmp_path, monkeypatch):
 
     monkeypatch.setattr(desk.llm, "chat", fake_chat)
     now = time.time()
-    telemetry, transcript = _tree(tmp_path, [now - 7000 + i * 1000 for i in range(6)])
+    telemetry, transcript = _tree(tmp_path, [now - 15000 + i * 1000 for i in range(14)])
 
-    for _ in range(8):
+    for _ in range(16):
         desk._refresh_once(telemetry, transcript)
 
-    assert len(calls) == 5
-    assert [v["ordinal"] for v in desk.cached_verdicts()["verdicts"]] == [6, 5, 4, 3, 2]
+    assert desk.MAX_VERDICTS == 12
+    assert len(calls) == 12
+    assert [v["ordinal"] for v in desk.cached_verdicts()["verdicts"]] == list(range(14, 2, -1))
+    assert desk.cached_verdict(14)["ordinal"] == 14
+    assert desk.cached_verdict(2) is None
+    copy = desk.cached_verdict(14)
+    copy["stars"] = 1
+    assert desk.cached_verdict(14)["stars"] == 3
+
+
+def test_cached_verdict_is_none_when_disabled(monkeypatch):
+    desk._store(3, 4, "x", {"line": "l", "depth": "full"})
+    assert desk.cached_verdict(3) is None
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    assert desk.cached_verdict(3)["stars"] == 4
 
 
 def test_the_verdict_line_and_evidence_caps_hold(tmp_path, monkeypatch):
@@ -424,3 +437,43 @@ def test_the_prompt_omits_the_moments_block_without_a_digest():
     assert "moment: turn 3 (5/5): x" in desk._prompt(
         evidence, "", {"moments": [{"turn": 3, "stars": 5, "line": "x"}]}
     )
+
+
+def test_evidence_prefers_the_census_and_the_digest_sets_the_depth():
+    entry = {"lifespan_seconds": 300, "turns_lived": 7, "turns_partial": True, "kind": "declared"}
+    turns = _turns(1, 1, 1)
+    plain = desk.life_evidence(1, entry, turns)
+    assert plain["line"] == "lived 5m · at least 7 turns · ended by its own note"
+    assert plain["depth"] == desk.DEPTH_PARTIAL
+    row = {"ordinal": 1, "turns": 41, "edits": 3}
+    exact = desk.life_evidence(1, entry, turns, census_row=row)
+    assert exact["line"] == "lived 5m · 41 turns · 3 self-edits · ended by its own note"
+    assert exact["depth"] == desk.DEPTH_PARTIAL
+    whole = {
+        "moments": [{"turn": 1, "stars": 3, "line": "x"}],
+        "turns_shown": 41,
+        "turns_total": 41,
+    }
+    assert (
+        desk.life_evidence(1, entry, turns, census_row=row, digest=whole)["depth"]
+        == desk.DEPTH_FULL
+    )
+    sampled = dict(whole, turns_shown=30)
+    assert desk.life_evidence(1, entry, turns, digest=sampled)["depth"] == desk.DEPTH_SAMPLED
+    assert (
+        desk.life_evidence(1, entry, turns, digest={"moments": []})["depth"] == desk.DEPTH_PARTIAL
+    )
+    zero = desk.life_evidence(1, entry, turns, census_row={"turns": 0, "edits": 0})
+    assert zero["line"] == plain["line"]
+
+
+def test_the_prompt_states_the_digest_coverage():
+    evidence = {"line": "lived 5m", "depth": "sampled"}
+    digest = {
+        "moments": [{"turn": 3, "stars": 5, "line": "x"}],
+        "turns_shown": 30,
+        "turns_total": 41,
+    }
+    prompt = desk._prompt(evidence, "", digest)
+    assert "digest coverage: 30 of 41 turns read" in prompt
+    assert prompt.index("digest coverage") < prompt.index("moment: turn 3")

@@ -593,6 +593,211 @@ def _empty_records():
     return _public_records({})
 
 
+NOTE_CAP = 320
+MOMENT_LINE_CAP = 140
+MOMENTS_CAP = 6
+DIGEST_STATES = ("ready", "pending", "skipped", "off")
+
+
+def _public_moment(moment):
+    """One digest moment with every field enumerated and capped, or None."""
+    if not isinstance(moment, dict):
+        return None
+    turn = moment.get("turn")
+    stars = moment.get("stars")
+    if isinstance(turn, bool) or not isinstance(turn, int):
+        return None
+    if isinstance(stars, bool) or not isinstance(stars, int):
+        return None
+    line = _clip(str(moment.get("line") or ""), MOMENT_LINE_CAP)
+    if not line:
+        return None
+    return {"turn": turn, "stars": min(5, max(1, stars)), "line": line}
+
+
+def _public_verdict(verdict):
+    """One desk verdict with every field enumerated and capped, or None."""
+    if not isinstance(verdict, dict):
+        return None
+    stars = verdict.get("stars")
+    if isinstance(stars, bool) or not isinstance(stars, int):
+        return None
+    return {
+        "stars": min(5, max(1, stars)),
+        "line": _clip(str(verdict.get("line") or ""), DESK_LINE_CAP),
+        "evidence": _clip(str(verdict.get("evidence") or ""), DESK_EVIDENCE_CAP),
+        "depth": _clip(str(verdict.get("depth") or ""), DESK_DEPTH_CAP),
+    }
+
+
+def _digest_state(ordinal, digest, enabled):
+    """Where a dead life's digest stands: ready, pending, skipped, or off."""
+    if not enabled:
+        return "off"
+    if isinstance(digest, dict) and digest.get("moments"):
+        return "ready"
+    return "skipped" if moments.settled(ordinal) else "pending"
+
+
+def _public_life(row, verdict, digest, enabled):
+    """One life for the lineage endpoint, every field enumerated and capped.
+
+    row is a census entry (or a bare {ordinal, current, ...} stand-in when the
+    census has not run); counts absent from it are null rather than zero so
+    the page can say "not counted yet" instead of "0".
+    """
+    row = row if isinstance(row, dict) else {}
+    try:
+        ordinal = int(row.get("ordinal") or 0)
+    except (TypeError, ValueError):
+        ordinal = 0
+    current = bool(row.get("current"))
+    began = row.get("began_epoch")
+    ended = row.get("ended_epoch")
+    began = (
+        float(began) if isinstance(began, (int, float)) and not isinstance(began, bool) else None
+    )
+    ended = (
+        float(ended) if isinstance(ended, (int, float)) and not isinstance(ended, bool) else None
+    )
+    lived = ended - began if began is not None and ended is not None and ended > began else None
+    kind = row.get("ending_kind")
+    kind = (
+        kind if kind in LIFE_KINDS else ("unknown" if not current and ended is not None else None)
+    )
+
+    def count(name):
+        value = row.get(name)
+        if isinstance(value, bool) or not isinstance(value, int):
+            return None
+        return max(0, value)
+
+    public_moments = []
+    if isinstance(digest, dict):
+        for moment in digest.get("moments") or []:
+            item = _public_moment(moment)
+            if item is not None:
+                public_moments.append(item)
+            if len(public_moments) >= MOMENTS_CAP:
+                break
+    achievement = None
+    if isinstance(digest, dict) and digest.get("achievement"):
+        achievement = _clip(str(digest["achievement"]), ACHIEVEMENT_CHARS) or None
+    generated = digest.get("generated_at") if isinstance(digest, dict) else None
+    shown = digest.get("turns_shown") if isinstance(digest, dict) else None
+    total = digest.get("turns_total") if isinstance(digest, dict) else None
+    return {
+        "ordinal": ordinal,
+        "current": current,
+        "began_epoch": began,
+        "ended_epoch": ended,
+        "lived_seconds": lived,
+        "kind": None if current else kind,
+        "turns": count("turns"),
+        "subcalls": count("subcalls"),
+        "errors": count("errors"),
+        "edits": count("edits"),
+        "note": "" if current else _clip(str(row.get("summary") or ""), NOTE_CAP),
+        "verdict": None if current else _public_verdict(verdict),
+        "moments": [] if current else public_moments,
+        "achievement": None if current else achievement,
+        "digest": {
+            "state": "off"
+            if current and not enabled
+            else ("pending" if current else _digest_state(ordinal, digest, enabled)),
+            "turns_shown": int(shown)
+            if isinstance(shown, int) and not isinstance(shown, bool)
+            else None,
+            "turns_total": int(total)
+            if isinstance(total, int) and not isinstance(total, bool)
+            else None,
+            "generated_at": float(generated)
+            if isinstance(generated, (int, float)) and not isinstance(generated, bool)
+            else None,
+        },
+    }
+
+
+def _fallback_lives(work, now):
+    """Lives from the tombstone mirror alone, newest first, when the census has not run."""
+    book = records.record_book(work, now=now)
+    incarnation = len(data.tombstone_paths(work)) + 1
+    by_ordinal = {}
+    for life in book.get("lives") or []:
+        if isinstance(life, dict) and isinstance(life.get("ordinal"), int):
+            by_ordinal[life["ordinal"]] = life
+    notes = {}
+    for entry in data.lineage(work, [], limit=LIVES_CAP, now=now):
+        if isinstance(entry.get("ordinal"), int):
+            notes[entry["ordinal"]] = entry
+    rows = [{"ordinal": incarnation, "current": True}]
+    for ordinal in range(incarnation - 1, 0, -1):
+        life = by_ordinal.get(ordinal, {})
+        note = notes.get(ordinal, {})
+        ended = life.get("ended_epoch", note.get("ended_epoch"))
+        seconds = life.get("seconds")
+        began = (
+            ended - seconds
+            if isinstance(ended, (int, float)) and isinstance(seconds, (int, float))
+            else None
+        )
+        rows.append(
+            {
+                "ordinal": ordinal,
+                "current": False,
+                "began_epoch": began,
+                "ended_epoch": ended,
+                "ending_kind": life.get("kind") or note.get("kind"),
+                "summary": note.get("sentence") or "",
+            }
+        )
+    return rows
+
+
+def _lineage_snapshot(now=None):
+    """Every life with its figures, verdict and digest, for the telemetry panel."""
+    if now is None:
+        now = time.time()
+    work = os.path.join(TELEMETRY_DIR, "work")
+    rows = census.cached_lives()
+    if rows is None:
+        rows = _fallback_lives(work, now)
+    enabled = moments.enabled()
+    digests = moments.cached_digests() if enabled else {}
+    lives = []
+    for row in rows[: LIVES_CAP + 1]:
+        ordinal = row.get("ordinal") if isinstance(row, dict) else None
+        verdict = desk.cached_verdict(ordinal) if isinstance(ordinal, int) else None
+        lives.append(_public_life(row, verdict, digests.get(ordinal), enabled))
+    incarnation = lives[0]["ordinal"] if lives else 1
+    return {
+        "now": now,
+        "incarnation": incarnation,
+        "digests_enabled": enabled,
+        "desk_model": _clip(desk.model_name(), MODEL_CAP) if enabled else "",
+        "digest_model": _clip(moments.model_name(), MODEL_CAP) if enabled else "",
+        "lives": lives,
+        "lives_omitted": max(0, len(rows) - len(lives)),
+    }
+
+
+def lineage_snapshot():
+    """Assemble the lineage endpoint's data; never raises, never omits a key."""
+    now = time.time()
+    try:
+        return _lineage_snapshot(now)
+    except Exception:
+        return {
+            "now": now,
+            "incarnation": 1,
+            "digests_enabled": False,
+            "desk_model": "",
+            "digest_model": "",
+            "lives": [],
+            "lives_omitted": 0,
+        }
+
+
 def _public_desk(package):
     """The analyst verdicts, capped, or None when the desk has nothing."""
     if not isinstance(package, dict):
@@ -817,6 +1022,8 @@ class StreamHandler(_BaseHandler):
             self._send(200, pages.STREAM_PAGE_HTML, content_type="text/html; charset=utf-8")
         elif route == "/api/stream":
             self._send(200, json.dumps(stream_snapshot()))
+        elif route == "/api/lineage":
+            self._send(200, json.dumps(lineage_snapshot()))
         elif route.startswith("/audio/"):
             self._handle_audio(unquote(route[len("/audio/") :]))
         elif route.startswith("/frame/"):

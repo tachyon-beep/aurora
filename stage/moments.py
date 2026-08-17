@@ -56,7 +56,11 @@ SYSTEM_PROMPT = (
     "one final line: ACHIEVEMENT: <one clause of at most 100 characters> only if "
     "this incarnation did something no ordinary life in this harness does, "
     "phrased as a plain fact about what it did (never a score, a superlative, or "
-    "a judgment of the model), otherwise the line NONE. " + llm.RECORDS_FRAMING + " "
+    "a judgment of the model), otherwise the line NONE. An ordinary life reads "
+    "its own source, edits its tools, adds helper functions, writes notes to "
+    "memory, calls the model, and ends by its own note: none of that qualifies, "
+    "and most lives get NONE. Something an earlier incarnation was already "
+    "nominated for does not qualify again. " + llm.RECORDS_FRAMING + " "
     "Do not use markdown, headings, bullets, or emoji. Do not address the viewer. "
     "Output only the lines."
 )
@@ -260,11 +264,13 @@ def _tombstone_note(work_dir, ordinal):
         return ""
 
 
-def _prompt(row, turns, note):
+def _prompt(row, turns, note, earlier=()):
     """The records for one life, and the turn ids they show.
 
     row is the census entry; turns is the oldest-first (index, epoch, entry)
-    list. Returns (prompt text, set of shown turn indices).
+    list; earlier is the achievements already nominated for other lives, so
+    the same feat is not nominated twice. Returns (prompt text, set of shown
+    turn indices).
     """
     ordinal = row.get("ordinal")
     kind = row.get("ending_kind") or "unknown"
@@ -300,6 +306,13 @@ def _prompt(row, turns, note):
     body = header + shown
     if note:
         body.append("tombstone note: " + note)
+    for item in earlier:
+        if not isinstance(item, dict) or not item.get("line"):
+            continue
+        body.append(
+            f"earlier nomination: incarnation {item.get('ordinal')}: "
+            + _field(item["line"], ACHIEVEMENT_CHARS)
+        )
     body.append("END RECORDS")
     return "\n".join(body) + "\n\n" + CLOSING_INSTRUCTION, shown_ids
 
@@ -403,7 +416,9 @@ def refresh_once(transcript_path, work_dir, now=None, mono=None):
         if len(turns) < MIN_TURNS:
             _skip(ordinal)
             continue
-        prompt, shown_ids = _prompt(row, turns, _tombstone_note(work_dir, ordinal))
+        prompt, shown_ids = _prompt(
+            row, turns, _tombstone_note(work_dir, ordinal), earlier=achievements()
+        )
         reply = llm.chat(
             SYSTEM_PROMPT,
             prompt,

@@ -13,10 +13,10 @@ import re
 import threading
 import time
 
-from stage import data, llm, moments
+from stage import census, data, llm, moments
 
 DEFAULT_DURATION_SECONDS = 20
-MAX_VERDICTS = 5
+MAX_VERDICTS = 12
 LINE_CHARS = 160
 EVIDENCE_CHARS = 120
 NOTE_CHARS = 320
@@ -30,6 +30,7 @@ MAX_ATTEMPTS = 3
 DEPTH_FULL = "full"
 DEPTH_PARTIAL = "partial"
 DEPTH_TOMBSTONE_ONLY = "tombstone_only"
+DEPTH_SAMPLED = "sampled"
 
 VERDICT_PATTERN = re.compile(r"\s*STARS:\s*([1-5])\s*\|\s*(.{1,300})")
 
@@ -108,31 +109,49 @@ def _depth(ordinal, entry, turns):
     return DEPTH_FULL
 
 
-def life_evidence(ordinal, lineage_entry, turns):
+def life_evidence(ordinal, lineage_entry, turns, census_row=None, digest=None):
     """The measured record of one dead incarnation, and how much of it survives.
 
     The line is built only from fields the lineage entry actually carries; it
     is never generated, so a dispute about a verdict is never a dispute about
-    whether these numbers are real.
+    whether these numbers are real. A census row supplies the exact turn and
+    self-edit counts over the whole live transcript in place of the tail's
+    lower bound; a digest means the whole life was read, so the depth is full
+    (or sampled, when the digest thinned a long life) rather than the tail's.
     """
     entry = lineage_entry if isinstance(lineage_entry, dict) else {}
+    row = census_row if isinstance(census_row, dict) else {}
     parts = []
     span = entry.get("lifespan_seconds")
     if isinstance(span, (int, float)) and span > 0:
         parts.append("lived " + _duration_text(span))
-    counted = entry.get("turns_lived")
+    exact = row.get("turns")
+    exact = exact if isinstance(exact, int) and not isinstance(exact, bool) and exact > 0 else None
+    counted = exact if exact is not None else entry.get("turns_lived")
     if isinstance(counted, int) and counted > 0:
         label = f"{counted} {'turn' if counted == 1 else 'turns'}"
-        if entry.get("turns_partial"):
+        if exact is None and entry.get("turns_partial"):
             label = "at least " + label
         parts.append(label)
+    edits = row.get("edits")
+    if isinstance(edits, int) and not isinstance(edits, bool) and edits > 0:
+        parts.append(f"{edits} self-{'edit' if edits == 1 else 'edits'}")
     kind = entry.get("kind")
     if kind == "declared":
         parts.append("ended by its own note")
     elif kind == "harness":
         parts.append("ended by the harness")
     line = " · ".join(parts) if parts else "no measurements on record"
-    return {"line": line[:EVIDENCE_CHARS], "depth": _depth(ordinal, entry, turns)}
+    depth = _depth(ordinal, entry, turns)
+    if isinstance(digest, dict) and digest.get("moments"):
+        shown = digest.get("turns_shown")
+        total = digest.get("turns_total")
+        depth = (
+            DEPTH_FULL
+            if not (isinstance(shown, int) and isinstance(total, int)) or shown >= total
+            else DEPTH_SAMPLED
+        )
+    return {"line": line[:EVIDENCE_CHARS], "depth": depth}
 
 
 def cached_verdicts():
@@ -158,6 +177,15 @@ def cached_verdicts():
     }
 
 
+def cached_verdict(ordinal):
+    """A copy of one life's verdict, or None when the desk is disabled or has none."""
+    if not enabled():
+        return None
+    with _LOCK:
+        verdict = _VERDICTS.get(ordinal)
+        return dict(verdict) if verdict is not None else None
+
+
 def _prompt(evidence, note, digest=None):
     """The records for one life as key: value lines, wrapped for the model.
 
@@ -172,6 +200,11 @@ def _prompt(evidence, note, digest=None):
     ]
     if note:
         lines.append(f"tombstone note: {note}")
+    if digest and digest.get("moments"):
+        shown = digest.get("turns_shown")
+        total = digest.get("turns_total")
+        if isinstance(shown, int) and isinstance(total, int):
+            lines.append(f"digest coverage: {shown} of {total} turns read")
     for moment in (digest or {}).get("moments") or []:
         turn = moment.get("turn")
         stars = moment.get("stars")
@@ -262,11 +295,14 @@ def _refresh_once(telemetry_dir, transcript_path, now=None, mono=None):
         with _LOCK:
             attempts, _last = _ATTEMPTS.get(ordinal, (0, 0.0))
             _ATTEMPTS[ordinal] = (attempts + 1, mono)
-        evidence = life_evidence(ordinal, entry, turns)
+        digest = moments.cached_digest(ordinal)
+        evidence = life_evidence(
+            ordinal, entry, turns, census_row=census.cached_life(ordinal), digest=digest
+        )
         note = llm._collapse(str(entry.get("summary") or ""))[:NOTE_CHARS]
         reply = llm.chat(
             SYSTEM_PROMPT,
-            _prompt(evidence, note, moments.cached_digest(ordinal)),
+            _prompt(evidence, note, digest),
             MAX_TOKENS,
             TEMPERATURE,
             model=model_name(),

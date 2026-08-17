@@ -1169,3 +1169,247 @@ def test_achievements_are_projected_newest_first_capped_and_validated():
     assert long[0]["generated_at"] is None
     assert server._public_achievements(None) == []
     assert server._empty_snapshot(1.0)["achievements"] == []
+
+
+def _lineage_tree(tmp_path, monkeypatch, entries, tombstones=()):
+    telemetry = tmp_path / "telemetry"
+    (telemetry / "work" / "tombstones").mkdir(parents=True)
+    for name, text, epoch in tombstones:
+        path = telemetry / "work" / "tombstones" / name
+        path.write_text(text, encoding="utf-8")
+        import os
+
+        os.utime(path, (epoch, epoch))
+    transcripts = tmp_path / "transcripts"
+    transcripts.mkdir()
+    with open(transcripts / "agent_life_transcript.jsonl", "w", encoding="utf-8") as f:
+        for entry in entries:
+            f.write(json.dumps(entry) + "\n")
+    monkeypatch.setattr(server, "TELEMETRY_DIR", str(telemetry))
+    monkeypatch.setattr(server, "TRANSCRIPT_DIR", str(transcripts))
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path / "diode"))
+    return str(transcripts / "agent_life_transcript.jsonl"), str(telemetry / "work")
+
+
+LIFE_KEYS = {
+    "ordinal",
+    "current",
+    "began_epoch",
+    "ended_epoch",
+    "lived_seconds",
+    "kind",
+    "turns",
+    "subcalls",
+    "errors",
+    "edits",
+    "note",
+    "verdict",
+    "moments",
+    "achievement",
+    "digest",
+}
+
+
+def test_lineage_snapshot_from_the_census_with_verdicts_and_digests(tmp_path, monkeypatch):
+    import datetime
+    import time as _time
+
+    from stage import census, desk, moments
+
+    census._reset_for_tests()
+    desk._reset_for_tests()
+    moments._reset_for_tests()
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", "sk-stage-0002")
+    monkeypatch.setenv("STAGE_ANALYSIS_MODEL", "vendor/analyst")
+    now = _time.time()
+
+    def iso(epoch):
+        return datetime.datetime.fromtimestamp(epoch, tz=datetime.timezone.utc).isoformat()
+
+    def turn(epoch, calls=()):
+        message = {"content": "c"}
+        if calls:
+            message["tool_calls"] = [{"function": {"name": n, "arguments": "{}"}} for n in calls]
+        return {
+            "timestamp": iso(epoch),
+            "request": {"model": "m", "tools": [{}], "messages": []},
+            "response": {"choices": [{"message": message}]},
+        }
+
+    entries = [
+        turn(now - 900, ("write_file",)),
+        turn(now - 800),
+        turn(now - 700, ("write_file", "migrate")),
+        turn(now - 500),
+        turn(now - 100),
+    ]
+    tombs = [
+        (
+            "incarnation-0001.txt",
+            "Incarnation ended by done() at turn 3. It wrote a tool.",
+            now - 600,
+        ),
+        ("incarnation-0002.txt", "The harness terminated by the harness note.", now - 400),
+    ]
+    try:
+        transcript, work = _lineage_tree(tmp_path, monkeypatch, entries, tombs)
+        census.refresh_once(transcript, work, now=now)
+        desk._store(2, 4, "A bold life.", {"line": "lived 3m", "depth": "full"})
+        moments._store(
+            2,
+            [
+                {"turn": 3, "stars": 5, "line": "Rewrote itself."},
+                {"turn": 4, "stars": 2, "line": "Sat."},
+            ],
+            "first to do a thing",
+            2,
+            2,
+        )
+        snap = server.lineage_snapshot()
+        assert set(snap) == {
+            "now",
+            "incarnation",
+            "digests_enabled",
+            "desk_model",
+            "digest_model",
+            "lives",
+            "lives_omitted",
+        }
+        assert snap["incarnation"] == 3
+        assert snap["digests_enabled"] is True
+        assert snap["desk_model"] == "vendor/analyst"
+        assert snap["digest_model"] == "vendor/analyst"
+        assert snap["lives_omitted"] == 0
+        lives = snap["lives"]
+        assert [life["ordinal"] for life in lives] == [3, 2, 1]
+        assert all(set(life) == LIFE_KEYS for life in lives)
+        current = lives[0]
+        assert current["current"] is True
+        assert current["kind"] is None and current["note"] == ""
+        assert current["turns"] == 1 and current["edits"] == 0
+        assert (
+            current["verdict"] is None
+            and current["moments"] == []
+            and current["achievement"] is None
+        )
+        assert current["began_epoch"] == lives[1]["ended_epoch"]
+        second = lives[1]
+        assert second["kind"] == "harness"
+        assert second["turns"] == 1
+        assert second["lived_seconds"] == second["ended_epoch"] - second["began_epoch"]
+        assert second["verdict"] == {
+            "stars": 4,
+            "line": "A bold life.",
+            "evidence": "lived 3m",
+            "depth": "full",
+        }
+        assert second["moments"] == [
+            {"turn": 3, "stars": 5, "line": "Rewrote itself."},
+            {"turn": 4, "stars": 2, "line": "Sat."},
+        ]
+        assert second["achievement"] == "first to do a thing"
+        assert second["digest"]["state"] == "ready"
+        assert second["digest"]["turns_shown"] == 2 and second["digest"]["turns_total"] == 2
+        assert isinstance(second["digest"]["generated_at"], float)
+        first = lives[2]
+        assert first["kind"] == "declared"
+        assert first["turns"] == 3 and first["edits"] == 3
+        assert first["note"].startswith("Incarnation ended by done() at turn 3.")
+        assert first["verdict"] is None and first["moments"] == []
+        assert first["digest"]["state"] == "pending"
+        assert first["digest"]["turns_shown"] is None
+        moments._SKIPPED.add(1)
+        assert server.lineage_snapshot()["lives"][2]["digest"]["state"] == "skipped"
+        monkeypatch.delenv("STAGE_SUMMARY_API_KEY")
+        off = server.lineage_snapshot()
+        assert off["digests_enabled"] is False and off["desk_model"] == ""
+        assert off["lives"][1]["digest"]["state"] == "off"
+        assert off["lives"][1]["verdict"] is None and off["lives"][1]["moments"] == []
+    finally:
+        census._reset_for_tests()
+        desk._reset_for_tests()
+        moments._reset_for_tests()
+
+
+def test_lineage_snapshot_falls_back_to_the_tombstones_without_a_census(tmp_path, monkeypatch):
+    import time as _time
+
+    from stage import census
+
+    census._reset_for_tests()
+    now = _time.time()
+    tombs = [
+        ("incarnation-0001.txt", "Incarnation ended by done() at turn 3.", now - 600),
+        ("incarnation-0002.txt", "The harness terminated by the harness note.", now - 400),
+    ]
+    try:
+        _lineage_tree(tmp_path, monkeypatch, [], tombs)
+        snap = server.lineage_snapshot()
+        lives = snap["lives"]
+        assert [life["ordinal"] for life in lives] == [3, 2, 1]
+        assert lives[0]["current"] is True
+        assert lives[1]["turns"] is None and lives[1]["edits"] is None
+        assert lives[1]["kind"] == "harness"
+        assert lives[1]["lived_seconds"] == 200.0
+        assert lives[1]["note"] == "The harness terminated by the harness note."
+        assert lives[2]["kind"] == "declared"
+        assert lives[2]["lived_seconds"] is None
+        assert lives[1]["digest"]["state"] == "off"
+    finally:
+        census._reset_for_tests()
+
+
+def test_public_life_caps_and_rejects_malformed_shapes():
+    life = server._public_life(
+        {
+            "ordinal": "7",
+            "current": False,
+            "began_epoch": True,
+            "ended_epoch": "x",
+            "turns": True,
+            "summary": "n" * 500,
+            "ending_kind": "weird",
+        },
+        {"stars": 9, "line": "l" * 400, "evidence": "e" * 400, "depth": "d" * 40},
+        {
+            "moments": [
+                {"turn": 1, "stars": 0, "line": "z" * 300},
+                {"turn": True, "stars": 3, "line": "no"},
+                {"turn": 2, "stars": 3, "line": ""},
+            ]
+            + [{"turn": i, "stars": 3, "line": "m"} for i in range(10, 30)],
+            "achievement": "a" * 300,
+            "turns_shown": "3",
+            "turns_total": 4.5,
+            "generated_at": "soon",
+        },
+        True,
+    )
+    assert life["ordinal"] == 7
+    assert (
+        life["began_epoch"] is None
+        and life["ended_epoch"] is None
+        and life["lived_seconds"] is None
+    )
+    assert life["turns"] is None
+    assert life["kind"] is None
+    assert len(life["note"]) == server.NOTE_CAP
+    assert life["verdict"]["stars"] == 5
+    assert len(life["verdict"]["line"]) == server.DESK_LINE_CAP
+    assert len(life["moments"]) == server.MOMENTS_CAP
+    assert life["moments"][0] == {"turn": 1, "stars": 1, "line": "z" * server.MOMENT_LINE_CAP}
+    assert len(life["achievement"]) == server.ACHIEVEMENT_CHARS
+    assert life["digest"] == {
+        "state": "ready",
+        "turns_shown": None,
+        "turns_total": None,
+        "generated_at": None,
+    }
+    assert server._public_life("junk", None, None, False)["ordinal"] == 0
+
+
+def test_lineage_route_is_served_on_the_stream_port_without_a_token(stream):
+    status, body = _plain_get(stream, "/api/lineage")
+    assert status == 200
+    payload = json.loads(body)
+    assert set(payload) >= {"lives", "incarnation", "lives_omitted"}

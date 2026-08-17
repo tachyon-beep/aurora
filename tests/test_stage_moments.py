@@ -383,3 +383,19 @@ def test_the_system_prompt_states_the_form_the_framing_and_the_achievement_rule(
     assert "NONE" in moments.SYSTEM_PROMPT
     assert llm.RECORDS_FRAMING in moments.SYSTEM_PROMPT
     assert "never a score" in moments.SYSTEM_PROMPT
+
+
+def test_earlier_nominations_travel_in_the_records_so_they_are_not_repeated(tmp_path, monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    transcript, work = _standard(tmp_path)
+    moments._store(9, [{"turn": 1, "stars": 3, "line": "x"}], "built a network probe", 1, 1)
+    handed = []
+    monkeypatch.setattr(
+        moments.llm, "chat", _fake_chat(handed, "MOMENT: T0 | 3 | y ACHIEVEMENT: NONE")
+    )
+    assert moments.refresh_once(transcript, work, now=NOW) is True
+    user = handed[0]["user"]
+    assert "earlier nomination: incarnation 9: built a network probe" in user
+    assert user.index("earlier nomination") < user.index("END RECORDS")
+    assert "most lives get NONE" in handed[0]["system"]
+    assert moments.cached_digest(1)["achievement"] is None
