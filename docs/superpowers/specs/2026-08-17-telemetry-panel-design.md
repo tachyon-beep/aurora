@@ -1,7 +1,10 @@
 # The telemetry panel
 
-Date: 2026-08-17. Status: approved for build after ux-critic review (verdict "build with
-changes", 2026-08-17; every change adopted below). Operator brief (John, 2026-08-17): "we'll also
+Date: 2026-08-17. Status: implemented (branch `stage-ledger-and-panel`, merged to main 2026-08-17)
+after ux-critic review (verdict "build with changes", every change adopted below; the built page was
+re-reviewed by the same critic — "ship after fixes" — and every fix landed: the pause toggle stops the
+clock, a visible seam token, no raw tool arguments, offline banner in flow, 44 px narrow targets, the
+`#` header named, disabled orders when the census is inexact). Operator brief (John, 2026-08-17): "we'll also
 offer a more elaborate telemetry panel for people browsing along at home"; "please take those
 onboard and resolve them". Companion to `2026-08-17-stage-rail-and-responsive-design.md` (which
 moved reference prose out of the broadcast rail for this page) and

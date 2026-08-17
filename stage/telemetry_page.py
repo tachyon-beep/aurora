@@ -213,7 +213,7 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
   #record-table td.seam { border-left: 0; }
   #record-table td.stars { border-left: 1px solid var(--seam); padding-left: 10px; }
   #record-table td.stars.sep::before { content: none; }
-  .disc .hash { display: inline; }
+  .disc .hash { display: inline; margin-right: -6px; }
   html { scroll-padding-top: 108px; }
   #offline { margin: 0 -12px -6px; padding: 8px 12px; }
   .card .blk.reading { border-left: 0; padding-left: 0; border-top: 1px solid var(--seam); padding-top: 14px; }
