@@ -208,12 +208,18 @@ def console_limit(variables, key, default):
     dict; a direct caller can still hand this a malformed value (None, a
     list, a bare string), and .get would raise AttributeError rather than
     degrade -- so a non-dict is treated the same as a dict missing the key.
+    Infinity and -Infinity are valid JSON as this module's own parser reads
+    it (json.load's default allow_nan permits them), and int() raises
+    OverflowError for either -- a type distinct from the malformed-string
+    and wrong-type cases above. This is read from write_state on every
+    cycle regardless of whether any command ran, so left uncaught it would
+    end the poll loop from console content alone.
     """
     if not isinstance(variables, dict):
         return default
     try:
         return int(variables.get(key, default))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -323,7 +329,13 @@ def consume_batch():
     Reads the same untrusted file load_console does, so it carries the same
     RecursionError hazard for the same reason (see load_console); a
     malformed file degrades to a fresh commands/variables pair rather than
-    raising, exactly as load_console would report it on the next read.
+    raising, exactly as load_console would report it on the next read. The
+    write-back can still fail on its own terms -- a full volume or a
+    permission change on VIDEO_DIR raises out of _replace_json -- and since
+    this runs before the dispatch loop on every cycle that has commands,
+    that failure must not propagate: the caller's own commands list, already
+    captured from load_console, still gets dispatched this cycle regardless,
+    and the file is simply left for the next read to contend with.
     """
     try:
         with open(CONSOLE_FILE, "r", encoding="utf-8") as f:
@@ -334,7 +346,10 @@ def consume_batch():
         data = {}
     data["commands"] = []
     data.setdefault("variables", {})
-    _replace_json(CONSOLE_FILE, data)
+    try:
+        _replace_json(CONSOLE_FILE, data)
+    except OSError:
+        pass
 
 
 def _output_slug(command):
@@ -1161,42 +1176,66 @@ def handle_command(command, variables, state, now=None):
     # no fallthrough case to return for.
 
 
+def run_cycle(state):
+    """One pass: read the console, run each command, prune, publish state.
+
+    Pruning and state publication run on every cycle regardless of console
+    state -- an idle cycle and an unparseable console prune exactly as a
+    busy one does, because a cleanup command would be unreachable exactly
+    when the volume is full. The command list is cleared before dispatch
+    (consume_batch, before the loop below), so a command that crashes the
+    process cannot run again on restart.
+
+    Nothing the agent can write to /video may end this cycle: load_console
+    and ensure_dirs already degrade rather than raise for the malformed
+    inputs they are known to see (deeply nested JSON, a file where a
+    directory belongs), and consume_batch degrades the same way on both its
+    read and its write-back. A command that raises is caught per-command,
+    recorded as "command failed: <ExceptionType>", and does not stop the
+    commands after it. write_output's and write_state's own calls here are
+    each wrapped as a second line of defense, broadly rather than narrowed
+    to OSError, matching write_output's existing guard: this cycle's
+    contract with the rest of /video is "never raise", and no exhaustive
+    list of the ways console content or a blocked volume can misbehave
+    underneath handle_command or write_state is trustworthy enough to
+    narrow that to a single exception type.
+    """
+    ensure_dirs()
+    commands, variables = load_console()
+    if commands:
+        consume_batch()
+    for command in commands:
+        try:
+            text, state = handle_command(command, variables, state)
+        except Exception as e:
+            text = f"command failed: {type(e).__name__}"
+        try:
+            write_output(command, text)
+        except Exception:
+            pass
+    prune_tree(STILLS_DIR, VIDEO_STILL_KEEP, ".jpg")
+    prune_tree(OUTPUT_DIR, VIDEO_OUTPUT_KEEP, ".txt")
+    try:
+        write_state(variables, state)
+    except Exception:
+        pass
+    return state
+
+
 def run_video():
-    """Poll the console, run each command in order, prune, and publish state.
+    """Poll the console forever, one run_cycle per pass.
 
     The console is seeded once, only when absent, with an empty command list
     -- an existing console.json (from a prior incarnation, or hand-written)
-    is never overwritten. A command that raises is caught per-command so one
-    failing command does not stop the cycle or the commands after it; the
-    poll loop itself is not expected to exit.
-
-    Nothing the agent can write to /video may end this loop: load_console
-    and ensure_dirs already degrade rather than raise for the malformed
-    inputs they are known to see (deeply nested JSON, a file where a
-    directory belongs), and write_output's own call here is wrapped as a
-    second line of defense, since it runs once per command outside the
-    try/except above and its result is not otherwise used by this loop.
+    is never overwritten. The poll loop itself is not expected to exit;
+    run_cycle carries the discipline that keeps it that way.
     """
     ensure_dirs()
     if not os.path.exists(CONSOLE_FILE):
         _replace_json(CONSOLE_FILE, {"commands": [], "variables": {}})
     state = ServiceState()
     while True:
-        commands, variables = load_console()
-        if commands:
-            consume_batch()
-        for command in commands:
-            try:
-                text, state = handle_command(command, variables, state)
-            except Exception as e:
-                text = f"command failed: {type(e).__name__}"
-            try:
-                write_output(command, text)
-            except Exception:
-                pass
-        prune_tree(STILLS_DIR, VIDEO_STILL_KEEP, ".jpg")
-        prune_tree(OUTPUT_DIR, VIDEO_OUTPUT_KEEP, ".txt")
-        write_state(variables, state)
+        state = run_cycle(state)
         time.sleep(POLL_SECONDS)
 
 

@@ -1765,3 +1765,138 @@ def test_transcript_refusal_is_not_double_prefixed(volume):
     text, state = video.handle_command("transcript not-an-id", _open_variables(), _state())
     assert text.count("invalid video id:") == 1
     assert "invalid argument:" not in text
+
+
+# cycle discipline
+
+
+def test_pruning_runs_on_an_idle_cycle(volume, monkeypatch):
+    monkeypatch.setattr(video, "VIDEO_STILL_KEEP", 1)
+    stills = volume / "stills"
+    for i in range(3):
+        f = stills / f"f{i}.jpg"
+        f.write_bytes(b"x")
+        _os.utime(f, (1000 + i, 1000 + i))
+    video.run_cycle(_state())
+    assert len(list(stills.glob("*.jpg"))) == 1
+
+
+def test_pruning_runs_when_the_console_is_unparseable(volume, monkeypatch):
+    monkeypatch.setattr(video, "VIDEO_STILL_KEEP", 1)
+    (volume / "console.json").write_text("{ not json")
+    stills = volume / "stills"
+    for i in range(3):
+        f = stills / f"f{i}.jpg"
+        f.write_bytes(b"x")
+        _os.utime(f, (1000 + i, 1000 + i))
+    video.run_cycle(_state())
+    assert len(list(stills.glob("*.jpg"))) == 1
+
+
+def test_a_failing_command_does_not_stop_the_cycle(volume, monkeypatch):
+    (volume / "console.json").write_text(
+        _json.dumps({"commands": ["search a", "search b"], "variables": {}})
+    )
+    calls = {"n": 0}
+
+    def boom(command, variables, state, now=None):
+        calls["n"] += 1
+        raise RuntimeError("upstream exploded")
+
+    monkeypatch.setattr(video, "handle_command", boom)
+    video.run_cycle(_state())
+    assert calls["n"] == 2
+    # Both failures were recorded factually rather than lost.
+    outputs = list((volume / "output").glob("*.txt"))
+    assert len(outputs) == 2
+    assert "command failed" in outputs[0].read_text()
+
+
+def test_a_cycle_writes_state_even_with_no_commands(volume):
+    video.run_cycle(_state())
+    assert (volume / "state.json").exists()
+
+
+def test_the_command_list_is_cleared_before_execution(volume, monkeypatch):
+    # A command that crashes the process must not run again on restart.
+    (volume / "console.json").write_text(_json.dumps({"commands": ["search a"], "variables": {}}))
+    seen = {}
+
+    def fake(command, variables, state, now=None):
+        seen["cleared"] = _json.loads((volume / "console.json").read_text())["commands"]
+        return "ok", state
+
+    monkeypatch.setattr(video, "handle_command", fake)
+    video.run_cycle(_state())
+    assert seen["cleared"] == []
+
+
+# cycle discipline: run_cycle-level regressions for the Task 8 crash class
+# (nothing the agent can write to /video may end the poll loop), plus two
+# defects found while extracting run_cycle that Task 8's fix did not close
+
+
+def test_run_cycle_survives_a_deeply_nested_console(volume):
+    (volume / "console.json").write_text("[" * 200_000 + "]" * 200_000)
+    state = video.run_cycle(_state())
+    assert isinstance(state, video.ServiceState)
+    assert (volume / "state.json").exists()
+
+
+def test_run_cycle_survives_a_file_where_output_dir_belongs(volume):
+    _os.rmdir(str(volume / "output"))
+    (volume / "output").write_text("not a directory")
+    (volume / "console.json").write_text(_json.dumps({"commands": ["help"], "variables": {}}))
+    state = video.run_cycle(_state())
+    assert isinstance(state, video.ServiceState)
+    assert (volume / "state.json").exists()
+    assert (volume / "HELP.md").exists()
+
+
+def test_console_limit_tolerates_an_infinite_float():
+    # Infinity is valid JSON that this module's own parser accepts
+    # (json.load's default allow_nan permits it), and int(float("inf"))
+    # raises OverflowError -- a type console_limit's except tuple did not
+    # name before this fix.
+    assert video.console_limit({"video_budget": float("inf")}, "video_budget", 1) == 1
+    assert video.console_limit({"video_budget": float("-inf")}, "video_budget", 1) == 1
+
+
+def test_run_cycle_survives_an_infinite_budget_value_with_no_command_dispatched(volume):
+    # write_state runs unconditionally on every cycle, including an idle
+    # one, and calls effective_limit for all three allowances. Before the
+    # console_limit fix, an Infinity budget crashed this with no command
+    # ever dispatched; after it, write_state's own try/except at the
+    # run_cycle call site is a second line of defense.
+    (volume / "console.json").write_text(
+        _json.dumps({"commands": [], "variables": {"video_budget": float("inf")}})
+    )
+    state = video.run_cycle(_state())
+    assert isinstance(state, video.ServiceState)
+    assert (volume / "state.json").exists()
+
+
+def test_consume_batch_survives_a_write_back_failure(volume, monkeypatch):
+    (volume / "console.json").write_text(_json.dumps({"commands": ["help"], "variables": {}}))
+
+    def boom(path, data):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(video, "_replace_json", boom)
+    video.consume_batch()  # must not raise
+
+
+def test_run_cycle_survives_a_console_write_back_failure(volume, monkeypatch):
+    (volume / "console.json").write_text(_json.dumps({"commands": ["help"], "variables": {}}))
+    original = video._replace_json
+
+    def boom(path, data):
+        if path == video.CONSOLE_FILE:
+            raise OSError("disk full")
+        return original(path, data)
+
+    monkeypatch.setattr(video, "_replace_json", boom)
+    state = video.run_cycle(_state())
+    assert isinstance(state, video.ServiceState)
+    # The command still dispatched even though the console write-back failed.
+    assert (volume / "HELP.md").exists()
