@@ -466,7 +466,15 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self._refuse_and_close(411, "request body must carry a content-length")
             return
 
-        content_length = int(self.headers.get("Content-Length", 0))
+        raw_length = self.headers.get("Content-Length", "0")
+        try:
+            content_length = int(raw_length)
+        except ValueError:
+            self._refuse_and_close(400, "content-length must be an integer")
+            return
+        if content_length < 0:
+            self._refuse_and_close(400, "content-length must not be negative")
+            return
         if content_length > REQUEST_MAX_BYTES:
             self._refuse_and_close(413, f"request body must be at most {REQUEST_MAX_BYTES} bytes")
             return
@@ -635,6 +643,23 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    @staticmethod
+    def _display_text(content):
+        """A message's content as text.
+
+        A multimodal message carries a list of parts rather than a string, and
+        a length test over that list counts parts, not characters, so the
+        display caps below would not bound an embedded data URL.
+        """
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        try:
+            return json.dumps(content, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(content)
+
     def log_transcript(self, request_data, response_data, stream="core"):
         """Appends a new conversation step to the transcript file and dumps it to stdout."""
         os.makedirs(TRANSCRIPT_DIR, exist_ok=True)
@@ -651,7 +676,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         print("=" * 80)
         for msg in request_data.get("messages", []):
             role = msg.get("role", "unknown").upper()
-            content = msg.get("content", "")
+            content = self._display_text(msg.get("content", ""))
             tool_calls = msg.get("tool_calls")
             name = msg.get("name")
             name_suffix = f" (Name: {name})" if name else ""
@@ -716,7 +741,7 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         plain_log_lines.append("--- REQUEST MESSAGES ---")
         for msg in request_data.get("messages", []):
             role = msg.get("role", "unknown").upper()
-            content = msg.get("content", "")
+            content = self._display_text(msg.get("content", ""))
             tool_calls = msg.get("tool_calls")
             name = msg.get("name")
             name_suffix = f" (Name: {name})" if name else ""

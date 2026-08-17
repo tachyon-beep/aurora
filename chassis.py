@@ -37,6 +37,24 @@ def _estimate_tokens(messages):
     return len(json.dumps(messages, ensure_ascii=False)) // 4
 
 
+def _message_length(message):
+    """The serialised length of one message, in the units _estimate_tokens counts."""
+    return len(json.dumps(message, ensure_ascii=False))
+
+
+def _window_total(count, length_sum):
+    """The estimate for a message list of count members whose lengths sum to length_sum.
+
+    json.dumps writes a list as its members joined by ", " inside brackets, so
+    the whole document's length follows from the members' lengths. The window
+    below grows one message at a time; deriving the total this way keeps each
+    step from re-serialising every message already in it.
+    """
+    if count <= 0:
+        return 0
+    return (2 + length_sum + 2 * (count - 1)) // 4
+
+
 def clip_to_window(messages, budget_tokens=None):
     """Return the pinned messages plus the most recent messages that fit the token budget.
 
@@ -55,13 +73,28 @@ def clip_to_window(messages, budget_tokens=None):
     rest = [m for m in messages if m.get("role") != "system"]
     first_user = next((m for m in rest if m.get("role") == "user"), None)
     pinned = system + ([first_user] if first_user is not None else [])
-    kept = []
+    system_lengths = [_message_length(m) for m in system]
+    system_total = (len(system_lengths), sum(system_lengths))
+    pinned_total = system_total
+    if first_user is not None:
+        pinned_total = (system_total[0] + 1, system_total[1] + _message_length(first_user))
+    newest_first = []
+    kept_count = 0
+    kept_sum = 0
+    holds_first_user = False
     for m in reversed(rest):
-        candidate = [m] + kept
-        prefix = system if any(c is first_user for c in candidate) else pinned
-        if kept and _estimate_tokens(prefix + candidate) > budget_tokens:
+        length = _message_length(m)
+        holds = holds_first_user or m is first_user
+        prefix_count, prefix_sum = system_total if holds else pinned_total
+        count = prefix_count + 1 + kept_count
+        total = prefix_sum + length + kept_sum
+        if newest_first and _window_total(count, total) > budget_tokens:
             break
-        kept = candidate
+        newest_first.append(m)
+        kept_count += 1
+        kept_sum += length
+        holds_first_user = holds
+    kept = newest_first[::-1]
     while kept and kept[0].get("role") == "tool":
         kept = kept[1:]
     if first_user is not None and not any(m is first_user for m in kept):

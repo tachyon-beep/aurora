@@ -36,7 +36,7 @@ SENSE_DIR = os.environ.get("SENSE_DIR", "/sense")
 STREAM_PORT = int(os.environ.get("STREAM_PORT", "8091"))
 CONSOLE_PORT = int(os.environ.get("CONSOLE_PORT", "8092"))
 
-DISPLAY_TURNS = 6
+DISPLAY_TURNS = 10
 DISPLAY_SUBCALLS = 3
 DISPLAY_OUTPUTS = 4
 DISPLAY_PUBLISHED = 2
@@ -107,6 +107,39 @@ class _BaseHandler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
+
+    def _send_file(self, path, content_type, extra=None):
+        """Stream a file's bytes with its length, or answer 404.
+
+        The body is streamed rather than buffered: these routes serve files
+        the agent writes, so concurrent requests for one file must not each
+        hold a whole copy in the container's memory. A file that shrinks
+        while it is being sent cannot fill the length already announced, so
+        the connection is closed rather than left short.
+        """
+        try:
+            size = os.path.getsize(path)
+            handle = open(path, "rb")
+        except OSError:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        with handle:
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(size))
+            headers = dict(SECURITY_HEADERS)
+            headers.update(extra or {})
+            for k, v in headers.items():
+                self.send_header(k, v)
+            self.end_headers()
+            remaining = size
+            while remaining > 0:
+                chunk = handle.read(min(65536, remaining))
+                if not chunk:
+                    self.close_connection = True
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
 
     def _reject_method(self):
         self._send(405, json.dumps({"error": "method not allowed"}))
@@ -203,27 +236,11 @@ class ConsoleHandler(_BaseHandler):
             self._send(404, json.dumps({"error": "not found"}))
             return
         name = _sanitize_header_value(os.path.basename(target))
-        try:
-            size = os.path.getsize(target)
-            f = open(target, "rb")
-        except OSError:
-            self._send(404, json.dumps({"error": "not found"}))
-            return
-        with f:
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(size))
-            for k, v in SECURITY_HEADERS.items():
-                self.send_header(k, v)
-            self.send_header("Content-Disposition", f'attachment; filename="{name}"')
-            self.end_headers()
-            remaining = size
-            while remaining > 0:
-                chunk = f.read(min(65536, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
+        self._send_file(
+            target,
+            "application/octet-stream",
+            extra={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
 
     def _handle_diff(self):
         work = os.path.join(TELEMETRY_DIR, "work")
@@ -1102,27 +1119,13 @@ class StreamHandler(_BaseHandler):
             self._send(404, json.dumps({"error": "not found"}))
             return
         try:
-            size = os.path.getsize(target)
-            if size > AUDIO_MAX_BYTES:
-                raise OSError("too large")
-            f = open(target, "rb")
+            oversized = os.path.getsize(target) > AUDIO_MAX_BYTES
         except OSError:
+            oversized = True
+        if oversized:
             self._send(404, json.dumps({"error": "not found"}))
             return
-        with f:
-            self.send_response(200)
-            self.send_header("Content-Type", "audio/mpeg")
-            self.send_header("Content-Length", str(size))
-            for k, v in SECURITY_HEADERS.items():
-                self.send_header(k, v)
-            self.end_headers()
-            remaining = size
-            while remaining > 0:
-                chunk = f.read(min(65536, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
+        self._send_file(target, "audio/mpeg")
 
     def _handle_frame(self, route):
         """Serve one captured sense frame.
@@ -1142,26 +1145,7 @@ class StreamHandler(_BaseHandler):
         if target is None:
             self._send(404, json.dumps({"error": "not found"}))
             return
-        try:
-            size = os.path.getsize(target)
-            f = open(target, "rb")
-        except OSError:
-            self._send(404, json.dumps({"error": "not found"}))
-            return
-        with f:
-            self.send_response(200)
-            self.send_header("Content-Type", "image/jpeg")
-            self.send_header("Content-Length", str(size))
-            for k, v in SECURITY_HEADERS.items():
-                self.send_header(k, v)
-            self.end_headers()
-            remaining = size
-            while remaining > 0:
-                chunk = f.read(min(65536, remaining))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                remaining -= len(chunk)
+        self._send_file(target, "image/jpeg")
 
 
 def make_server(port, handler):

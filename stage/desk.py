@@ -290,7 +290,7 @@ def _refresh_once(telemetry_dir, transcript_path, now=None, mono=None):
             and entry["ordinal"] not in have
             and _due(entry["ordinal"], mono)
         ]
-    for entry in due:
+    for entry in due[:1]:
         ordinal = entry["ordinal"]
         with _LOCK:
             attempts, _last = _ATTEMPTS.get(ordinal, (0, 0.0))

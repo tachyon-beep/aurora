@@ -9,7 +9,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 DIODE_DIR = os.environ.get("DIODE_DIR", "/diode")
 CONSOLE_FILE = os.path.join(DIODE_DIR, "console.json")
@@ -634,9 +634,6 @@ def extract_markdown(html):
 
 def extract_links(html, base_url):
     """Return the absolute http(s) links found on a page, one per line."""
-    import re
-    from urllib.parse import urljoin
-
     hrefs = re.findall(r'href=["\']([^"\']+)["\']', html)
     out = []
     seen = set()
@@ -1423,6 +1420,8 @@ def run_diode():
         if commands_valid:
             for command in commands:
                 fetch_history = run_command(command, variables, fetch_history)
+        elif commands:
+            write_output("console", "every command must be a string; none of this batch was run")
         write_help(variables)
         write_state(
             variables,

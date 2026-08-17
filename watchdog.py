@@ -37,6 +37,22 @@ MIRROR_EXCLUDE = ("__pycache__", ".git")
 AGENT_LOG_NAME = "agent_stdout.log"
 AGENT_LOG_MAX_BYTES = 2_000_000
 
+# The liveness signal. The transcript is written by the recorder onto the
+# transcripts volume, which this container does not mount, so its size here is
+# always zero; the captured agent log is written by this process inside the
+# working tree and grows with every line the agent prints.
+ACTIVITY_FILE = os.path.join(WORK_DIR, AGENT_LOG_NAME)
+
+
+def activity_size(path=None):
+    """The size of the liveness signal file, or 0 when it does not exist."""
+    if path is None:
+        path = ACTIVITY_FILE
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
 
 def decide_tier(
     failure_times,
@@ -286,10 +302,15 @@ def _safe_input(prompt=""):
 builtins.input = _safe_input
 sys.stdin = io.StringIO("Beep\\n")
 '''
-            content = re.sub(r"(import sys\r?\n)", r"\1" + safe_function + "\n", content, count=1)
-            with open(agent_path, "w", encoding="utf-8") as f:
-                f.write(content)
-            print("Detected stdin access attempt. Patched input() to always return Beep.")
+            content, applied = re.subn(
+                r"(import sys\r?\n)", r"\1" + safe_function + "\n", content, count=1
+            )
+            if applied:
+                with open(agent_path, "w", encoding="utf-8") as f:
+                    f.write(content)
+                print("Detected stdin access attempt. Patched input() to always return Beep.")
+            else:
+                print("Detected stdin access attempt; no import sys line to patch.")
     except Exception as e:
         print(f"Error sanitizing stdin: {e}")
 
@@ -311,6 +332,7 @@ def spawn_agent():
     sanitize_stdin(AGENT_FILE)
     proc = subprocess.Popen(
         [sys.executable, AGENT_FILE],
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
@@ -364,6 +386,39 @@ def reap_children(agent):
                 agent.returncode = status
 
 
+def apply_recovery(action, ret, own_hash):
+    """Carry out one recovery action and return the watchdog's own file hash.
+
+    The hash is refreshed after any action that may have rewritten
+    watchdog.py from the baseline, so the reload check does not re-exec on
+    the harness's own restoration. tier3 exits for a container respawn.
+    """
+    if action == "archive_reset":
+        archive_transcript()
+        git_reset_all()
+        clear_build_dir()
+        own_hash = file_hash(WATCHDOG_FILE)
+        time.sleep(60 if ret == EXIT_DONE else 10)
+    elif action == "pause":
+        time.sleep(ENVIRONMENT_PAUSE_SECONDS)
+    elif action == "restart":
+        pass
+    elif action == "tier1":
+        if ret == 0:
+            discard_session()
+        restore_agent_only()
+    elif action == "tier2":
+        if ret == 0:
+            discard_session()
+        git_reset_all()
+        own_hash = file_hash(WATCHDOG_FILE)
+    else:
+        print("persistent failure; exiting for container respawn")
+        sys.stdout.flush()
+        sys.exit(1)
+    return own_hash
+
+
 def run_watchdog():
     """Supervise the agent with tiered, self-healing recovery.
 
@@ -389,7 +444,7 @@ def run_watchdog():
     agent = spawn_agent()
     mirror_work()
     last_mirror = time.time()
-    last_size = os.path.getsize(TRANSCRIPT_FILE) if os.path.exists(TRANSCRIPT_FILE) else 0
+    last_size = activity_size()
     last_activity = time.time()
 
     while True:
@@ -415,54 +470,29 @@ def run_watchdog():
                 ret, zero_exits, terminated_exits, failures, now
             )
             print(f"agent exited ({ret}); action {action}")
-            if action == "archive_reset":
-                archive_transcript()
-                git_reset_all()
-                clear_build_dir()
-                own_hash = file_hash(WATCHDOG_FILE)
-                time.sleep(60 if ret == EXIT_DONE else 10)
-            elif action == "pause":
-                time.sleep(ENVIRONMENT_PAUSE_SECONDS)
-            elif action == "restart":
-                pass
-            elif action == "tier1":
-                if ret == 0:
-                    discard_session()
-                restore_agent_only()
-            elif action == "tier2":
-                if ret == 0:
-                    discard_session()
-                git_reset_all()
-                own_hash = file_hash(WATCHDOG_FILE)
-            else:
-                print("persistent failure; exiting for container respawn")
-                sys.stdout.flush()
-                sys.exit(1)
+            own_hash = apply_recovery(action, ret, own_hash)
             agent = spawn_agent()
-            last_size = os.path.getsize(TRANSCRIPT_FILE) if os.path.exists(TRANSCRIPT_FILE) else 0
+            last_size = activity_size()
             last_activity = time.time()
             continue
 
-        size = os.path.getsize(TRANSCRIPT_FILE) if os.path.exists(TRANSCRIPT_FILE) else 0
+        size = activity_size()
         if size != last_size:
             last_size = size
             last_activity = time.time()
         elif time.time() - last_activity > INACTIVITY_TIMEOUT_SECONDS:
             print("inactivity timeout; treating as failure")
             terminate_process(agent)
+            ret = agent.poll()
+            ret = -1 if ret is None else ret
             now = time.time()
-            failures.append(now)
-            tier = decide_tier(failures, now)
-            if tier == 1:
-                restore_agent_only()
-            elif tier == 2:
-                git_reset_all()
-                own_hash = file_hash(WATCHDOG_FILE)
-            else:
-                sys.stdout.flush()
-                sys.exit(1)
+            action, zero_exits, terminated_exits, failures = plan_recovery(
+                ret, zero_exits, terminated_exits, failures, now
+            )
+            print(f"agent stopped after inactivity ({ret}); action {action}")
+            own_hash = apply_recovery(action, ret, own_hash)
             agent = spawn_agent()
-            last_size = os.path.getsize(TRANSCRIPT_FILE) if os.path.exists(TRANSCRIPT_FILE) else 0
+            last_size = activity_size()
             last_activity = time.time()
 
 

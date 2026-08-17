@@ -72,27 +72,38 @@ def _summarize_turn(entry, index):
 
 
 def load_turns(transcript_path, since):
+    """Summarise the transcript entries from `since` onward; (turns, line count).
+
+    The file is walked one line at a time rather than read whole: the recorder
+    rotates it at a size far larger than this container's memory limit, and
+    every connected page polls this. An unterminated final line is a record
+    still being written, so it is left uncounted for the next poll.
+    """
     if not os.path.exists(transcript_path):
         return [], 0
+    turns = []
+    total = 0
+    unparsed = None
     try:
         with open(transcript_path, "r", encoding="utf-8") as f:
-            lines = f.readlines()
+            for index, raw in enumerate(f):
+                total = index + 1
+                if index < since:
+                    continue
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    unparsed = index
+                    continue
+                unparsed = None
+                turns.append(_summarize_turn(entry, index))
     except OSError:
         return [], 0
-    total = len(lines)
-    turns = []
-    for index in range(since, total):
-        line = lines[index].strip()
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            if index == total - 1:
-                total = index
-                break
-            continue
-        turns.append(_summarize_turn(entry, index))
+    if unparsed is not None and unparsed == total - 1:
+        total = unparsed
     return turns, total
 
 
