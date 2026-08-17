@@ -249,6 +249,11 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   text-overflow: ellipsis; font: 400 13px/18px var(--sans); color: var(--paper-faint); }
 #provenance.offline { color: var(--fault); }
 #repo { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint); }
+/* The one link on the page: the at-home telemetry panel. Static text to an OBS
+   source; a phone or laptop viewer can follow it. */
+#to-telemetry { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint);
+  text-decoration: none; }
+#to-telemetry:hover, #to-telemetry:focus-visible { color: var(--vital); text-decoration: underline; }
 #death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 3px;
   background: var(--taken); z-index: 20; transform-origin: left; transform: scaleX(1); }
 #death-sweep.sweeping { animation: sweep 900ms cubic-bezier(.22,.61,.36,1); }
@@ -664,6 +669,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
       <span class="chip c-act"><i class="dot act"></i><b>ACTION</b></span>
       <span id="provenance"></span>
       <span id="repo">github.com/tachyon-beep/aurora</span>
+      <a id="to-telemetry" href="/telemetry">telemetry →</a>
     </div>
     <div id="death-sweep" hidden></div>
   </header>

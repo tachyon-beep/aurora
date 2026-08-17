@@ -381,6 +381,7 @@ BROADCAST_SMALL_TYPE = (
     ".chip b",
     ".divider span",
     "#repo",
+    "#to-telemetry",
 )
 
 
@@ -868,3 +869,10 @@ def test_bar_labels_overflow_their_cell_rather_than_clip():
     block = block[: block.index("}")]
     assert "overflow: visible" in block and "white-space: nowrap" in block
     assert "overflow: hidden" not in block
+
+
+def test_the_masthead_links_to_the_telemetry_panel():
+    """The one link on the broadcast page: internal, to the at-home panel. OBS
+    renders it as text; a phone or laptop viewer can follow it."""
+    assert '<a id="to-telemetry" href="/telemetry">telemetry →</a>' in HTML
+    assert HTML.count("<a ") == 1

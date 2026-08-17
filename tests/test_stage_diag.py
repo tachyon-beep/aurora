@@ -107,6 +107,8 @@ def test_incarnations_lists_every_life_newest_first(tmp_path):
     assert lives[0]["turns"] == 1
     assert lives[1]["ended_epoch"] == _epoch(10)
     assert lives[0]["ended_epoch"] is None
+    assert lives[1]["began_epoch"] == _epoch(1)
+    assert lives[0]["began_epoch"] == _epoch(10)
     assert lives[1]["summary"].startswith("chose to end.")
 
 

@@ -1432,3 +1432,19 @@ def test_lineage_route_is_served_on_the_stream_port_without_a_token(stream):
     assert status == 200
     payload = json.loads(body)
     assert set(payload) >= {"lives", "incarnation", "lives_omitted"}
+
+
+def test_telemetry_page_is_served_without_a_token_with_the_stream_headers(stream):
+    conn = http.client.HTTPConnection("127.0.0.1", stream, timeout=5)
+    conn.request("GET", "/telemetry")
+    resp = conn.getresponse()
+    body = resp.read().decode("utf-8")
+    headers = dict(resp.getheaders())
+    conn.close()
+    assert resp.status == 200
+    assert "aurora — telemetry" in body
+    assert headers.get("Content-Type", "").startswith("text/html")
+    assert (
+        headers.get("Content-Security-Policy") == server.SECURITY_HEADERS["Content-Security-Policy"]
+    )
+    assert headers.get("Cache-Control") == "no-store"

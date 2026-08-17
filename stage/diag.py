@@ -178,16 +178,25 @@ def incarnations(transcript_path, work_dir, now=None):
             "ending_kind": data._ending_kind(text),
             "ended_epoch": data._tombstone_epoch(path, now),
         }
+    # The first life began when the transcript did; every later life began
+    # when the one before it ended.
+    first_began = data.first_transcript_epoch(transcript_path)
     out = []
     for ordinal in range(incarnation, 0, -1):
         ending = endings.get(ordinal)
         previous = endings.get(ordinal - 1)
         bucket = counts.get(ordinal, {"turns": 0, "subcalls": 0, "errors": 0, "edits": 0})
+        if previous:
+            began = previous["ended_epoch"]
+        elif ordinal == 1:
+            began = data._sane_epoch(first_began, now)
+        else:
+            began = None
         out.append(
             {
                 "ordinal": ordinal,
                 "current": ordinal == incarnation,
-                "began_epoch": previous["ended_epoch"] if previous else None,
+                "began_epoch": began,
                 "ended_epoch": ending["ended_epoch"] if ending else None,
                 "ending_kind": ending["ending_kind"] if ending else None,
                 "label": ending["label"] if ending else None,

@@ -367,6 +367,17 @@ def _prompt(row, lines, note, earlier=()):
     return "\n".join(body) + "\n\n" + CLOSING_INSTRUCTION, shown_ids
 
 
+def _cut_words(text, cap):
+    """text within cap characters, cut at a word boundary when it must be cut."""
+    if len(text) <= cap:
+        return text
+    clipped = text[:cap]
+    space = clipped.rfind(" ")
+    if space >= cap // 2:
+        clipped = clipped[:space]
+    return clipped.rstrip(" ,;:—-")
+
+
 def _parse(reply, shown_ids):
     """(moments, achievement) from a reply, or None when no valid moment is present.
 
@@ -396,7 +407,7 @@ def _parse(reply, shown_ids):
     if match:
         text = " ".join(match.group(1).split()).strip().rstrip(".")
         if text and not re.match(r"none\b", text, re.IGNORECASE):
-            achievement = text[:ACHIEVEMENT_CHARS]
+            achievement = _cut_words(text, ACHIEVEMENT_CHARS)
     return moments, achievement
 
 

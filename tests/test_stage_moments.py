@@ -67,7 +67,7 @@ def _tree(tmp_path, entries, deaths, notes=None):
 
 
 NOW = time.time()
-T0 = NOW - 3600
+T0 = float(int(NOW) - 3600)
 
 
 def _standard(tmp_path, notes=None):
@@ -111,7 +111,7 @@ def test_the_prompt_renders_every_turn_the_note_and_the_figures(tmp_path):
     assert count == 5 and abs(start - T0) < 0.01
     prompt, shown = moments._prompt(row, lines, moments._tombstone_note(work, 1))
     assert prompt.startswith("BEGIN RECORDS\nincarnation: 1\n")
-    assert "evidence: 5 turns · 1 self-edit · ended by its own note" in prompt
+    assert "evidence: lived 1m · 5 turns · 1 self-edit · ended by its own note" in prompt
     assert "turns shown: 5 of 5" in prompt
     assert "T0 +0s  think: I wake.  say: Hello." in prompt
     assert "T1 +10s  call: read_file({})" in prompt
@@ -267,6 +267,9 @@ def test_parse_handles_newlines_none_and_caps():
     assert moments._parse(reply, {1})[1] is None
     reply = "MOMENT: T1 | 5 | One. ACHIEVEMENT: " + "a" * 300
     assert len(moments._parse(reply, {1})[1]) == moments.ACHIEVEMENT_CHARS
+    words = "MOMENT: T1 | 5 | One. ACHIEVEMENT: " + ("word " * 40).strip()
+    cut = moments._parse(words, {1})[1]
+    assert len(cut) <= moments.ACHIEVEMENT_CHARS and cut.endswith("word") and not cut.endswith(" ")
     assert moments._parse("no markers here", {1}) is None
     assert moments._parse("", {1}) is None
     assert moments._parse(None, {1}) is None

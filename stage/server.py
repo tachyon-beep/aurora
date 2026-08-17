@@ -19,6 +19,7 @@ from stage import (
     pages,
     records,
     sensecam,
+    telemetry_page,
 )
 
 try:
@@ -1024,6 +1025,10 @@ class StreamHandler(_BaseHandler):
         route = urlparse(self.path).path
         if route == "/":
             self._send(200, pages.STREAM_PAGE_HTML, content_type="text/html; charset=utf-8")
+        elif route == "/telemetry":
+            self._send(
+                200, telemetry_page.TELEMETRY_PAGE_HTML, content_type="text/html; charset=utf-8"
+            )
         elif route == "/api/stream":
             self._send(200, json.dumps(stream_snapshot()))
         elif route == "/api/lineage":
