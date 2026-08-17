@@ -1448,3 +1448,48 @@ def test_telemetry_page_is_served_without_a_token_with_the_stream_headers(stream
         headers.get("Content-Security-Policy") == server.SECURITY_HEADERS["Content-Security-Policy"]
     )
     assert headers.get("Cache-Control") == "no-store"
+
+
+def test_blog_route_serves_posts_and_widens_only_script_src(tmp_path, monkeypatch):
+    diode = tmp_path / "diode"
+    (diode / "blog").mkdir(parents=True)
+    (diode / "blog" / "20260817_120000_000000.md").write_text(
+        "# First\n\n```mermaid\ngraph TD; A-->B\n```\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(server, "DIODE_DIR", str(diode))
+    status, headers, body = call_stream_route("/blog")
+    assert status == 200
+    assert headers.get("Content-Type", "").startswith("text/html")
+    assert b'<article id="post-20260817_120000_000000"' in body
+    assert b'<pre class="mermaid">graph TD; A--&gt;B</pre>' in body
+    csp = headers.get("Content-Security-Policy")
+    assert csp == server.BLOG_CSP
+    assert "script-src 'unsafe-inline' https://cdn.jsdelivr.net" in csp
+    assert (
+        csp.replace(" https://cdn.jsdelivr.net", "")
+        == (server.SECURITY_HEADERS["Content-Security-Policy"])
+    )
+    assert headers.get_all("Content-Security-Policy") == [csp]
+
+
+def test_blog_route_paginates_and_rejects_bad_pages(tmp_path, monkeypatch):
+    diode = tmp_path / "diode"
+    (diode / "blog").mkdir(parents=True)
+    for i in range(12):
+        (diode / "blog" / f"20260817_1200{i:02d}_000000.md").write_text(f"# P{i}", encoding="utf-8")
+    monkeypatch.setattr(server, "DIODE_DIR", str(diode))
+    status, _, body = call_stream_route("/blog")
+    assert status == 200 and b"P11" in body and b"P1</a>" not in body
+    status, _, body = call_stream_route("/blog?page=2")
+    assert status == 200 and b"P1</a>" in body and b"P11" not in body
+    for bad in ("/blog?page=3", "/blog?page=0", "/blog?page=x", "/blog?page=-1"):
+        status, _, _ = call_stream_route(bad)
+        assert status == 404, bad
+
+
+def test_blog_route_empty_folder(tmp_path, monkeypatch):
+    monkeypatch.setattr(server, "DIODE_DIR", str(tmp_path / "diode"))
+    status, _, body = call_stream_route("/blog")
+    assert status == 200 and b"Nothing posted." in body
+    status, _, _ = call_stream_route("/blog?page=2")
+    assert status == 404

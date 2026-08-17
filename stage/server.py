@@ -7,6 +7,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from stage import (
+    blog,
+    blog_page,
     browse,
     census,
     codewatch,
@@ -65,6 +67,10 @@ SECURITY_HEADERS = {
     ),
 }
 
+BLOG_CSP = SECURITY_HEADERS["Content-Security-Policy"].replace(
+    "script-src 'unsafe-inline'", "script-src 'unsafe-inline' https://cdn.jsdelivr.net"
+)
+
 
 def _sanitize_header_value(value):
     """Strip CR, LF, and double-quote so a value is safe to embed in a response header."""
@@ -95,9 +101,9 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        for k, v in SECURITY_HEADERS.items():
-            self.send_header(k, v)
-        for k, v in (extra or {}).items():
+        headers = dict(SECURITY_HEADERS)
+        headers.update(extra or {})
+        for k, v in headers.items():
             self.send_header(k, v)
         self.end_headers()
         self.wfile.write(body)
@@ -1020,14 +1026,39 @@ def stream_snapshot():
         return _empty_snapshot(now)
 
 
+def blog_response(query):
+    """(status, html) for the blog page; query is the parsed query dict."""
+    raw = (query.get("page") or ["1"])[0]
+    try:
+        page = int(raw)
+    except ValueError:
+        return 404, "<!doctype html><title>not found</title><p>not found</p>"
+    names, list_truncated = blog.list_posts(DIODE_DIR)
+    window = blog.paginate(len(names), page)
+    if window is None:
+        return 404, "<!doctype html><title>not found</title><p>not found</p>"
+    start, end, pages = window
+    posts = [p for p in (blog.read_post(DIODE_DIR, n) for n in names[start:end]) if p]
+    return 200, blog_page.render_page(posts, page, pages, len(names), list_truncated)
+
+
 class StreamHandler(_BaseHandler):
     def do_GET(self):
-        route = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        route = parsed.path
         if route == "/":
             self._send(200, pages.STREAM_PAGE_HTML, content_type="text/html; charset=utf-8")
         elif route == "/telemetry":
             self._send(
                 200, telemetry_page.TELEMETRY_PAGE_HTML, content_type="text/html; charset=utf-8"
+            )
+        elif route == "/blog":
+            status, body = blog_response(parse_qs(parsed.query))
+            self._send(
+                status,
+                body,
+                content_type="text/html; charset=utf-8",
+                extra={"Content-Security-Policy": BLOG_CSP},
             )
         elif route == "/api/stream":
             self._send(200, json.dumps(stream_snapshot()))
