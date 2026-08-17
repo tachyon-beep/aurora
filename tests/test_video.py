@@ -320,6 +320,14 @@ def test_write_output_bounds_the_filename(volume):
     assert len(_os.path.basename(path).encode("utf-8")) <= video.OUTPUT_NAME_MAX_BYTES
 
 
+def test_write_output_does_not_collide_within_one_second(volume):
+    first = video.write_output("search tide pools", "FIRST")
+    second = video.write_output("search tide pools", "SECOND")
+    assert first != second
+    assert open(first, encoding="utf-8").read() == "FIRST"
+    assert open(second, encoding="utf-8").read() == "SECOND"
+
+
 # pruning
 
 

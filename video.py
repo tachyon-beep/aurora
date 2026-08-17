@@ -8,6 +8,7 @@ resolves) is validated before ffmpeg receives it. No credential is present in
 this service's environment.
 """
 
+import datetime
 import ipaddress
 import json
 import math
@@ -15,7 +16,6 @@ import os
 import re
 import socket
 import tempfile
-import time
 from urllib.parse import urlparse
 
 VIDEO_DIR = os.environ.get("VIDEO_DIR", "/video")
@@ -271,7 +271,7 @@ def _output_slug(command):
 def write_output(command, text):
     """Write a command result into OUTPUT_DIR; returns the path written."""
     ensure_dirs()
-    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     slug = _output_slug(command)
     name = f"{stamp}_{slug}.txt"
     while len(name.encode("utf-8")) > OUTPUT_NAME_MAX_BYTES:
