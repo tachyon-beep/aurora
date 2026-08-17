@@ -249,9 +249,21 @@ VIDEO_OUTPUT_KEEP = 200
 
 
 def ensure_dirs():
-    """Create the volume's directories; safe to call on every cycle."""
+    """Create the volume's directories; safe to call on every cycle.
+
+    /video is agent-writable, so a directory this service depends on can be
+    replaced with a plain file (rmdir, then write a file at the same path) --
+    os.makedirs(exist_ok=True) still raises FileExistsError in that case,
+    since exist_ok only suppresses the error when the existing path is
+    already a directory. Never raises: a path this cannot (re)create as a
+    directory is left as it is, and callers that write into it degrade on
+    their own rather than this function raising on their behalf.
+    """
     for path in (OUTPUT_DIR, STILLS_DIR):
-        os.makedirs(path, exist_ok=True)
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError:
+            pass
 
 
 def _replace_json(path, data):
@@ -280,11 +292,21 @@ def _replace_json(path, data):
 
 
 def load_console():
-    """Read (commands, variables) from CONSOLE_FILE; defaults on missing/malformed."""
+    """Read (commands, variables) from CONSOLE_FILE; defaults on missing/malformed.
+
+    console.json is agent-writable, so its content is untrusted the same way
+    a request body would be: deeply nested JSON (e.g. thousands of nested
+    lists) makes json.load raise RecursionError, a RuntimeError subclass
+    that a bare ValueError catch does not see, matching the same hazard this
+    file already guards at every other json.loads site (search,
+    resolve_binding, _transcript_payload, _fetch_caption). This is the poll
+    loop's own entry point for that file, called with nothing wrapping it,
+    so it must degrade rather than raise for this to hold anywhere else.
+    """
     try:
         with open(CONSOLE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return [], {}
     commands = data.get("commands", []) if isinstance(data, dict) else []
     variables = data.get("variables", {}) if isinstance(data, dict) else {}
@@ -296,11 +318,17 @@ def load_console():
 
 
 def consume_batch():
-    """Atomically clear the commands list in CONSOLE_FILE, preserving variables."""
+    """Atomically clear the commands list in CONSOLE_FILE, preserving variables.
+
+    Reads the same untrusted file load_console does, so it carries the same
+    RecursionError hazard for the same reason (see load_console); a
+    malformed file degrades to a fresh commands/variables pair rather than
+    raising, exactly as load_console would report it on the next read.
+    """
     try:
         with open(CONSOLE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         data = {}
     if not isinstance(data, dict):
         data = {}
@@ -325,7 +353,17 @@ def _output_slug(command):
 
 
 def write_output(command, text):
-    """Write a command result into OUTPUT_DIR; returns the path written."""
+    """Write a command result into OUTPUT_DIR; returns the path written, or None on failure.
+
+    /video is agent-writable, so OUTPUT_DIR can be replaced with a plain
+    file between one poll cycle and the next (ensure_dirs degrades rather
+    than raising for exactly this reason, but does not make OUTPUT_DIR
+    usable again). run_video calls this once per dispatched command, for
+    both successful and failed dispatches, and does not wrap the call in a
+    try/except of its own -- so a write that cannot land must degrade to
+    "nothing written" rather than raise, or one malformed volume would end
+    the poll loop after the first command that tried to report a result.
+    """
     ensure_dirs()
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     slug = _output_slug(command)
@@ -334,8 +372,11 @@ def write_output(command, text):
         slug = slug[:-1]
         name = f"{stamp}_{slug}.txt"
     path = os.path.join(OUTPUT_DIR, name)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError:
+        return None
     return path
 
 
@@ -1063,12 +1104,14 @@ def handle_command(command, variables, state, now=None):
         parts = argument.split()
         if not parts:
             return "usage: transcript <id> [start] [end]", state
+        if len(parts) > 3:
+            return "invalid argument: too many arguments", state
         try:
             vid = validated_video_id(parts[0])
             start = validated_offset(parts[1], None) if len(parts) > 1 else None
             end = validated_offset(parts[2], None) if len(parts) > 2 else None
         except ValueError as e:
-            return f"invalid argument: {e}", state
+            return str(e), state
         allowed, history = check_rate_limit(state.text_history, now, limit, BUDGET_WINDOW)
         state.text_history = history
         if not allowed:
@@ -1079,7 +1122,7 @@ def handle_command(command, variables, state, now=None):
         try:
             vid = validated_video_id(argument)
         except ValueError as e:
-            return f"invalid video id: {e}", state
+            return str(e), state
         if state.binding is not None and state.binding.video_id == vid:
             return f"{vid} is bound; duration {state.binding.duration} seconds", state
         limit = effective_limit(variables, "video_budget", "VIDEO_HOURLY_MAX", DEFAULT_VIDEO_LIMIT)
@@ -1099,7 +1142,7 @@ def handle_command(command, variables, state, now=None):
         try:
             seconds = validated_offset(argument, state.binding.duration)
         except ValueError as e:
-            return f"invalid offset: {e}", state
+            return str(e), state
         limit = effective_limit(
             variables, "still_budget", "VIDEO_STILL_HOURLY_MAX", DEFAULT_STILL_LIMIT
         )
@@ -1126,6 +1169,13 @@ def run_video():
     is never overwritten. A command that raises is caught per-command so one
     failing command does not stop the cycle or the commands after it; the
     poll loop itself is not expected to exit.
+
+    Nothing the agent can write to /video may end this loop: load_console
+    and ensure_dirs already degrade rather than raise for the malformed
+    inputs they are known to see (deeply nested JSON, a file where a
+    directory belongs), and write_output's own call here is wrapped as a
+    second line of defense, since it runs once per command outside the
+    try/except above and its result is not otherwise used by this loop.
     """
     ensure_dirs()
     if not os.path.exists(CONSOLE_FILE):
@@ -1140,7 +1190,10 @@ def run_video():
                 text, state = handle_command(command, variables, state)
             except Exception as e:
                 text = f"command failed: {type(e).__name__}"
-            write_output(command, text)
+            try:
+                write_output(command, text)
+            except Exception:
+                pass
         prune_tree(STILLS_DIR, VIDEO_STILL_KEEP, ".jpg")
         prune_tree(OUTPUT_DIR, VIDEO_OUTPUT_KEEP, ".txt")
         write_state(variables, state)

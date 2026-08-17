@@ -1196,7 +1196,9 @@ def test_the_binding_survives_an_hour_boundary(volume, monkeypatch):
     state.video_history = [t - video.BUDGET_WINDOW - 1 for t in state.video_history]
     monkeypatch.setattr(video, "capture_still", lambda b, s, now: ("/tmp/x.jpg", b))
     text, state = video.handle_command("still 120", _open_variables(), state)
-    assert "no video is bound" not in text
+    # Pins the positive: the still actually dispatches and succeeds, not
+    # merely that it fails to say "no video is bound" for some other reason.
+    assert "frame written to stills/" in text
 
 
 def test_still_charges_the_still_allowance(volume, monkeypatch):
@@ -1581,3 +1583,185 @@ def test_short_truncates_and_bounded_text_truncates_directly():
     long_plain = video._bounded_text("y" * 1000)
     assert len(long_plain) == video.REFUSAL_ECHO_MAX + 3
     assert long_plain.endswith("...")
+
+
+# critical: nothing the agent can write to /video may end the poll loop
+
+
+def test_load_console_tolerates_deeply_nested_json(volume):
+    (volume / "console.json").write_text("[" * 200_000 + "]" * 200_000)
+    assert video.load_console() == ([], {})
+
+
+def test_consume_batch_tolerates_deeply_nested_json(volume):
+    (volume / "console.json").write_text("[" * 200_000 + "]" * 200_000)
+    video.consume_batch()  # must not raise; content is malformed, not absent
+
+
+def test_ensure_dirs_tolerates_a_file_where_a_directory_belongs(volume):
+    _os.rmdir(str(volume / "output"))
+    (volume / "output").write_text("not a directory")
+    video.ensure_dirs()  # must not raise
+    # The other directory is unaffected and stays usable.
+    assert _os.path.isdir(str(volume / "stills"))
+
+
+def test_write_output_degrades_to_none_when_output_dir_is_blocked(volume):
+    _os.rmdir(str(volume / "output"))
+    (volume / "output").write_text("not a directory")
+    result = video.write_output("search tide pools", "text")
+    assert result is None
+
+
+def test_run_video_survives_a_deeply_nested_console_and_keeps_running(volume, monkeypatch):
+    class _StopLoop(Exception):
+        pass
+
+    original = "[" * 200_000 + "]" * 200_000
+    (volume / "console.json").write_text(original)
+
+    def fake_sleep(seconds):
+        raise _StopLoop()
+
+    monkeypatch.setattr(video.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        video.run_video()
+    # The loop reached the end of a full cycle (state.json published)
+    # rather than dying on the malformed console, and the file itself was
+    # left alone rather than cleared or rewritten out from under the agent
+    # -- there were no commands to consume, so consume_batch never ran.
+    assert (volume / "state.json").exists()
+    data = _json.loads((volume / "state.json").read_text())
+    assert isinstance(data["commands"], list)
+    assert (volume / "console.json").read_text() == original
+
+
+def test_run_video_survives_a_file_where_output_dir_belongs(volume, monkeypatch):
+    class _StopLoop(Exception):
+        pass
+
+    _os.rmdir(str(volume / "output"))
+    (volume / "output").write_text("not a directory")
+    (volume / "console.json").write_text(_json.dumps({"commands": ["help"], "variables": {}}))
+
+    def fake_sleep(seconds):
+        raise _StopLoop()
+
+    monkeypatch.setattr(video.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        video.run_video()
+    assert (volume / "state.json").exists()
+    # The dispatched command still produced a factual result even though
+    # its result file could not be written: HELP.md lives directly under
+    # VIDEO_DIR, unaffected by output/ being blocked.
+    assert (volume / "HELP.md").exists()
+
+
+def test_run_video_continues_serving_valid_commands_after_a_malformed_cycle(volume, monkeypatch):
+    # Stronger than "one bad cycle survives": the same process, with the
+    # same in-memory ServiceState, keeps dispatching normally on the next
+    # cycle -- there is no crash and therefore nothing to restart into a
+    # fresh, fully-allowanced state.
+    class _StopLoop(Exception):
+        pass
+
+    calls = {"n": 0}
+
+    def fake_sleep(seconds):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            (volume / "console.json").write_text(
+                _json.dumps({"commands": ["help"], "variables": {}})
+            )
+            return
+        raise _StopLoop()
+
+    (volume / "console.json").write_text("[" * 200_000 + "]" * 200_000)
+    monkeypatch.setattr(video.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        video.run_video()
+    assert (volume / "HELP.md").exists()
+
+
+# important: a spent allowance must refuse before dispatch, not after --
+# mutation-resistant: moving check_rate_limit after the egress call must
+# fail these, since the stub raises if the egress function is ever called
+
+
+def test_search_is_refused_without_egress_once_the_text_allowance_is_spent(volume, monkeypatch):
+    now = _time.time()
+    state = _state()
+    state.text_history = [now] * video.DEFAULT_TEXT_LIMIT
+
+    def explode(*a, **kw):
+        raise AssertionError("no egress once the text allowance is spent")
+
+    monkeypatch.setattr(video, "search", explode)
+    text, state = video.handle_command("search tide pools", _open_variables(), state, now=now)
+    assert "rate limited" in text
+    assert len(state.text_history) == video.DEFAULT_TEXT_LIMIT
+
+
+def test_transcript_is_refused_without_egress_once_the_text_allowance_is_spent(volume, monkeypatch):
+    now = _time.time()
+    state = _state()
+    state.text_history = [now] * video.DEFAULT_TEXT_LIMIT
+
+    def explode(*a, **kw):
+        raise AssertionError("no egress once the text allowance is spent")
+
+    monkeypatch.setattr(video, "transcript", explode)
+    text, state = video.handle_command("transcript dQw4w9WgXcQ", _open_variables(), state, now=now)
+    assert "rate limited" in text
+    assert len(state.text_history) == video.DEFAULT_TEXT_LIMIT
+
+
+def test_still_is_refused_without_egress_once_the_still_allowance_is_spent(volume, monkeypatch):
+    now = _time.time()
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state(), now=now)
+    state.still_history = [now] * video.DEFAULT_STILL_LIMIT
+
+    def explode(*a, **kw):
+        raise AssertionError("no egress once the still allowance is spent")
+
+    monkeypatch.setattr(video, "capture_still", explode)
+    text, state = video.handle_command("still 120", _open_variables(), state, now=now)
+    assert "rate limited" in text
+    assert len(state.still_history) == video.DEFAULT_STILL_LIMIT
+
+
+# minor: transcript must reject trailing junk the same way watch/still do
+
+
+def test_transcript_rejects_trailing_junk(volume, monkeypatch):
+    def explode(*a, **kw):
+        raise AssertionError("no egress for a malformed argument")
+
+    monkeypatch.setattr(video, "transcript", explode)
+    text, state = video.handle_command(
+        "transcript dQw4w9WgXcQ 60 120 999 junk", _open_variables(), _state()
+    )
+    assert "invalid" in text.lower()
+    assert state.text_history == []
+
+
+# minor: refusal messages are not double-prefixed
+
+
+def test_watch_refusal_is_not_double_prefixed(volume):
+    text, state = video.handle_command("watch not-an-id", _open_variables(), _state())
+    assert text.count("invalid video id:") == 1
+
+
+def test_still_refusal_is_not_double_prefixed(volume, monkeypatch):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    text, state = video.handle_command("still not-a-number", _open_variables(), state)
+    assert text.count("invalid offset:") == 1
+
+
+def test_transcript_refusal_is_not_double_prefixed(volume):
+    text, state = video.handle_command("transcript not-an-id", _open_variables(), _state())
+    assert text.count("invalid video id:") == 1
+    assert "invalid argument:" not in text
