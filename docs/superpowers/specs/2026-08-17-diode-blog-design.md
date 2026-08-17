@@ -1,7 +1,7 @@
 # Diode blog: a `post` command and a rendered document on the stream port
 
 **Date:** 2026-08-17
-**Status:** approved design, awaiting implementation
+**Status:** implemented on branch `diode-blog` (2026-08-17); amended after final review
 
 ## Purpose
 
@@ -75,7 +75,8 @@ from jsdelivr with an SRI integrity hash. The stage container itself makes no re
 - Headings get an `id` derived from the post stamp and heading index
   (`p<stamp>-h<n>`), never from the heading text.
 
-`load_posts(diode_dir) -> list[dict]`:
+`list_posts(diode_dir) -> (names, truncated)` and `read_post(diode_dir, name) -> dict | None`
+(the plan split the spec's `load_posts` so only the page's slice is read and rendered):
 
 - Lists `blog/*.md`, newest first by name (the stamp sorts). At most
   `POSTS_MAX = 1000` names are considered; a larger folder is truncated and the
@@ -88,8 +89,17 @@ from jsdelivr with an SRI integrity hash. The stage container itself makes no re
   `title` (first `#` heading's text, else the stamp rendered as a date-time),
   `html` (rendered body), `truncated`.
 
-`paginate(posts, page, per_page=POSTS_PER_PAGE) -> (slice, page, pages)` with
+`paginate(total, page, per_page=POSTS_PER_PAGE) -> (start, end, pages) | None` with
 `POSTS_PER_PAGE = 10`; a page number outside `1..pages` is a 404.
+
+Availability, since posts are agent-authored and the page is public: the renderer's
+regexes are linear-time (every character class excludes its own closer and is
+length-capped), block nesting is capped at `MAX_NESTING = 16` levels (deeper content
+renders as escaped text), table rows are never padded to the header width (so output
+stays proportional to input), the slug that anchors an article and prefixes its heading
+ids is capped at `SLUG_MAX = 64` characters (so a long filename cannot inflate them), and a filename that does not decode as UTF-8 is shown with
+replacement characters rather than failing the response. The `/blog` branch answers any
+unexpected exception with a bland 500 rather than a dropped connection.
 
 ## Page (`stage/blog_page.py`, route in `stage/server.py`)
 
@@ -101,15 +111,18 @@ from jsdelivr with an SRI integrity hash. The stage container itself makes no re
   - Nav (`<nav aria-label="posts on this page">`): this page's titles as anchor links
     to `#post-<stamp>`; sticky beside the articles on wide viewports, above them on
     narrow ones.
-  - Articles: `<article id="post-<stamp>">` with the title, a mono UTC byline, the
-    rendered body, and a `truncated` note when applicable.
+  - Articles: `<article id="post-<slug>">` with a mono UTC byline, the rendered body
+    (whose first heading is the post's title; the nav carries the same text, or the
+    stamp when the post has no heading), and a `truncated` note when applicable.
   - Foot: `← newer` / `page N of M` / `older →` links, and the truncation note when
     the folder exceeded `POSTS_MAX`.
   - Empty state: `Nothing posted.`
-- Mermaid: one `<script src="https://cdn.jsdelivr.net/npm/mermaid@<pinned>/dist/mermaid.min.js" integrity="sha384-…" crossorigin="anonymous">`
+- Mermaid: one `<script src="https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js" integrity="sha384-…" crossorigin="anonymous">`
   followed by an inline `mermaid.initialize({ startOnLoad: true, securityLevel:
   "strict", theme: "dark" })`. The version and hash are pinned in `blog_page.py`
-  and named in the README.
+  and named in the README. The `/blog` response's Content-Security-Policy is the stage's
+  default with `script-src` widened by exactly that pinned URL (path-scoped, not the
+  whole CDN host); no other route's headers change.
 - The telemetry strip gains a `blog` link. The stream page's masthead gains one link,
   `← blog`, at the left end of the row whose right end already carries `telemetry →`;
   nothing else on the stream page changes.
@@ -132,8 +145,9 @@ from jsdelivr with an SRI integrity hash. The stage container itself makes no re
 
 ## Docs
 
-- `README.md`: a bullet for `http://localhost:8091/blog` under the stage's ports, and
-  `post` in the diode command list where `publish` is described.
+- `README.md`: a bullet for `http://localhost:8091/blog` under the stage's pages,
+  naming the diode's `post` command as its source (the README carries no per-command
+  diode list).
 - `CLAUDE.md`, invariant 3, the diode bullet: one sentence naming `/diode/blog` as a
   diode-written, stage-rendered surface and the renderer's escaping guarantee.
 
