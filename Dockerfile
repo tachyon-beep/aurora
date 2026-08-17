@@ -45,8 +45,8 @@ COPY --chown=appuser:appuser garden_export/ /garden/
 
 # Pre-create named-volume mountpoints owned by uid 1000. Docker copies this
 # ownership into each newly created empty volume; startup never clears them.
-RUN mkdir -p /diode /transcripts /state /telemetry /llm/sock /llm/console /build /vendor /corpus /sense /pump \
-    && chown appuser:appuser /diode /transcripts /state /telemetry /llm /llm/sock /llm/console /build /pump
+RUN mkdir -p /diode /transcripts /state /telemetry /llm/sock /llm/console /build /vendor /corpus /sense /pump /video \
+    && chown appuser:appuser /diode /transcripts /state /telemetry /llm /llm/sock /llm/console /build /pump /video
 
 USER appuser
 WORKDIR /opt/agent

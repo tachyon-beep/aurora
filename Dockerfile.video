@@ -1,0 +1,30 @@
+FROM python:3.13-slim
+
+# yt-dlp needs a JavaScript runtime for extraction; deno is the one it enables
+# by default. Taken from the official image rather than fetched by an install
+# script.
+COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir yt-dlp pillow
+
+RUN useradd --create-home --uid 1000 videouser
+
+COPY --chown=videouser:videouser video.py /opt/video/
+
+# Pre-create the shared /video mountpoint owned by uid 1000 so Docker seeds the
+# fresh named volume with non-root ownership. Both this service and the agent
+# run as uid 1000 and write to it, and cap_drop:[ALL] + no-new-privileges means
+# neither can write a root-owned mount.
+RUN mkdir -p /video && chown videouser:videouser /video
+
+USER videouser
+WORKDIR /opt/video
+
+# yt-dlp's cache lands on the tmpfs rather than the read-only rootfs.
+ENV XDG_CACHE_HOME=/tmp
+
+ENTRYPOINT ["python", "/opt/video/video.py"]
