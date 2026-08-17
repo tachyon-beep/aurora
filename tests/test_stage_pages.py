@@ -876,3 +876,11 @@ def test_the_masthead_links_to_the_telemetry_panel():
     renders it as text; a phone or laptop viewer can follow it."""
     assert '<a id="to-telemetry" href="/telemetry">telemetry →</a>' in HTML
     assert HTML.count("<a ") == 1
+
+
+def test_the_lineage_foot_never_wraps():
+    """A nomination line can outrun the foot's one row; the row clips with an
+    ellipsis rather than pushing a second row into the panel."""
+    start = HTML.index("\n#lineage-foot {")
+    block = HTML[start : HTML.index("}", start)]
+    assert "white-space: nowrap" in block and "text-overflow: ellipsis" in block

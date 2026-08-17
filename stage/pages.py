@@ -450,6 +450,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 .k-harness { color: var(--taken); } .k-harness .tick { background: var(--taken); }
 .k-unknown { color: var(--broken); } .k-unknown .tick { background: var(--broken); }
 #lineage-foot { font: 400 13px/16px var(--mono); color: var(--paper-faint); flex: none;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   height: 16px; overflow: hidden; }
 
 /* commentary:start */
@@ -1643,7 +1644,15 @@ function renderSpot(nowMs) {
    the stage's own reading of a dead life's transcript, phrased as fact — join
    the rotation only when one exists, newest first, at most FOOT_ACHIEVEMENTS,
    each bylined because it is generated. */
-var FOOT_ACHIEVEMENTS = 3;
+var FOOT_ACHIEVEMENTS = 3, FOOT_NOMINATION_CHARS = 58;
+/* The foot is one 13px mono line about 78 characters wide; a nomination is
+   cut at a word boundary so the byline after it always fits. */
+function footClip(text, cap) {
+  if (text.length <= cap) return text;
+  var cut = text.slice(0, cap), space = cut.lastIndexOf(" ");
+  if (space >= cap / 2) cut = cut.slice(0, space);
+  return cut.replace(/[\s,;:—-]+$/, "") + "…";
+}
 function lineageFootFor(st, book, shown, achievements) {
   st = st || {}; book = book || {};
   var ended = st.lives_ended || 0;
@@ -1659,7 +1668,7 @@ function lineageFootFor(st, book, shown, achievements) {
   for (var i = 0; i < ach.length && i < FOOT_ACHIEVEMENTS; i++) {
     var a = ach[i];
     if (!a || a.ordinal == null || !a.line) continue;
-    lines.push("incarnation " + a.ordinal + ": " + norm(a.line) + " — the stage");
+    lines.push("life " + a.ordinal + ": " + footClip(norm(a.line), FOOT_NOMINATION_CHARS) + " — the stage");
   }
   if (hiddenLives > 0) {
     lines.push(hiddenLives + " earlier " + (hiddenLives === 1 ? "life" : "lives") + " not shown");

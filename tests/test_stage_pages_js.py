@@ -1419,6 +1419,9 @@ out.foot_ach = lineageFootFor({ lives_ended: 3 }, { lives_ended: 3, chose: 2 }, 
   { ordinal: 3, line: "first  agent-built\\nnetwork probe" },
   { ordinal: 2, line: "b" }, { ordinal: 1, line: "c" }, { ordinal: 0, line: "d" },
   { ordinal: 5, line: "" }, null ]);
+out.foot_clip = lineageFootFor({ lives_ended: 0 }, {}, 0, [
+  { ordinal: 9, line: "It moved the git baseline tag to a commit containing its shell and cat tools, making them persist" },
+  { ordinal: 8, line: "x".repeat(90) } ]);
 
 /* The census's exact self-edit count wins over the capped event list; a null
    census falls back to counting the events. */
@@ -1452,9 +1455,13 @@ def test_the_lineage_scales_colours_caps_and_walks(tmp_path):
     assert out["foot_plain"] == ["by their own notes, 2 of 3 chose to die"]
     assert out["foot_ach"] == [
         "by their own notes, 2 of 3 chose to die",
-        "incarnation 3: first agent-built network probe — the stage",
-        "incarnation 2: b — the stage",
-        "incarnation 1: c — the stage",
+        "life 3: first agent-built network probe — the stage",
+        "life 2: b — the stage",
+        "life 1: c — the stage",
+    ]
+    assert out["foot_clip"] == [
+        "life 9: It moved the git baseline tag to a commit containing its… — the stage",
+        "life 8: " + "x" * 58 + "… — the stage",
     ]
     assert "23 self-edits" in out["figs_census"]
     assert "1 self-edit ·" in out["figs_events"]
