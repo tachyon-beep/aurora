@@ -196,7 +196,14 @@ echo "==> video holds no credential"
 # than narrowing it to a closed list of today's known credential names.
 video_cid=$(docker compose ps -q video)
 [ -n "$video_cid" ] || { echo "FAIL: video container not running"; exit 1; }
-if docker compose exec -T video env \
+# Captured into a variable first, not piped directly: with no `set -o
+# pipefail` a pipeline's exit status is only its LAST command's, so
+# `docker compose exec ... | grep ...` would read a failed exec as empty
+# input and report "clean" instead of failing. A top-level `var=$(...)`
+# assignment's own exit status is the command substitution's, so `set -e`
+# still aborts the script if the exec itself fails.
+video_env=$(docker compose exec -T video env)
+if printf '%s\n' "$video_env" \
   | grep -Ev '^GPG_KEY=' \
   | grep -Eq '(KEY|TOKEN|SECRET|PASSWORD)='; then
   echo "FAIL: a credential is present in the video service environment"; exit 1
@@ -210,7 +217,9 @@ if docker inspect "$stage_cid" 2>/dev/null | grep -q '"Destination": "/video"'; 
 fi
 
 echo "==> the video service shares no network with the viewer"
-video_nets=$(docker inspect "$(docker compose ps -q video)" \
+video_cid=$(docker compose ps -q video)
+[ -n "$video_cid" ] || { echo "FAIL: video container not running"; exit 1; }
+video_nets=$(docker inspect "$video_cid" \
   --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')
 case "$video_nets" in
   *_default*) echo "FAIL: video is attached to the default network"; exit 1 ;;
@@ -218,7 +227,9 @@ esac
 # One-sided so far (video not on the viewer's network); close it from the
 # other side too, so moving the viewer onto video_egress instead of touching
 # video's own networks does not evade the check.
-viewer_nets=$(docker inspect "$(docker compose ps -q viewer)" \
+viewer_cid=$(docker compose ps -q viewer)
+[ -n "$viewer_cid" ] || { echo "FAIL: viewer container not running"; exit 1; }
+viewer_nets=$(docker inspect "$viewer_cid" \
   --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')
 case "$viewer_nets" in
   *video_egress*) echo "FAIL: viewer is attached to video_egress"; exit 1 ;;

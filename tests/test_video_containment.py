@@ -400,6 +400,14 @@ def test_verify_script_video_credential_check_is_a_shape_match_not_a_label():
     # credential found" because grep saw empty stdin from a failed exec.
     assert "video_cid=$(docker compose ps -q video)" in block
     assert '[ -n "$video_cid" ] || { echo "FAIL: video container not running"; exit 1; }' in block
+    # The exec is captured into a variable BEFORE being matched, not piped
+    # straight into grep: with no `set -o pipefail`, a pipeline's exit status
+    # is only its last command's, so a failed `docker compose exec | grep`
+    # would read empty stdin and report "clean" rather than failing. A
+    # top-level `var=$(...)` assignment's exit status is the substitution's
+    # own, so `set -e` still aborts the script when the exec itself fails.
+    assert "video_env=$(docker compose exec -T video env)" in block
+    assert "printf '%s\\n' \"$video_env\"" in block
     # A shape match with one named exclusion for base-image noise (GPG_KEY),
     # not an enumeration of today's known credential names -- an enumeration
     # would miss any future credential added under a name not on the list.
@@ -419,13 +427,21 @@ def test_verify_script_video_stage_mount_check_inspects_the_running_container():
 
 def test_verify_script_video_network_check_is_checked_from_both_sides():
     block = _verify_script_video_block()
-    assert 'docker inspect "$(docker compose ps -q video)"' in block
+    # Readable liveness guards on both sides: `docker inspect ""` on an empty
+    # container id does abort the script under `set -eu` (a top-level
+    # assignment), but with no FAIL line -- these guards turn that abrupt
+    # exit into an explained one.
+    assert "video_cid=$(docker compose ps -q video)" in block
+    assert '[ -n "$video_cid" ] || { echo "FAIL: video container not running"; exit 1; }' in block
+    assert 'docker inspect "$video_cid"' in block
     assert "*_default*)" in block
     assert 'echo "FAIL: video is attached to the default network"; exit 1' in block
     # One-sided (video not on the default network) is not the whole
     # guarantee: moving the viewer onto video_egress instead of touching
     # video's own networks must not evade the check.
-    assert 'docker inspect "$(docker compose ps -q viewer)"' in block
+    assert "viewer_cid=$(docker compose ps -q viewer)" in block
+    assert '[ -n "$viewer_cid" ] || { echo "FAIL: viewer container not running"; exit 1; }' in block
+    assert 'docker inspect "$viewer_cid"' in block
     assert "*video_egress*)" in block
     assert 'echo "FAIL: viewer is attached to video_egress"; exit 1' in block
 
