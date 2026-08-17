@@ -390,8 +390,10 @@ CAPTION_MAX_BYTES = 5_000_000
 
 
 def format_duration(seconds):
-    """Minutes and seconds, or a dash when the duration is unknown."""
+    """Minutes and seconds, or a dash when the duration is unknown or non-finite."""
     if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+        return "-"
+    if isinstance(seconds, float) and not math.isfinite(seconds):
         return "-"
     total = int(seconds)
     if total < 0:
@@ -473,13 +475,35 @@ def _caption_track(payload):
     return None
 
 
+class _ValidatingRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-validates every redirect hop against classify_manifest before following it."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        ok, reason = classify_manifest(newurl)
+        if not ok:
+            raise urllib.error.HTTPError(newurl, code, f"refused redirect: {reason}", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _make_opener():
+    return urllib.request.build_opener(_ValidatingRedirectHandler)
+
+
 def _fetch_caption(url):
-    """Fetch a caption track; returns the parsed payload or None."""
+    """Fetch a caption track; returns the parsed payload or None.
+
+    This is the one network call in the service that does not go through
+    run_binary, so it carries its own SSRF check completely: the initial URL
+    is validated before the opener is built, and the opener re-validates
+    every redirect hop, since an unvalidated redirect would otherwise let a
+    single accepted manifest host point the second request anywhere.
+    """
     ok, _ = classify_manifest(url)
     if not ok:
         return None
     try:
-        with urllib.request.urlopen(url, timeout=CAPTION_FETCH_TIMEOUT) as response:
+        opener = _make_opener()
+        with opener.open(url, timeout=CAPTION_FETCH_TIMEOUT) as response:
             raw = response.read(CAPTION_MAX_BYTES)
     except (urllib.error.URLError, OSError, ValueError):
         return None

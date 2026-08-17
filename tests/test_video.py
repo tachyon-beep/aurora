@@ -459,6 +459,14 @@ def test_format_duration_of_unknown_is_a_dash():
     assert video.format_duration(None) == "-"
 
 
+def test_format_duration_of_a_non_finite_float_is_a_dash():
+    # NaN/Infinity are valid JSON numbers and can arrive in a yt-dlp payload;
+    # int(float("nan")) raises, which would take out an entire search result.
+    assert video.format_duration(float("nan")) == "-"
+    assert video.format_duration(float("inf")) == "-"
+    assert video.format_duration(float("-inf")) == "-"
+
+
 def test_search_lines_carry_id_duration_channel_and_title():
     payload = {
         "entries": [
@@ -574,6 +582,16 @@ def test_fetch_caption_refuses_a_disallowed_host_before_any_network_call(monkeyp
 
     monkeypatch.setattr(video.urllib.request, "urlopen", explode)
     assert video._fetch_caption("https://evil.example.com/captions") is None
+
+
+def test_redirect_handler_refuses_a_disallowed_target():
+    # The caption fetch is the one network call that bypasses run_binary, so
+    # it carries its own redirect re-validation: a single accepted manifest
+    # host must not be able to point a second, unvalidated hop anywhere.
+    handler = video._ValidatingRedirectHandler()
+    with pytest.raises(video.urllib.error.HTTPError) as exc_info:
+        handler.redirect_request(None, None, 302, "Found", {}, "http://127.0.0.1/")
+    assert "refused redirect" in str(exc_info.value)
 
 
 def test_transcript_refuses_an_invalid_id_without_running_anything(monkeypatch):
