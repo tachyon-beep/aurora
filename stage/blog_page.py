@@ -143,7 +143,7 @@ def render_page(posts, page, pages, total, list_truncated):
         f"<style>{_STYLE}</style>\n</head>\n<body>\n"
         '<a class="skip" href="#posts">Skip to the posts</a>\n'
         '<header id="strip"><h1 id="wordmark">AURORA · BLOG</h1>'
-        '<a href="/">← the stream</a><a href="/telemetry">telemetry</a>'
+        '<a href="/">← the stream</a><a href="/telemetry">telemetry →</a>'
         f'<span id="count">{_plural(total, "post")}</span></header>\n'
         f'<div id="layout">{_nav(posts)}<main id="posts">{body}{_foot(page, pages, list_truncated)}</main></div>\n'
         f'<script src="{MERMAID_URL}" integrity="{MERMAID_INTEGRITY}" crossorigin="anonymous"></script>\n'

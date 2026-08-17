@@ -22,6 +22,14 @@ def test_page_carries_articles_nav_and_strip_links():
     assert "2026-08-17 12:00:00 UTC" in html
 
 
+def test_strip_links_carry_directional_arrows():
+    """The strip's two links read like the stream page's and the telemetry
+    panel's: the leftmost carries a left arrow, the rightmost a right one."""
+    html = blog_page.render_page([POST], 1, 1, 1, False)
+    assert '<a href="/">← the stream</a>' in html
+    assert '<a href="/telemetry">telemetry →</a>' in html
+
+
 def test_page_pins_mermaid_with_integrity_and_strict_security():
     html = blog_page.render_page([POST], 1, 1, 1, False)
     assert blog_page.MERMAID_URL.startswith("https://cdn.jsdelivr.net/npm/mermaid@11.16.1/")
