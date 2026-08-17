@@ -5,6 +5,7 @@ import sys as _sys
 import time as _time
 
 import pytest
+from PIL import Image as _Image
 
 import video
 
@@ -721,3 +722,303 @@ def test_transcript_is_capped_with_a_marker(monkeypatch):
     text = video.transcript("dQw4w9WgXcQ", None, None)
     assert video.TRUNCATION_MARKER in text
     assert len(text.encode("utf-8")) <= 200 + len(video.TRUNCATION_MARKER) + 1
+
+
+# binding and stills
+
+
+def _binding(now=1000.0, manifest="https://r1.googlevideo.com/videoplayback"):
+    return video.Binding(video_id="dQw4w9WgXcQ", duration=600, manifest=manifest, resolved_at=now)
+
+
+def test_resolve_binding_returns_id_duration_and_manifest(monkeypatch):
+    payload = {"duration": 600, "url": "https://r1.googlevideo.com/videoplayback"}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    binding = video.resolve_binding("dQw4w9WgXcQ")
+    assert binding.video_id == "dQw4w9WgXcQ"
+    assert binding.duration == 600
+    assert binding.manifest == "https://r1.googlevideo.com/videoplayback"
+
+
+def test_resolve_binding_returns_none_when_unavailable(monkeypatch):
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (-1, ""))
+    assert video.resolve_binding("dQw4w9WgXcQ") is None
+
+
+def test_still_path_carries_id_offset_and_a_hex_token(volume):
+    path = video.still_path("dQw4w9WgXcQ", 120)
+    name = _os.path.basename(path)
+    assert name.startswith("dQw4w9WgXcQ_120_")
+    assert name.endswith(".jpg")
+    # The token carries no ordering and no arrival time.
+    token = name[len("dQw4w9WgXcQ_120_") : -len(".jpg")]
+    assert len(token) == 8
+    int(token, 16)
+
+
+def test_capture_still_refuses_a_manifest_that_fails_validation(volume, monkeypatch):
+    def explode(args, timeout):
+        raise AssertionError("ffmpeg must not run on an invalid manifest")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (False, "host not allowed"))
+    path, binding = video.capture_still(_binding(), 120, now=1000.0)
+    assert path is None
+
+
+def test_capture_still_passes_the_protocol_allow_list(volume, monkeypatch):
+    seen = {}
+
+    def fake(args, timeout):
+        seen["args"] = args
+        open(args[-1], "wb").write(b"jpegbytes")
+        return 0, ""
+
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+    monkeypatch.setattr(video, "run_binary", fake)
+    monkeypatch.setattr(video, "_reencode", lambda path: True)
+    video.capture_still(_binding(), 120, now=1000.0)
+    args = seen["args"]
+    assert "-protocol_whitelist" in args
+    assert args[args.index("-protocol_whitelist") + 1] == "https,tls,tcp,crypto"
+
+
+def test_capture_still_seeks_before_the_input(volume, monkeypatch):
+    seen = {}
+
+    def fake(args, timeout):
+        seen["args"] = args
+        open(args[-1], "wb").write(b"jpegbytes")
+        return 0, ""
+
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+    monkeypatch.setattr(video, "run_binary", fake)
+    monkeypatch.setattr(video, "_reencode", lambda path: True)
+    video.capture_still(_binding(), 120, now=1000.0)
+    args = seen["args"]
+    # -ss before -i is a range seek rather than a decode from the start.
+    assert args.index("-ss") < args.index("-i")
+    assert args[args.index("-ss") + 1] == "120"
+
+
+def test_an_expired_manifest_is_re_resolved_without_charging(volume, monkeypatch):
+    calls = {"resolve": 0}
+
+    def fake_resolve(video_id):
+        calls["resolve"] += 1
+        return _binding(now=9999.0)
+
+    monkeypatch.setattr(video, "resolve_binding", fake_resolve)
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+    monkeypatch.setattr(video, "_reencode", lambda path: True)
+
+    def fake(args, timeout):
+        open(args[-1], "wb").write(b"jpegbytes")
+        return 0, ""
+
+    monkeypatch.setattr(video, "run_binary", fake)
+    stale = _binding(now=0.0)
+    path, binding = video.capture_still(stale, 120, now=video.MANIFEST_TTL_SECONDS + 1)
+    assert calls["resolve"] == 1
+    assert path is not None
+
+
+def test_capture_still_returns_none_when_ffmpeg_fails(volume, monkeypatch):
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (-1, ""))
+    path, binding = video.capture_still(_binding(), 120, now=1000.0)
+    assert path is None
+
+
+def test_capture_still_removes_a_partial_file_when_ffmpeg_fails(volume, monkeypatch):
+    # ffmpeg's -y can create or truncate its output before it errors (a 403
+    # on the signed manifest is the ordinary case); nothing that looks like
+    # a captured frame may be left on the volume.
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+
+    def fake(args, timeout):
+        open(args[-1], "wb").write(b"partial")
+        return -1, ""
+
+    monkeypatch.setattr(video, "run_binary", fake)
+    path, binding = video.capture_still(_binding(), 120, now=1000.0)
+    assert path is None
+    assert _os.listdir(video.STILLS_DIR) == []
+
+
+def test_capture_still_removes_the_file_when_reencode_fails(volume, monkeypatch):
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+
+    def fake(args, timeout):
+        open(args[-1], "wb").write(b"not a real jpeg")
+        return 0, ""
+
+    monkeypatch.setattr(video, "run_binary", fake)
+    monkeypatch.setattr(video, "_reencode", lambda path: False)
+    path, binding = video.capture_still(_binding(), 120, now=1000.0)
+    assert path is None
+    assert _os.listdir(video.STILLS_DIR) == []
+
+
+def test_capture_still_end_to_end_produces_a_real_jpeg(volume, monkeypatch):
+    # run_binary is faked (no real ffmpeg in the test environment) but
+    # _reencode runs for real, exercising the whole capture path.
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+
+    def fake(args, timeout):
+        _Image.new("RGB", (50, 50), "purple").save(args[-1], "JPEG")
+        return 0, ""
+
+    monkeypatch.setattr(video, "run_binary", fake)
+    path, binding = video.capture_still(_binding(), 120, now=1000.0)
+    assert path is not None
+    with _Image.open(path) as img:
+        assert img.format == "JPEG"
+
+
+# resolve_binding: hardening against a hostile yt-dlp payload
+
+
+def test_resolve_binding_refuses_an_invalid_video_id_without_running_anything(monkeypatch):
+    def explode(args, timeout):
+        raise AssertionError("no subprocess for an invalid id")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    assert video.resolve_binding("not-an-id") is None
+
+
+def test_resolve_binding_returns_none_when_the_payload_is_not_an_object(monkeypatch):
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps([1, 2, 3])))
+    assert video.resolve_binding("dQw4w9WgXcQ") is None
+
+
+def test_resolve_binding_tolerates_deeply_nested_json(monkeypatch):
+    nested = "[" * 100_000 + "]" * 100_000
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, nested))
+    assert video.resolve_binding("dQw4w9WgXcQ") is None
+
+
+def test_resolve_binding_returns_none_when_the_manifest_url_is_missing(monkeypatch):
+    payload = {"duration": 600}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    assert video.resolve_binding("dQw4w9WgXcQ") is None
+
+
+def test_resolve_binding_returns_none_when_the_manifest_url_is_not_a_string(monkeypatch):
+    payload = {"duration": 600, "url": 12345}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    assert video.resolve_binding("dQw4w9WgXcQ") is None
+
+
+def test_resolve_binding_returns_none_when_the_manifest_url_is_empty(monkeypatch):
+    payload = {"duration": 600, "url": ""}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    assert video.resolve_binding("dQw4w9WgXcQ") is None
+
+
+def test_resolve_binding_tolerates_a_missing_duration(monkeypatch):
+    payload = {"url": "https://r1.googlevideo.com/videoplayback"}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    binding = video.resolve_binding("dQw4w9WgXcQ")
+    assert binding is not None
+    assert binding.duration is None
+
+
+def test_resolve_binding_tolerates_a_non_numeric_duration(monkeypatch):
+    payload = {"duration": "not a number", "url": "https://r1.googlevideo.com/videoplayback"}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    binding = video.resolve_binding("dQw4w9WgXcQ")
+    assert binding.duration is None
+
+
+def test_resolve_binding_tolerates_an_oversized_duration(monkeypatch):
+    # A duration many orders of magnitude past any real video, but still
+    # within Python's int-to-string digit limit (unlike the next test): the
+    # rest of the payload is still usable, so only the field degrades.
+    payload = {"duration": 10**500, "url": "https://r1.googlevideo.com/videoplayback"}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    binding = video.resolve_binding("dQw4w9WgXcQ")
+    assert binding is not None
+    assert binding.duration is None
+
+
+def test_resolve_binding_returns_none_for_a_duration_past_the_parse_limit(monkeypatch):
+    # A duration literal past Python's own digit limit (4300) cannot even be
+    # parsed into an int by json.loads -- it fails the whole payload rather
+    # than one field, and must still not crash resolution. The literal is
+    # built by character repetition, since str(10**5000) itself would raise.
+    text = '{"duration": ' + ("9" * 5000) + ', "url": "https://r1.googlevideo.com/videoplayback"}'
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, text))
+    assert video.resolve_binding("dQw4w9WgXcQ") is None
+
+
+def test_resolve_binding_tolerates_a_non_finite_duration(monkeypatch):
+    payload = {"duration": float("nan"), "url": "https://r1.googlevideo.com/videoplayback"}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    binding = video.resolve_binding("dQw4w9WgXcQ")
+    assert binding.duration is None
+    payload["duration"] = float("inf")
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    binding = video.resolve_binding("dQw4w9WgXcQ")
+    assert binding.duration is None
+
+
+def test_resolve_binding_tolerates_a_negative_duration(monkeypatch):
+    payload = {"duration": -5, "url": "https://r1.googlevideo.com/videoplayback"}
+    monkeypatch.setattr(video, "run_binary", lambda args, timeout: (0, _json.dumps(payload)))
+    binding = video.resolve_binding("dQw4w9WgXcQ")
+    assert binding.duration is None
+
+
+# _reencode
+
+
+def test_reencode_converts_to_a_jpeg(volume):
+    src = video.still_path("dQw4w9WgXcQ", 10)
+    _Image.new("RGB", (40, 30), "blue").save(src, "PNG")
+    assert video._reencode(src) is True
+    with _Image.open(src) as img:
+        assert img.format == "JPEG"
+        assert img.size == (40, 30)
+
+
+def test_reencode_resizes_when_wider_than_the_max(volume, monkeypatch):
+    monkeypatch.setattr(video, "STILL_MAX_WIDTH", 100)
+    src = video.still_path("dQw4w9WgXcQ", 10)
+    _Image.new("RGB", (400, 200), "green").save(src, "PNG")
+    assert video._reencode(src) is True
+    with _Image.open(src) as img:
+        assert img.size == (100, 50)
+
+
+def test_reencode_returns_false_for_garbage_bytes(volume):
+    src = video.still_path("dQw4w9WgXcQ", 10)
+    with open(src, "wb") as f:
+        f.write(b"not an image, just garbage bytes padded out a bit" * 10)
+    assert video._reencode(src) is False
+
+
+def test_reencode_returns_false_for_a_claimed_size_over_the_pixel_guard(volume, monkeypatch):
+    # A small file whose header claims an enormous frame must not be decoded
+    # to find out: the guard reads img.size before any pixel data loads.
+    monkeypatch.setattr(video, "STILL_MAX_PIXELS", 100)
+    src = video.still_path("dQw4w9WgXcQ", 10)
+    _Image.new("RGB", (20, 20), "red").save(src, "PNG")
+    assert video._reencode(src) is False
+
+
+def test_reencode_returns_false_past_pils_own_decompression_bomb_threshold(volume, monkeypatch):
+    monkeypatch.setattr(video.Image, "MAX_IMAGE_PIXELS", 100)
+    src = video.still_path("dQw4w9WgXcQ", 10)
+    _Image.new("RGB", (20, 20), "red").save(src, "PNG")
+    assert video._reencode(src) is False
+
+
+def test_reencode_returns_false_for_an_extreme_aspect_ratio(volume, monkeypatch):
+    # Comfortably under STILL_MAX_PIXELS, but scaling to STILL_MAX_WIDTH
+    # would compute a zero height. Rejected explicitly rather than by
+    # depending on how the underlying library handles a degenerate resize.
+    monkeypatch.setattr(video, "STILL_MAX_WIDTH", 1280)
+    src = video.still_path("dQw4w9WgXcQ", 10)
+    _Image.new("RGB", (4000, 1), "red").save(src, "JPEG")
+    assert video._reencode(src) is False
