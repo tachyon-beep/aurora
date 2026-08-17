@@ -456,10 +456,37 @@ def test_life_turns_yields_one_life_oldest_first_without_subcalls(tmp_path):
     with open(transcript, "a", encoding="utf-8") as f:
         f.write("not json\n")
     _tombstone(work, "incarnation-1.txt", "chose to end.", minute=10)
-    turns = diag.life_turns(transcript, work, 1, now=_epoch(20))
+    turns = list(diag.life_turns(transcript, work, 1, now=_epoch(20)))
     assert [index for index, _epoch_, _entry_ in turns] == [0, 2]
     assert [e["response"]["choices"][0]["message"]["content"] for _i, _e, e in turns] == ["a", "b"]
     assert turns[0][1] == _epoch(1)
-    current = diag.life_turns(transcript, work, 2, now=_epoch(20))
+    current = list(diag.life_turns(transcript, work, 2, now=_epoch(20)))
     assert [index for index, _epoch_, _entry_ in current] == [3]
-    assert diag.life_turns(str(tmp_path / "missing.jsonl"), work, 1, now=_epoch(20)) == []
+    assert list(diag.life_turns(str(tmp_path / "missing.jsonl"), work, 1, now=_epoch(20))) == []
+
+
+def test_incarnations_mark_counts_inexact_when_a_death_cannot_be_dated_or_an_entry_placed(tmp_path):
+    transcript = str(tmp_path / "t.jsonl")
+    work = str(tmp_path / "work")
+    os.makedirs(work)
+    _write_jsonl(transcript, [_entry(minute=1), _entry(minute=11)])
+    _tombstone(work, "incarnation-1.txt", "chose to end.", minute=10)
+    assert all(life["exact"] for life in diag.incarnations(transcript, work, now=_epoch(20)))
+    # An entry with no timestamp folds into the current life: inexact.
+    bad = _entry(minute=12)
+    bad["timestamp"] = "not a time"
+    _append_jsonl(transcript, [bad])
+    lives = diag.incarnations(transcript, work, now=_epoch(20))
+    assert not any(life["exact"] for life in lives)
+    assert lives[0]["turns"] == 2
+    # A tombstone dated absurdly far in the past cannot be placed: inexact.
+    transcript2 = str(tmp_path / "t2.jsonl")
+    work2 = str(tmp_path / "work2")
+    os.makedirs(work2)
+    _write_jsonl(transcript2, [_entry(minute=1), _entry(minute=11)])
+    path = _tombstone(work2, "incarnation-1.txt", "chose to end.", minute=10)
+    ancient = _epoch(0) - 400 * 86400
+    os.utime(path, (ancient, ancient))
+    lives = diag.incarnations(transcript2, work2, now=_epoch(20))
+    assert [life["ordinal"] for life in lives] == [2, 1]
+    assert not any(life["exact"] for life in lives)

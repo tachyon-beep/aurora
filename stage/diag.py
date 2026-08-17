@@ -143,10 +143,13 @@ def incarnations(transcript_path, work_dir, now=None):
     incarnation = len(notes) + 1
     deaths = data.tombstone_deaths(work_dir, now=now)
     counts = {}
+    unplaced = 0
     for _offset, _length, epoch, stream, kind, has_error, edits in records:
         if kind == "invalid" or stream != "core":
             continue
         life = _life_of(epoch, deaths, incarnation)
+        if data.classify_life(epoch, deaths, incarnation) is None:
+            unplaced += 1
         bucket = counts.setdefault(life, {"turns": 0, "subcalls": 0, "errors": 0, "edits": 0})
         if kind == "subcall":
             bucket["subcalls"] += 1
@@ -155,6 +158,12 @@ def incarnations(transcript_path, work_dir, now=None):
             bucket["edits"] += edits
         if has_error:
             bucket["errors"] += 1
+    # The counts place each entry by its timestamp against the datable deaths.
+    # When a tombstone cannot be dated, or an entry has no usable timestamp,
+    # entries fold into the current life and the counts are no longer a per-life
+    # measurement: they stay reported (the console shows what it can) but are
+    # marked inexact so the stream page does not present them as figures.
+    exact = len(deaths) == len(notes) and unplaced == 0
     endings = {}
     for position, path in enumerate(notes):
         ordinal = len(notes) - position
@@ -187,6 +196,7 @@ def incarnations(transcript_path, work_dir, now=None):
                 "subcalls": bucket["subcalls"],
                 "errors": bucket["errors"],
                 "edits": bucket["edits"],
+                "exact": exact,
             }
         )
     return out
@@ -317,11 +327,12 @@ def incarnation_turns(transcript_path, work_dir, life, offset=0, limit=DEFAULT_P
 
 
 def life_turns(transcript_path, work_dir, life, now=None):
-    """One life's core-stream loop turns, oldest first, as (index, epoch, entry).
+    """One life's core-stream loop turns, oldest first, yielded as (index, epoch, entry).
 
     Sub-calls are left out: the digest reads the agent's own turns. A line
     that no longer loads (rotated away between the index and the read) is
-    skipped. Uncapped, for callers that sample the whole life themselves.
+    skipped. A generator, so a long life is never held as parsed entries at
+    once; callers keep only what they render.
     """
     if now is None:
         now = time.time()
@@ -330,7 +341,6 @@ def life_turns(transcript_path, work_dir, life, now=None):
     incarnation = len(notes) + 1
     deaths = data.tombstone_deaths(work_dir, now=now)
     life = _clip_int(life, 1, incarnation)
-    out = []
     for index, (offset, length, epoch, stream, kind, _has_error, _edits) in enumerate(records):
         if kind != "loop" or stream != "core":
             continue
@@ -339,8 +349,7 @@ def life_turns(transcript_path, work_dir, life, now=None):
         loaded = _load_entry(transcript_path, offset, length)
         if loaded is None:
             continue
-        out.append((index, epoch, loaded))
-    return out
+        yield (index, epoch, loaded)
 
 
 def entry(transcript_path, index):

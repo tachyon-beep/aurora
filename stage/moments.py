@@ -38,6 +38,9 @@ MAX_OUTPUT_CHARS = 2000
 TIMEOUT_SECONDS = 60
 RETRY_SECONDS = 600
 MAX_ATTEMPTS = 3
+MAX_CALLS = 6
+TURN_LINE_CHARS = 1600
+WAIT_SECONDS = 1200
 
 FENCE_TOKENS = ("BEGIN RECORDS", "END RECORDS")
 _FENCE_PATTERN = re.compile("|".join(re.escape(token) for token in FENCE_TOKENS), re.IGNORECASE)
@@ -83,6 +86,7 @@ _LOCK = threading.Lock()
 _DIGESTS = {}
 _ATTEMPTS = {}
 _SKIPPED = set()
+_ASKED = {}
 _START_LOCK = threading.Lock()
 _THREAD = None
 _STARTED = False
@@ -148,19 +152,26 @@ def achievements(limit=12):
     return rows[: max(0, int(limit))]
 
 
-def settled(ordinal):
+def settled(ordinal, mono=None):
     """Whether the desk may stop waiting for this life's digest.
 
     True when the digest is disabled, cached, skipped (too few turns, beyond
-    the digest cap, absent from the census), or has used every attempt.
+    the digest cap), has used every attempt, or has been asked about for
+    WAIT_SECONDS without any of those — so a census that never yields, or a
+    life the loop never reaches, cannot hold a verdict back forever.
     """
     if not enabled():
         return True
+    if mono is None:
+        mono = time.monotonic()
     with _LOCK:
         if ordinal in _DIGESTS or ordinal in _SKIPPED:
             return True
         record = _ATTEMPTS.get(ordinal)
-        return record is not None and record[0] >= MAX_ATTEMPTS
+        if record is not None and record[0] >= MAX_ATTEMPTS:
+            return True
+        first = _ASKED.setdefault(ordinal, mono)
+        return mono - first >= WAIT_SECONDS
 
 
 def _copy(digest):
@@ -200,6 +211,8 @@ def _turn_line(index, epoch, entry, start_epoch):
     if isinstance(content, str) and content.strip():
         parts.append("say: " + _field(content, CONTENT_CHARS))
     calls = message.get("tool_calls")
+    rendered_calls = 0
+    skipped_calls = 0
     for call in calls if isinstance(calls, list) else []:
         if not isinstance(call, dict):
             continue
@@ -209,14 +222,37 @@ def _turn_line(index, epoch, entry, start_epoch):
         name = _field(fn.get("name") or "", 64)
         if not name:
             continue
+        if rendered_calls >= MAX_CALLS:
+            skipped_calls += 1
+            continue
         arguments = fn.get("arguments")
         rendered = _field(arguments, ARGS_CHARS) if isinstance(arguments, str) else ""
         parts.append(f"call: {name}({rendered})")
+        rendered_calls += 1
+    if skipped_calls:
+        parts.append(f"+{skipped_calls} more calls")
     error = response.get("error")
     if error:
         text = error.get("message") if isinstance(error, dict) else error
         parts.append("error: " + _field(text if text is not None else "", ERROR_CHARS))
-    return "  ".join(parts)
+    return "  ".join(parts)[:TURN_LINE_CHARS]
+
+
+def _fit(lines, cap):
+    """lines with middle entries dropped, innermost first, until they fit cap.
+
+    The first and last lines are kept while anything else remains; a single
+    oversized line is sliced. This is the hard guarantee behind _sample.
+    """
+    kept = list(lines)
+    while kept and sum(len(line) + 1 for line in kept) > cap:
+        if len(kept) <= 2:
+            kept = [line[:cap] for line in kept]
+            if sum(len(line) + 1 for line in kept) > cap:
+                kept = kept[:1]
+            break
+        del kept[len(kept) // 2]
+    return kept
 
 
 def _sample(lines, cap):
@@ -229,23 +265,39 @@ def _sample(lines, cap):
     if total <= cap:
         return list(lines), len(lines)
     if len(lines) <= HEAD_TURNS + TAIL_TURNS:
-        return list(lines), len(lines)
+        kept = _fit(lines, cap)
+        return kept, len(kept)
     head = lines[:HEAD_TURNS]
     tail = lines[-TAIL_TURNS:]
     middle = lines[HEAD_TURNS:-TAIL_TURNS]
     budget = cap - sum(len(line) + 1 for line in head + tail)
     if budget <= 0 or not middle:
-        kept = head + tail
+        kept = _fit(head + tail, cap)
         return kept, len(kept)
     average = sum(len(line) + 1 for line in middle) / len(middle)
     count = min(len(middle), int(budget // max(1.0, average)))
     if count <= 0:
-        kept = head + tail
+        kept = _fit(head + tail, cap)
         return kept, len(kept)
     step = len(middle) / count
     picked = [middle[int(position * step)] for position in range(count)]
-    kept = head + picked + tail
+    kept = _fit(head + picked + tail, cap)
     return kept, len(kept)
+
+
+def _render_turns(turns):
+    """(lines, count, start epoch) from an oldest-first (index, epoch, entry) iterable.
+
+    Only the bounded rendered line of each turn is retained, so a long life is
+    never held as parsed entries at once.
+    """
+    lines = []
+    start = None
+    for index, epoch, entry in turns:
+        if start is None and isinstance(epoch, (int, float)):
+            start = epoch
+        lines.append(_turn_line(index, epoch, entry, start))
+    return lines, len(lines), start
 
 
 def _tombstone_note(work_dir, ordinal):
@@ -264,13 +316,13 @@ def _tombstone_note(work_dir, ordinal):
         return ""
 
 
-def _prompt(row, turns, note, earlier=()):
+def _prompt(row, lines, note, earlier=()):
     """The records for one life, and the turn ids they show.
 
-    row is the census entry; turns is the oldest-first (index, epoch, entry)
-    list; earlier is the achievements already nominated for other lives, so
-    the same feat is not nominated twice. Returns (prompt text, set of shown
-    turn indices).
+    row is the census entry; lines are the rendered turn lines, oldest first
+    (see _render_turns); earlier is the achievements already nominated for
+    other lives, so the same feat is not nominated twice. Returns (prompt
+    text, set of shown turn indices).
     """
     ordinal = row.get("ordinal")
     kind = row.get("ending_kind") or "unknown"
@@ -289,9 +341,7 @@ def _prompt(row, turns, note, earlier=()):
         figures.append("ended by its own note")
     elif kind == "harness":
         figures.append("ended by the harness")
-    start = turns[0][1] if turns and isinstance(turns[0][1], (int, float)) else began
-    lines = [_turn_line(index, epoch, entry, start) for index, epoch, entry in turns]
-    shown, shown_count = _sample(lines, INPUT_CHARS)
+    shown, shown_count = _sample(list(lines), INPUT_CHARS)
     shown_ids = set()
     for line in shown:
         match = re.match(r"T(\d+)", line)
@@ -345,7 +395,7 @@ def _parse(reply, shown_ids):
     match = _ACHIEVEMENT_PATTERN.search(reply)
     if match:
         text = " ".join(match.group(1).split()).strip().rstrip(".")
-        if text and text.upper() != "NONE" and not text.upper().startswith("NONE "):
+        if text and not re.match(r"none\b", text, re.IGNORECASE):
             achievement = text[:ACHIEVEMENT_CHARS]
     return moments, achievement
 
@@ -412,12 +462,14 @@ def refresh_once(transcript_path, work_dir, now=None, mono=None):
                 continue
             attempts, _last = _ATTEMPTS.get(ordinal, (0, 0.0))
             _ATTEMPTS[ordinal] = (attempts + 1, mono)
-        turns = diag.life_turns(transcript_path, work_dir, ordinal, now=now)
-        if len(turns) < MIN_TURNS:
+        lines, count, _start = _render_turns(
+            diag.life_turns(transcript_path, work_dir, ordinal, now=now)
+        )
+        if count < MIN_TURNS:
             _skip(ordinal)
             continue
         prompt, shown_ids = _prompt(
-            row, turns, _tombstone_note(work_dir, ordinal), earlier=achievements()
+            row, lines, _tombstone_note(work_dir, ordinal), earlier=achievements()
         )
         reply = llm.chat(
             SYSTEM_PROMPT,
@@ -431,7 +483,7 @@ def refresh_once(transcript_path, work_dir, now=None, mono=None):
         parsed = _parse(reply, shown_ids)
         if parsed is not None:
             moments, achievement = parsed
-            _store(ordinal, moments, achievement, len(shown_ids), len(turns))
+            _store(ordinal, moments, achievement, len(shown_ids), count)
         return True
     return False
 
@@ -460,9 +512,9 @@ def start_background_refresh(transcript_path, work_dir):
             daemon=True,
             name="stage-moments",
         )
+        thread.start()
         _THREAD = thread
         _STARTED = True
-        thread.start()
     return None
 
 
@@ -473,6 +525,7 @@ def _reset_for_tests():
         _DIGESTS.clear()
         _ATTEMPTS.clear()
         _SKIPPED.clear()
+        _ASKED.clear()
     with _START_LOCK:
         _THREAD = None
         _STARTED = False

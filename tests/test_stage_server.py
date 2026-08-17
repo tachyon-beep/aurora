@@ -1135,13 +1135,30 @@ def test_the_census_overlays_exact_life_figures_when_it_has_a_row(tmp_path, monk
         snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0), _turn_entry(1)])
         assert snap["stats"]["self_edits_this_life"] is None
         census._MEMO["lives"] = [
-            {"ordinal": 1, "current": True, "turns": 250, "subcalls": 0, "errors": 0, "edits": 19}
+            {
+                "ordinal": 1,
+                "current": True,
+                "turns": 250,
+                "subcalls": 0,
+                "errors": 0,
+                "edits": 19,
+                "exact": True,
+            }
         ]
         snap = server.stream_snapshot()
         assert snap["stats"]["turns_this_life"] == 250
         assert snap["stats"]["turns_this_life_exact"] is True
         assert snap["stats"]["self_edits_this_life"] == 19
-        census._MEMO["lives"] = [{"ordinal": 7, "current": True, "turns": 1, "edits": 1}]
+        census._MEMO["lives"] = [
+            {"ordinal": 7, "current": True, "turns": 1, "edits": 1, "exact": True}
+        ]
+        snap = server.stream_snapshot()
+        assert snap["stats"]["self_edits_this_life"] is None
+        assert snap["stats"]["turns_this_life"] == 2
+        # An inexact census (an undatable tombstone, an unplaceable entry) is not overlaid.
+        census._MEMO["lives"] = [
+            {"ordinal": 1, "current": True, "turns": 250, "edits": 19, "exact": False}
+        ]
         snap = server.stream_snapshot()
         assert snap["stats"]["self_edits_this_life"] is None
         assert snap["stats"]["turns_this_life"] == 2
@@ -1314,6 +1331,8 @@ def test_lineage_snapshot_from_the_census_with_verdicts_and_digests(tmp_path, mo
         first = lives[2]
         assert first["kind"] == "declared"
         assert first["turns"] == 3 and first["edits"] == 3
+        inexact = server._public_life(dict(census.cached_life(1), exact=False), None, None, True)
+        assert inexact["turns"] is None and inexact["edits"] is None
         assert first["note"].startswith("Incarnation ended by done() at turn 3.")
         assert first["verdict"] is None and first["moments"] == []
         assert first["digest"]["state"] == "pending"

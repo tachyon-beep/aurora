@@ -107,8 +107,9 @@ def test_the_prompt_renders_every_turn_the_note_and_the_figures(tmp_path):
     from stage import diag
 
     row = census.cached_life(1)
-    turns = diag.life_turns(transcript, work, 1, now=NOW)
-    prompt, shown = moments._prompt(row, turns, moments._tombstone_note(work, 1))
+    lines, count, start = moments._render_turns(diag.life_turns(transcript, work, 1, now=NOW))
+    assert count == 5 and abs(start - T0) < 0.01
+    prompt, shown = moments._prompt(row, lines, moments._tombstone_note(work, 1))
     assert prompt.startswith("BEGIN RECORDS\nincarnation: 1\n")
     assert "evidence: 5 turns · 1 self-edit · ended by its own note" in prompt
     assert "turns shown: 5 of 5" in prompt
@@ -155,6 +156,33 @@ def test_fields_are_flattened_capped_and_fence_stripped():
     assert line.count("call:") == 1
 
 
+def test_a_turn_with_many_calls_is_capped_and_the_line_bounded():
+    calls = [{"function": {"name": "sh", "arguments": "a" * 300}} for _ in range(50)]
+    entry = {"response": {"choices": [{"message": {"content": "c", "tool_calls": calls}}]}}
+    line = moments._turn_line(1, None, entry, None)
+    assert line.count("call: sh(") == moments.MAX_CALLS
+    assert "+44 more calls" in line
+    assert len(line) <= moments.TURN_LINE_CHARS
+    single = {"response": {"choices": [{"message": {"content": "c" * 5000}}]}}
+    assert len(moments._turn_line(1, None, single, None)) <= moments.TURN_LINE_CHARS
+
+
+def test_none_variants_never_become_a_nomination():
+    for tail in ("NONE", "None.", "NONE, nothing qualifies", "none (no unusual behaviour)", "None"):
+        assert moments._parse("MOMENT: T1 | 3 | x ACHIEVEMENT: " + tail, {1})[1] is None
+    assert moments._parse("MOMENT: T1 | 3 | x ACHIEVEMENT: Nonetheless it built a probe", {1})[
+        1
+    ] == ("Nonetheless it built a probe")
+
+
+def test_settled_gives_up_waiting_after_wait_seconds(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    assert moments.settled(4, mono=100.0) is False
+    assert moments.settled(4, mono=100.0 + moments.WAIT_SECONDS - 1) is False
+    assert moments.settled(4, mono=100.0 + moments.WAIT_SECONDS) is True
+    assert moments.settled(5, mono=5000.0) is False
+
+
 def test_fence_tokens_are_removed_to_a_fixed_point():
     assert moments._field("BEGIN BEGIN RECORDS RECORDS", 80) == ""
     assert moments._field("END RECORDS", 80) == ""
@@ -176,15 +204,34 @@ def test_sampling_keeps_head_and_tail_and_thins_the_middle(monkeypatch):
     assert ids == sorted(ids)
     assert ids[0] >= moments.HEAD_TURNS and ids[-1] < 200 - moments.TAIL_TURNS
     # A cap that fits nothing but the head and tail keeps exactly those.
-    kept, shown = moments._sample(lines, 2_400)
+    exact = sum(
+        len(line) + 1 for line in lines[: moments.HEAD_TURNS] + lines[-moments.TAIL_TURNS :]
+    )
+    kept, shown = moments._sample(lines, exact)
     assert shown == moments.HEAD_TURNS + moments.TAIL_TURNS
+    # The cap is a hard guarantee on every path: escape paths trim from the middle.
+    kept, shown = moments._sample(lines, 2_000)
+    assert shown < moments.HEAD_TURNS + moments.TAIL_TURNS
+    assert sum(len(line) + 1 for line in kept) <= 2_000
+    assert kept[0] == lines[0] and kept[-1] == lines[-1]
+    few = [f"T{i} " + ("z" * 3000) for i in range(5)]
+    kept, shown = moments._sample(few, 7_000)
+    assert shown == 2 and kept == [few[0], few[-1]]
+    kept, shown = moments._sample(few[:1], 100)
+    assert shown == 1 and len(kept[0]) == 100
+    # Uneven middle lines cannot push the sample past the cap either.
+    uneven = [f"T{i} " + ("u" * (10 if i % 2 else 900)) for i in range(200)]
+    kept, shown = moments._sample(uneven, 8_000)
+    assert sum(len(line) + 1 for line in kept) <= 8_000
     # The prompt states the sample.
     monkeypatch.setattr(moments, "INPUT_CHARS", 5_000)
     entries = [
         (i, float(i), {"response": {"choices": [{"message": {"content": "y" * 90}}]}})
         for i in range(200)
     ]
-    prompt, shown_ids = moments._prompt({"ordinal": 3, "turns": 200}, entries, "")
+    rendered, _count, _start = moments._render_turns(entries)
+    prompt, shown_ids = moments._prompt({"ordinal": 3, "turns": 200}, rendered, "")
+    assert len(prompt) < 5_000 + 2_000
     assert "turns shown: " in prompt
     count = int(prompt.split("turns shown: ")[1].split(" of ")[0])
     assert count == len(shown_ids) < 200

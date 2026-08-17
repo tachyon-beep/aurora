@@ -208,7 +208,7 @@ def _prompt(evidence, note, digest=None):
     for moment in (digest or {}).get("moments") or []:
         turn = moment.get("turn")
         stars = moment.get("stars")
-        text = llm._collapse(str(moment.get("line") or ""))[:MOMENT_LINE_CHARS]
+        text = moments._field(moment.get("line") or "", MOMENT_LINE_CHARS)
         if isinstance(turn, int) and isinstance(stars, int) and text:
             lines.append(f"moment: turn {turn} ({stars}/5): {text}")
     lines.append("END RECORDS")

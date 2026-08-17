@@ -50,8 +50,12 @@ with 300 turns and 20 rewrites reads *40+ turns · 6 self-edits*.
 - `diag._record` counts self-edits per line: the number of `write_file` / `migrate` tool calls in
   the entry's first choice (the same `SELF_MOD_TOOLS` subset the ribbon calls "edits"; `reset` and
   `done` are not edits). The record tuple gains a seventh field, `edits`.
-- `diag.incarnations()` reports `edits` per life beside `turns`, `subcalls`, `errors`. Every
-  existing consumer of the tuple is inside `diag.py`.
+- `diag.incarnations()` reports `edits` per life beside `turns`, `subcalls`, `errors`, and an
+  `exact` flag: true only when every tombstone could be dated and every entry carried a usable
+  timestamp, since otherwise entries fold into the current life and the counts stop being a
+  per-life measurement. The console still shows inexact counts; the stream page and the lineage
+  endpoint do not present them as figures (review finding, 2026-08-17). Every existing consumer
+  of the tuple is inside `diag.py`.
 - New `stage/census.py`, the same shape as `codewatch.py`: a daemon thread calls
   `diag.incarnations(transcript_path, work_dir)` every `POLL_SECONDS = 10` and caches the list
   under a lock; `census.cached_lives()` returns a copy or `None` before the first pass; the
@@ -97,7 +101,11 @@ are not digested (there is nothing to rate; the desk sees them as `tombstone_onl
 
 `llm.chat` gains a `timeout` argument (default unchanged, 15 s); the digest passes
 `TIMEOUT_SECONDS = 60` because a 15k-token prompt with a 600-token answer will not return in 15.
-`max_tokens = 700`, `temperature = 0.4`, `max_output_chars = 2000`. One request per dead life,
+`max_tokens = 700`, `temperature = 0.4`, `max_output_chars = 2000`. Each turn line renders at
+most `MAX_CALLS = 6` tool calls (`+K more calls`) and is sliced to `TURN_LINE_CHARS = 1600`; the
+sample is a hard cap (`_fit` drops middle lines until the shown lines fit `INPUT_CHARS`), and the
+turns are read through a generator so a long life is never held as parsed entries at once.
+One request per dead life,
 ever, for the life of the process (memoized per ordinal like the desk); an unparseable or absent
 reply is retried after `RETRY_SECONDS = 600`, at most `MAX_ATTEMPTS = 3` times. At most one
 request per loop iteration (`POLL_SECONDS = 30`), newest dead life first, and only the newest
@@ -123,6 +131,10 @@ ACHIEVEMENT: <one clause, at most 100 characters>
 only when the life did something no ordinary life in this harness does — phrased as curated fact
 (*first agent-built network probe*, *rewrote its own tool registry and survived it*), never as a
 score or a superlative about the model — and `NONE` on its own line when nothing qualifies. The
+system prompt names what an ordinary life does (reads its source, edits its tools, adds helpers,
+writes memory, calls the model, ends by its own note) and says most lives get `NONE`; the records
+carry every earlier nomination so the same feat is not nominated twice (the first live digest
+nominated on its first life, so the bar had to be stated). Any `NONE…` variant is no nomination. The
 parser tolerates the reply having been collapsed to one line (`llm.clean` collapses whitespace):
 it matches `MOMENT:` / `ACHIEVEMENT:` markers anywhere, drops a moment whose turn index is not in
 the records or whose stars are outside 1–5, dedupes by turn index, and keeps at most six. A reply
@@ -133,12 +145,16 @@ turns_shown, turns_total, generated_at, model}`.
 
 ### Consumers
 
-1. **The desk.** `desk._prompt` gains a `moments:` block (each `turn N (k/5): line`) when the
-   digest for that ordinal exists, and `desk._due` additionally waits until the digest is
-   *settled* for that ordinal — present, or given up (attempts exhausted / too few turns), or the
-   digest module disabled — so the verdict is argued from the whole life instead of frozen thirty
-   seconds after death on a note alone. `CLOSING_INSTRUCTION` says the moments are the stage's
-   own earlier reading and may be relied on.
+1. **The desk.** `desk._prompt` gains a `moments:` block (each `turn N (k/5): line`, `_field`-
+   stripped) and a `digest coverage: N of M turns read` line when the digest for that ordinal
+   exists, and `desk._due` additionally waits until the digest is *settled* for that ordinal —
+   present, or given up (attempts exhausted / too few turns / beyond the cap), or the digest
+   module disabled, or asked about for `WAIT_SECONDS = 1200` without any of those — so the
+   verdict is argued from the whole life instead of frozen thirty seconds after death on a note
+   alone, and no state can hold a verdict back forever. The desk's evidence line takes the
+   census's exact turn and self-edit counts when it has them, and its depth reads `full` /
+   `sampled` when a digest read the life. `CLOSING_INSTRUCTION` says the moments are the stage's
+   own earlier reading and may be relied on. `desk.MAX_VERDICTS` is 12, matching `MAX_LIVES`.
 2. **THE LINEAGE foot.** `lineageFootFor` gains one line per achievement, newest first, capped at
    the newest `FOOT_ACHIEVEMENTS = 3`, of the form `incarnation 12: first agent-built network
    probe — the stage`, present only when a nomination exists (the critic's variable-presence

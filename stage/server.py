@@ -666,9 +666,11 @@ def _public_life(row, verdict, digest, enabled):
         kind if kind in LIFE_KINDS else ("unknown" if not current and ended is not None else None)
     )
 
+    exact = bool(row.get("exact"))
+
     def count(name):
         value = row.get(name)
-        if isinstance(value, bool) or not isinstance(value, int):
+        if not exact or isinstance(value, bool) or not isinstance(value, int):
             return None
         return max(0, value)
 
@@ -926,11 +928,13 @@ def _overlay_census(stats, row):
 
     The census counts every core-stream entry the live transcript holds, so
     its turn count is exact and its self-edit count does not saturate at the
-    event-list cap. Without a census row the tail figures stand and the
-    self-edit count is null, which the page reads as "count the events".
+    event-list cap. Without a census row — or with one the census marks
+    inexact, because a tombstone could not be dated or an entry could not be
+    placed — the tail figures stand and the self-edit count is null, which the
+    page reads as "count the events".
     """
     stats["self_edits_this_life"] = None
-    if not isinstance(row, dict):
+    if not isinstance(row, dict) or not row.get("exact"):
         return stats
     turns = row.get("turns")
     if isinstance(turns, int) and not isinstance(turns, bool):

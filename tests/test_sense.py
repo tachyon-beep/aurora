@@ -383,3 +383,198 @@ def test_an_overrunning_cycle_is_followed_immediately():
     wake = sense.next_wake(590.0, 600)
     assert wake == 601.0
     assert max(wake - 700.0, 1) == 1
+
+
+# feed configuration
+
+
+def test_load_feeds_defaults_dir_to_the_list_position():
+    feeds = sense.load_feeds('[{"id":"a"},{"id":"b","vf":"crop=1:1:0:0"},{"dir":"z","id":"c"}]')
+
+    assert feeds == [
+        {"id": "a", "dir": "0"},
+        {"id": "b", "vf": "crop=1:1:0:0", "dir": "1"},
+        {"dir": "z", "id": "c"},
+    ]
+
+
+def test_load_feeds_accepts_an_empty_list():
+    assert sense.load_feeds("[]") == []
+    assert sense.load_feeds("") == []
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        '{"id":"a"}',
+        '["a"]',
+        '[{"dir":"0"}]',
+        '[{"id":""}]',
+        '[{"id":"a","dir":"../x"}]',
+        '[{"id":"a"},{"id":"b","dir":"0"}]',
+    ],
+)
+def test_load_feeds_rejects_malformed_entries(raw):
+    with pytest.raises(ValueError):
+        sense.load_feeds(raw)
+
+
+# frame age
+
+
+def _aged_slot(feed_dir, name, age_seconds, now):
+    path = feed_dir / name
+    path.write_bytes(b"x")
+    import os
+
+    os.utime(path, (now - age_seconds, now - age_seconds))
+    return path
+
+
+def test_prune_stale_removes_slots_older_than_the_max_age(tmp_path):
+    now = 1_000_000.0
+    feed_dir = tmp_path / "0"
+    feed_dir.mkdir()
+    old = _aged_slot(feed_dir, "000.jpg", 7200, now)
+    fresh = _aged_slot(feed_dir, "001.jpg", 60, now)
+
+    sense.prune_stale(tmp_path, [{"dir": "0", "id": "x"}], now, max_age_seconds=3600)
+
+    assert not old.exists()
+    assert fresh.exists()
+
+
+def test_prune_stale_is_a_no_op_when_no_max_age_is_set(tmp_path):
+    now = 1_000_000.0
+    feed_dir = tmp_path / "0"
+    feed_dir.mkdir()
+    old = _aged_slot(feed_dir, "000.jpg", 10**7, now)
+
+    sense.prune_stale(tmp_path, [{"dir": "0", "id": "x"}], now, max_age_seconds=0)
+
+    assert old.exists()
+
+
+def test_prune_stale_touches_only_slot_files_of_configured_feeds(tmp_path):
+    now = 1_000_000.0
+    feed_dir = tmp_path / "0"
+    feed_dir.mkdir()
+    other_dir = tmp_path / "1"
+    other_dir.mkdir()
+    tmp = _aged_slot(feed_dir, ".grab.jpg", 7200, now)
+    other = _aged_slot(other_dir, "000.jpg", 7200, now)
+    status = _aged_slot(tmp_path, "status.json", 7200, now)
+
+    sense.prune_stale(tmp_path, [{"dir": "0", "id": "x"}], now, max_age_seconds=3600)
+
+    assert tmp.exists()
+    assert other.exists()
+    assert status.exists()
+
+
+def test_prune_stale_tolerates_a_feed_directory_that_does_not_exist_yet(tmp_path):
+    sense.prune_stale(tmp_path, [{"dir": "0", "id": "x"}], 0.0, max_age_seconds=3600)
+
+
+def test_run_cycle_prunes_stale_frames_after_grabbing(tmp_path, monkeypatch):
+    now = 1_000_000.0
+    feed_dir = tmp_path / "0"
+    feed_dir.mkdir()
+    old = _aged_slot(feed_dir, "000.jpg", 7200, now)
+    monkeypatch.setattr(sense, "grab_feed", lambda *args, **kwargs: None)
+
+    sense.run_cycle(
+        [{"dir": "0", "id": "x"}], {}, tmp_path, now, 10, 288, 2.0, max_age_seconds=3600
+    )
+
+    assert not old.exists()
+
+
+def test_main_reads_feeds_and_max_age_from_the_environment(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(sense, "SENSE_DIR", str(tmp_path))
+    monkeypatch.setenv("SENSE_FEEDS", '[{"id":"x"}]')
+    monkeypatch.setenv("SENSE_MAX_AGE_HOURS", "1.5")
+    monkeypatch.setattr(sense, "reconcile_storage", lambda *args: None)
+    monkeypatch.setattr(sense, "run_cycle", lambda *args, **kwargs: calls.append((args, kwargs)))
+    monkeypatch.setattr(sense.time, "time", lambda: 0.0)
+    monkeypatch.setattr(sense.time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopIteration))
+
+    with pytest.raises(StopIteration):
+        sense.main()
+
+    ((args, kwargs),) = calls
+    assert args[0] == [{"id": "x", "dir": "0"}]
+    assert kwargs == {"max_age_seconds": 5400.0}
+
+
+# grab spacing within a cycle
+
+
+def test_feed_offsets_spread_evenly_across_the_period():
+    assert [sense.feed_offset(k, 4, 600) for k in range(4)] == [0.0, 150.0, 300.0, 450.0]
+    assert sense.feed_offset(0, 1, 600) == 0.0
+
+
+def test_run_cycle_grabs_each_feed_at_its_offset(tmp_path, monkeypatch):
+    pauses, grabs = [], []
+    monkeypatch.setattr(sense, "pause_until", lambda moment: pauses.append(moment))
+    monkeypatch.setattr(
+        sense,
+        "grab_feed",
+        lambda feed, root, now, *a, **k: grabs.append((feed["dir"], now)) or flat(10),
+    )
+    feeds = [{"dir": "a", "id": "x"}, {"dir": "b", "id": "y"}, {"dir": "c", "id": "z"}]
+
+    sense.run_cycle(feeds, {}, tmp_path, now=1200.0, interval_minutes=10, slots=144, threshold=2.0)
+
+    assert pauses == [1200.0, 1400.0, 1600.0]
+    assert grabs == [("a", 1200.0), ("b", 1400.0), ("c", 1600.0)]
+
+
+def test_run_cycle_does_not_pause_for_feeds_it_skips(tmp_path, monkeypatch):
+    pauses = []
+    monkeypatch.setattr(sense, "pause_until", lambda moment: pauses.append(moment))
+    monkeypatch.setattr(sense, "grab_feed", lambda *a, **k: flat(10))
+    feeds = [{"dir": "a", "id": "x"}, {"dir": "b", "id": "y"}]
+    states = {"a": sense.FeedState(active=False, last_probe=1000.0), "b": sense.FeedState()}
+
+    sense.run_cycle(
+        feeds, states, tmp_path, now=1200.0, interval_minutes=10, slots=144, threshold=2.0
+    )
+
+    assert pauses == [1500.0]
+
+
+def test_a_mid_interval_start_grabs_passed_offsets_at_once(tmp_path, monkeypatch):
+    pauses, grabs = [], []
+    monkeypatch.setattr(sense, "pause_until", lambda moment: pauses.append(moment))
+    monkeypatch.setattr(
+        sense,
+        "grab_feed",
+        lambda feed, root, now, *a, **k: grabs.append((feed["dir"], now)) or flat(10),
+    )
+    feeds = [{"dir": "a", "id": "x"}, {"dir": "b", "id": "y"}, {"dir": "c", "id": "z"}]
+
+    sense.run_cycle(feeds, {}, tmp_path, now=1450.0, interval_minutes=10, slots=144, threshold=2.0)
+
+    assert pauses == [1450.0, 1450.0, 1600.0]
+    assert [g[1] for g in grabs] == [1450.0, 1450.0, 1600.0]
+    assert {sense.slot_index(g[1], 10, 144) for g in grabs} == {sense.slot_index(1450.0, 10, 144)}
+
+
+def test_offset_grabs_land_in_the_cycle_slot():
+    # The last of many feeds still grabs before the period ends, so every
+    # feed's frame lands in the slot the cycle began in.
+    now = 1200.0
+    last = now + sense.feed_offset(11, 12, 600)
+    assert sense.slot_index(last, 10, 144) == sense.slot_index(now, 10, 144)
+
+
+def test_pause_until_sleeps_only_into_the_future(monkeypatch):
+    slept = []
+    monkeypatch.setattr(sense.time, "time", lambda: 100.0)
+    monkeypatch.setattr(sense.time, "sleep", lambda s: slept.append(s))
+    sense.pause_until(130.0)
+    sense.pause_until(90.0)
+    assert slept == [30.0]
