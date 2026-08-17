@@ -6,8 +6,12 @@ and images render as links so a viewer's browser never fetches an agent-chosen
 URL. Anything the subset does not recognise renders as visible text.
 """
 
+import datetime
 import html
+import os
 import re
+
+from stage.data import contained_file
 
 POST_READ_BYTES = 65_536
 POSTS_MAX = 1000
@@ -278,3 +282,77 @@ def first_heading(text):
         if m:
             return m.group(2)
     return None
+
+
+_STAMP_FORMAT = "%Y%m%d_%H%M%S_%f"
+
+
+def _stamp_epoch(name):
+    try:
+        parsed = datetime.datetime.strptime(name, _STAMP_FORMAT)
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=datetime.timezone.utc).timestamp()
+
+
+def _stamp_label(name, epoch):
+    if epoch is None:
+        return name
+    when = datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc)
+    return when.strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _slug(name):
+    return re.sub(r"[^A-Za-z0-9_-]", "-", name)
+
+
+def list_posts(diode_dir):
+    """(post stems newest first, truncated) for the regular .md files under blog/."""
+    blog_dir = os.path.join(diode_dir, "blog")
+    try:
+        names = sorted((n for n in os.listdir(blog_dir) if n.endswith(".md")), reverse=True)
+    except OSError:
+        return [], False
+    truncated = len(names) > POSTS_MAX
+    kept = []
+    for name in names[:POSTS_MAX]:
+        if contained_file(diode_dir, os.path.join(blog_dir, name)) is not None:
+            kept.append(name[: -len(".md")])
+    return kept, truncated
+
+
+def read_post(diode_dir, name):
+    """One rendered post by stem, or None when it is missing, a link, or not a regular file."""
+    blog_dir = os.path.join(diode_dir, "blog")
+    if "/" in name or name in ("", ".", ".."):
+        return None
+    full = contained_file(diode_dir, os.path.join(blog_dir, name + ".md"))
+    if full is None:
+        return None
+    try:
+        with open(full, "rb") as f:
+            raw = f.read(POST_READ_BYTES + 1)
+    except OSError:
+        return None
+    truncated = len(raw) > POST_READ_BYTES
+    text = raw[:POST_READ_BYTES].decode("utf-8", "replace")
+    epoch = _stamp_epoch(name)
+    slug = _slug(name)
+    return {
+        "name": name,
+        "slug": slug,
+        "epoch": epoch,
+        "stamp": _stamp_label(name, epoch),
+        "title": first_heading(text) or _stamp_label(name, epoch),
+        "html": render_markdown(text, id_prefix=f"p{slug}-"),
+        "truncated": truncated,
+    }
+
+
+def paginate(total, page, per_page=POSTS_PER_PAGE):
+    """(start, end, pages) for a 1-based page over total items, or None when out of range."""
+    pages = max(1, -(-total // per_page))
+    if not isinstance(page, int) or page < 1 or page > pages:
+        return None
+    start = (page - 1) * per_page
+    return start, min(total, start + per_page), pages

@@ -1,5 +1,7 @@
 import time
 
+import pytest
+
 from stage import blog
 
 
@@ -201,3 +203,99 @@ def test_nesting_up_to_the_cap_is_structural_and_beyond_it_is_text():
     out = blog.render_markdown(deep)
     assert out.count("<blockquote>") == blog.MAX_NESTING + 1
     assert "&gt;&gt; a" in out
+
+
+def _blog(tmp_path):
+    diode = tmp_path / "diode"
+    (diode / "blog").mkdir(parents=True)
+    return diode
+
+
+def test_list_posts_missing_folder(tmp_path):
+    assert blog.list_posts(str(tmp_path / "nowhere")) == ([], False)
+
+
+def test_list_posts_newest_first_md_only_and_capped(tmp_path, monkeypatch):
+    diode = _blog(tmp_path)
+    for stem in ("20260817_100000_000000", "20260817_120000_000000", "20260817_110000_000000"):
+        (diode / "blog" / f"{stem}.md").write_text("# t", encoding="utf-8")
+    (diode / "blog" / "notes.txt").write_text("no", encoding="utf-8")
+    names, truncated = blog.list_posts(str(diode))
+    assert names == ["20260817_120000_000000", "20260817_110000_000000", "20260817_100000_000000"]
+    assert truncated is False
+    monkeypatch.setattr(blog, "POSTS_MAX", 2)
+    names, truncated = blog.list_posts(str(diode))
+    assert names == ["20260817_120000_000000", "20260817_110000_000000"]
+    assert truncated is True
+
+
+def test_list_posts_skips_symlinks_and_directories(tmp_path):
+    diode = _blog(tmp_path)
+    outside = tmp_path / "outside.md"
+    outside.write_text("# secret", encoding="utf-8")
+    (diode / "blog" / "20260817_120000_000000.md").symlink_to(outside)
+    (diode / "blog" / "20260817_110000_000000.md").mkdir()
+    (diode / "blog" / "20260817_100000_000000.md").write_text("# ok", encoding="utf-8")
+    assert blog.list_posts(str(diode)) == (["20260817_100000_000000"], False)
+
+
+def test_read_post_title_stamp_html_and_slug(tmp_path):
+    diode = _blog(tmp_path)
+    (diode / "blog" / "20260817_120000_000000.md").write_text(
+        "# Hello *world*\n\nbody <x>\n", encoding="utf-8"
+    )
+    post = blog.read_post(str(diode), "20260817_120000_000000")
+    assert post["name"] == "20260817_120000_000000"
+    assert post["slug"] == "20260817_120000_000000"
+    assert post["title"] == "Hello *world*"
+    assert post["stamp"] == "2026-08-17 12:00:00 UTC"
+    assert post["epoch"] == 1786968000.0
+    assert '<h1 id="p20260817_120000_000000-h1">Hello <em>world</em></h1>' in post["html"]
+    assert "<p>body &lt;x&gt;</p>" in post["html"]
+    assert post["truncated"] is False
+
+
+def test_read_post_without_heading_uses_the_stamp_and_odd_names_are_slugged(tmp_path):
+    diode = _blog(tmp_path)
+    (diode / "blog" / "hello world!.md").write_text("just text", encoding="utf-8")
+    post = blog.read_post(str(diode), "hello world!")
+    assert post["title"] == "hello world!"
+    assert post["stamp"] == "hello world!"
+    assert post["epoch"] is None
+    assert post["slug"] == "hello-world-"
+
+
+def test_read_post_caps_bytes_and_marks_truncation(tmp_path, monkeypatch):
+    diode = _blog(tmp_path)
+    monkeypatch.setattr(blog, "POST_READ_BYTES", 16)
+    (diode / "blog" / "a.md").write_text("# " + "x" * 100, encoding="utf-8")
+    post = blog.read_post(str(diode), "a")
+    assert post["truncated"] is True
+    assert post["title"] == "x" * 14
+
+
+def test_read_post_refuses_links_and_missing(tmp_path):
+    diode = _blog(tmp_path)
+    outside = tmp_path / "outside.md"
+    outside.write_text("# secret", encoding="utf-8")
+    (diode / "blog" / "a.md").symlink_to(outside)
+    assert blog.read_post(str(diode), "a") is None
+    assert blog.read_post(str(diode), "missing") is None
+    assert blog.read_post(str(diode), "../outside") is None
+
+
+@pytest.mark.parametrize(
+    "total,page,expected",
+    [
+        (0, 1, (0, 0, 1)),
+        (0, 2, None),
+        (10, 1, (0, 10, 1)),
+        (11, 1, (0, 10, 2)),
+        (11, 2, (10, 11, 2)),
+        (11, 3, None),
+        (5, 0, None),
+        (5, -1, None),
+    ],
+)
+def test_paginate(total, page, expected):
+    assert blog.paginate(total, page) == expected
