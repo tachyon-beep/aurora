@@ -373,10 +373,16 @@ def write_output(command, text):
     /video is agent-writable, so OUTPUT_DIR can be replaced with a plain
     file between one poll cycle and the next (ensure_dirs degrades rather
     than raising for exactly this reason, but does not make OUTPUT_DIR
-    usable again). run_video calls this once per dispatched command, for
-    both successful and failed dispatches, and does not wrap the call in a
-    try/except of its own -- so a write that cannot land must degrade to
-    "nothing written" rather than raise, or one malformed volume would end
+    usable again). This function's own guard only covers OSError, and text
+    is not always safe to encode -- a lone UTF-16 surrogate reaching here
+    from a command word (valid JSON; json.load does not reject an
+    unpaired \\uXXXX escape) makes f.write's implicit UTF-8 encode raise
+    UnicodeEncodeError, a ValueError this function does not itself catch.
+    run_cycle calls this once per dispatched command, for both successful
+    and failed dispatches, and wraps the call in its own broader
+    try/except as a second line of defense -- so a write that cannot land,
+    by that route or any other, must degrade to "nothing written" rather
+    than raise, or one malformed volume or one malformed command would end
     the poll loop after the first command that tried to report a result.
     """
     ensure_dirs()
@@ -1227,12 +1233,23 @@ def run_video():
 
     The console is seeded once, only when absent, with an empty command list
     -- an existing console.json (from a prior incarnation, or hand-written)
-    is never overwritten. The poll loop itself is not expected to exit;
-    run_cycle carries the discipline that keeps it that way.
+    is never overwritten. The seed write is wrapped rather than left to
+    raise: it runs before the loop, so an unguarded failure here (an
+    unwritable or full VIDEO_DIR) would keep run_cycle -- and the pruning
+    inside it -- from ever running at all, which is exactly the self-sealing
+    failure this service is built to avoid: the one thing that could
+    relieve a full volume never gets to run because the volume is full.
+    load_console already reads a missing file as ([], {}), so the loop
+    starts and prunes regardless of whether the seed landed. The poll loop
+    itself is not expected to exit; run_cycle carries the rest of that
+    discipline.
     """
     ensure_dirs()
     if not os.path.exists(CONSOLE_FILE):
-        _replace_json(CONSOLE_FILE, {"commands": [], "variables": {}})
+        try:
+            _replace_json(CONSOLE_FILE, {"commands": [], "variables": {}})
+        except OSError:
+            pass
     state = ServiceState()
     while True:
         state = run_cycle(state)

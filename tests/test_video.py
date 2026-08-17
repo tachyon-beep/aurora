@@ -1900,3 +1900,26 @@ def test_run_cycle_survives_a_console_write_back_failure(volume, monkeypatch):
     assert isinstance(state, video.ServiceState)
     # The command still dispatched even though the console write-back failed.
     assert (volume / "HELP.md").exists()
+
+
+def test_run_video_reaches_the_first_cycle_when_the_console_seed_fails(volume, monkeypatch):
+    # The pre-loop console seed must not be able to keep the loop from
+    # starting: if it could, run_cycle -- and the pruning inside it --
+    # would never run at all, and the full or unwritable volume that made
+    # the seed fail would never be relieved. Restart, crash, repeat: the
+    # self-sealing failure class this service exists to avoid.
+    class _Sentinel(Exception):
+        pass
+
+    def boom_seed(path, data):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(video, "_replace_json", boom_seed)
+
+    def boom_cycle(state):
+        raise _Sentinel()
+
+    monkeypatch.setattr(video, "run_cycle", boom_cycle)
+    assert not (volume / "console.json").exists()
+    with pytest.raises(_Sentinel):
+        video.run_video()
