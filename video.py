@@ -18,6 +18,8 @@ import signal
 import socket
 import subprocess
 import tempfile
+import urllib.error
+import urllib.request
 from urllib.parse import urlparse
 
 VIDEO_DIR = os.environ.get("VIDEO_DIR", "/video")
@@ -376,3 +378,190 @@ def run_binary(args, timeout):
     except Exception:
         return -1, ""
     return process.returncode, stdout or ""
+
+
+SEARCH_RESULT_COUNT = 10
+SEARCH_TITLE_CAP = 300
+SEARCH_CHANNEL_CAP = 80
+TRANSCRIPT_MAX_BYTES = 500_000
+TRUNCATION_MARKER = "[truncated]"
+CAPTION_FETCH_TIMEOUT = 30
+CAPTION_MAX_BYTES = 5_000_000
+
+
+def format_duration(seconds):
+    """Minutes and seconds, or a dash when the duration is unknown."""
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
+        return "-"
+    total = int(seconds)
+    if total < 0:
+        return "-"
+    return f"{total // 60}:{total % 60:02d}"
+
+
+def _cap(value, limit):
+    """A field as text, bounded in length. Content is never rewritten."""
+    if not isinstance(value, str):
+        return ""
+    return value[:limit]
+
+
+def search_lines(payload):
+    """Result lines from a yt-dlp search payload: id, duration, channel, title."""
+    entries = payload.get("entries") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        return []
+    lines = []
+    for entry in entries[:SEARCH_RESULT_COUNT]:
+        if not isinstance(entry, dict):
+            continue
+        video_id = entry.get("id")
+        if not isinstance(video_id, str) or not video_id:
+            continue
+        duration = format_duration(entry.get("duration"))
+        channel = _cap(entry.get("channel") or entry.get("uploader") or "", SEARCH_CHANNEL_CAP)
+        title = _cap(entry.get("title") or "", SEARCH_TITLE_CAP)
+        lines.append(f"{video_id}  {duration}  {channel}  {title}".rstrip())
+    return lines
+
+
+def search(query):
+    """Search for videos; returns the result text."""
+    try:
+        text = validated_query(query)
+    except ValueError as e:
+        return f"invalid query: {e}"
+    code, out = run_binary(
+        [
+            "yt-dlp",
+            "--dump-single-json",
+            "--flat-playlist",
+            "--no-warnings",
+            f"ytsearch{SEARCH_RESULT_COUNT}:{text}",
+        ],
+        timeout=RESOLVE_TIMEOUT_SECONDS,
+    )
+    if code != 0 or not out.strip():
+        return "search unavailable"
+    try:
+        payload = json.loads(out)
+    except ValueError:
+        return "search unavailable"
+    lines = search_lines(payload)
+    if not lines:
+        return "no results"
+    return "\n".join(lines)
+
+
+def _caption_track(payload):
+    """(url, language, kind) for the best available caption track, or None.
+
+    Manual captions are preferred over automatic ones.
+    """
+    if not isinstance(payload, dict):
+        return None
+    for key, kind in (("subtitles", "manual"), ("automatic_captions", "automatic")):
+        tracks = payload.get(key)
+        if not isinstance(tracks, dict):
+            continue
+        for language, formats in tracks.items():
+            if not isinstance(formats, list):
+                continue
+            for fmt in formats:
+                if isinstance(fmt, dict) and fmt.get("ext") == "json3" and fmt.get("url"):
+                    return fmt["url"], language, kind
+    return None
+
+
+def _fetch_caption(url):
+    """Fetch a caption track; returns the parsed payload or None."""
+    ok, _ = classify_manifest(url)
+    if not ok:
+        return None
+    try:
+        with urllib.request.urlopen(url, timeout=CAPTION_FETCH_TIMEOUT) as response:
+            raw = response.read(CAPTION_MAX_BYTES)
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    try:
+        return json.loads(raw.decode("utf-8", "replace"))
+    except ValueError:
+        return None
+
+
+def _transcript_payload(video_id):
+    """Metadata plus caption events for a video, or None when unavailable."""
+    code, out = run_binary(
+        [
+            "yt-dlp",
+            "--dump-single-json",
+            "--skip-download",
+            "--no-warnings",
+            f"https://www.youtube.com/watch?v={video_id}",
+        ],
+        timeout=RESOLVE_TIMEOUT_SECONDS,
+    )
+    if code != 0 or not out.strip():
+        return None
+    try:
+        payload = json.loads(out)
+    except ValueError:
+        return None
+    track = _caption_track(payload)
+    if track is None:
+        return payload
+    url, language, kind = track
+    fetched = _fetch_caption(url)
+    if isinstance(fetched, dict):
+        payload["_transcript_events"] = fetched.get("events") or []
+        payload["_transcript_language"] = language
+        payload["_transcript_kind"] = kind
+    return payload
+
+
+def transcript_lines(payload, start, end):
+    """Timed transcript lines, optionally bounded to a window in seconds."""
+    events = payload.get("_transcript_events") if isinstance(payload, dict) else None
+    if not isinstance(events, list):
+        return []
+    lines = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        segs = event.get("segs")
+        if not isinstance(segs, list):
+            continue
+        text = "".join(s.get("utf8", "") for s in segs if isinstance(s, dict)).strip()
+        if not text:
+            continue
+        seconds = int(event.get("tStartMs", 0) // 1000)
+        if start is not None and seconds < start:
+            continue
+        if end is not None and seconds > end:
+            continue
+        lines.append(f"[{format_duration(seconds)}] {text}")
+    return lines
+
+
+def transcript(video_id, start, end):
+    """Fetch a timed transcript; returns the result text, bounded to TRANSCRIPT_MAX_BYTES."""
+    try:
+        vid = validated_video_id(video_id)
+    except ValueError as e:
+        return f"invalid video id: {e}"
+    payload = _transcript_payload(vid)
+    if payload is None:
+        return "video unavailable"
+    lines = transcript_lines(payload, start, end)
+    if not lines:
+        return "no transcript available"
+    header = (
+        f"{payload.get('_transcript_kind', 'unknown')} captions, "
+        f"language {payload.get('_transcript_language', 'unknown')}"
+    )
+    body = "\n".join(lines)
+    text = f"{header}\n{body}"
+    encoded = text.encode("utf-8")
+    if len(encoded) > TRANSCRIPT_MAX_BYTES:
+        text = encoded[:TRANSCRIPT_MAX_BYTES].decode("utf-8", "ignore") + "\n" + TRUNCATION_MARKER
+    return text
