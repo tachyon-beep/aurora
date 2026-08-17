@@ -387,16 +387,20 @@ TRANSCRIPT_MAX_BYTES = 500_000
 TRUNCATION_MARKER = "[truncated]"
 CAPTION_FETCH_TIMEOUT = 30
 CAPTION_MAX_BYTES = 5_000_000
+# No real video runs longer than this; a value past it is malformed input,
+# not a duration, and is rejected before it ever reaches integer formatting
+# (Python raises rather than converts an integer of thousands of digits).
+DURATION_MAX_SECONDS = 10**12
 
 
 def format_duration(seconds):
-    """Minutes and seconds, or a dash when the duration is unknown or non-finite."""
+    """Minutes and seconds, or a dash when the duration is unknown, non-finite, or absurd."""
     if not isinstance(seconds, (int, float)) or isinstance(seconds, bool):
         return "-"
     if isinstance(seconds, float) and not math.isfinite(seconds):
         return "-"
     total = int(seconds)
-    if total < 0:
+    if total < 0 or total > DURATION_MAX_SECONDS:
         return "-"
     return f"{total // 60}:{total % 60:02d}"
 
@@ -447,7 +451,7 @@ def search(query):
         return "search unavailable"
     try:
         payload = json.loads(out)
-    except ValueError:
+    except (ValueError, RecursionError):
         return "search unavailable"
     lines = search_lines(payload)
     if not lines:
@@ -496,7 +500,11 @@ def _fetch_caption(url):
     run_binary, so it carries its own SSRF check completely: the initial URL
     is validated before the opener is built, and the opener re-validates
     every redirect hop, since an unvalidated redirect would otherwise let a
-    single accepted manifest host point the second request anywhere.
+    single accepted manifest host point the second request anywhere. The
+    fetch itself is caught broadly: this function's contract is "payload or
+    None", and nothing about a failed or truncated caption fetch (including
+    a chunked response cut off mid-read) is worth propagating as an
+    exception.
     """
     ok, _ = classify_manifest(url)
     if not ok:
@@ -505,11 +513,11 @@ def _fetch_caption(url):
         opener = _make_opener()
         with opener.open(url, timeout=CAPTION_FETCH_TIMEOUT) as response:
             raw = response.read(CAPTION_MAX_BYTES)
-    except (urllib.error.URLError, OSError, ValueError):
+    except Exception:
         return None
     try:
         return json.loads(raw.decode("utf-8", "replace"))
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
 
@@ -529,7 +537,7 @@ def _transcript_payload(video_id):
         return None
     try:
         payload = json.loads(out)
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
     track = _caption_track(payload)
     if track is None:
@@ -555,7 +563,14 @@ def transcript_lines(payload, start, end):
         segs = event.get("segs")
         if not isinstance(segs, list):
             continue
-        text = "".join(s.get("utf8", "") for s in segs if isinstance(s, dict)).strip()
+        parts = []
+        for s in segs:
+            if not isinstance(s, dict):
+                continue
+            piece = s.get("utf8", "")
+            if isinstance(piece, str):
+                parts.append(piece)
+        text = "".join(parts).strip()
         if not text:
             continue
         seconds = int(event.get("tStartMs", 0) // 1000)
