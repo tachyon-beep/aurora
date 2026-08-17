@@ -185,3 +185,25 @@ def test_the_shipped_template_states_both_stream_ceilings() -> None:
 
     assert "STREAM_TOKEN_HOURLY_MAX=2000000" in lines
     assert "STREAM_HOURLY_MAX=1200" in lines
+
+
+def test_the_image_bakes_the_books_directory_into_a_read_only_surface() -> None:
+    # /books is built from the gitignored books/ directory; only .gitkeep is
+    # tracked so a fresh clone still builds, and .dockerignore keeps that
+    # keep-file off the image so an empty directory yields an empty /books.
+    dockerfile = _read("Dockerfile")
+    copy = next(line for line in dockerfile.splitlines() if line.startswith("COPY books/"))
+    workspace = next(line for line in dockerfile.splitlines() if " /opt/agent/" in line)
+
+    assert copy == "COPY books/ /books/"
+    assert "books" not in workspace
+    assert "books/.gitkeep" in _read(".dockerignore").splitlines()
+    gitignore = _read(".gitignore").splitlines()
+    assert "books/*" in gitignore and "!books/.gitkeep" in gitignore
+    assert (ROOT / "books" / ".gitkeep").is_file()
+
+
+def test_the_garden_names_the_books_surface_factually() -> None:
+    template = _read("scripts/build_garden.py")
+    assert "read-only document files are present at /books." in template
+    assert template.count("/books") == 1

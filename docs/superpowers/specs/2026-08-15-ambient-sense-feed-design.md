@@ -50,6 +50,20 @@ Five public YouTube live streams were evaluated. Verdicts:
 Sources were chosen for multi-year longevity; real permanent feed death is
 expected to be rare, which is why the inactive-marking below is tuned slow.
 
+Amended 2026-08-17 (operator): the set was widened for geographic range and
+the two Melbourne feeds dropped as redundant with each other and Bondi. Kept:
+Monterey Bay Aquarium (`abbR-Ttd-cA`, dir `3`, still the reference feed) and
+Bondi Icebergs (`53ILEi6FMaA`, dir `0`, the southern-hemisphere window).
+Added, one frame grabbed and inspected from each on 2026-08-17, none needing
+a crop or delogo filter (in-scene signage and burned-in clocks are world
+content, as with Bondi): Washington Monument, D.C. (`oDCAAfOSqvA`, dir `4`),
+Times Square (`JQ_jwk_7OVE`, `5`), New Orleans French Quarter
+(`QhFYcPBmkcI`, `6`), Tamariu, Spain (`PMhVgTcDd1o`, `7`), Western Wall,
+Jerusalem (`77akujLn4k8`, `8`), Shinjuku, Tokyo (`6dp-bvQ7RWo`, `9`), Koh
+Samui beach, Thailand (`kkVrj2cr9Ko`, `10`). Dirs `1` and `2` are removed by
+reconciliation on the first start; the retained feeds keep their dirs so no
+frame of one camera ever sits in another's directory.
+
 ## 2. Capture mechanism (prototyped, headless)
 
 Per feed, per cycle: `yt-dlp -g -f 'best[height<=720]' <url>` resolves the
@@ -75,8 +89,19 @@ stream. The 10-minute default cadence is modest and polite to the sources.
 - The agent service gains one mount: `./volumes/sense:/sense:ro`. The agent
   image's mountpoint `mkdir -p` line gains `/sense`.
 - Feeds are configured by `SENSE_FEEDS` (JSON array of
-  `{dir, id, [vf]}`), with the four included feeds as the compose default.
-  Cadence is `SENSE_INTERVAL_MINUTES` (default 10).
+  `{id, [dir], [vf]}`; `dir` defaults to the entry's position). Amended
+  2026-08-17: the list lives in `.env` (the four included feeds are the
+  `.env.example` value), and compose passes it through as
+  `${SENSE_FEEDS:-[]}` — unset captures nothing. It is read once at start,
+  so a change is applied by recreating the sense service alone
+  (`docker compose up -d sense`). Cadence is `SENSE_INTERVAL_MINUTES`
+  (default 10). Amended 2026-08-17: within each interval the feeds are
+  grabbed one at a time at evenly spaced offsets from the interval boundary
+  (list order; feed k of N at k/N of the interval) rather than together at
+  the boundary, so the volume changes throughout the interval. Every offset
+  falls inside the interval, so each frame still lands in the slot the
+  cycle began in; detector bookkeeping (probe consumption, the global
+  guard) stays per cycle.
 - `sense.py` is standard library + Pillow; the yt-dlp/ffmpeg subprocess
   calls are isolated in small functions so unit tests can exercise slot
   math, the freeze detector, status transitions, and the global guard with
@@ -86,8 +111,9 @@ stream. The 10-minute default cadence is modest and polite to the sources.
 ## 4. Ring and slots (no schema, no index, no filenames)
 
 Per-feed directory `/sense/<dir>/` holding a fixed ring of slots
-`000.jpg`..`287.jpg` (`SENSE_RING_SLOTS=288` — 48 h at 10 min), overwritten
-in place. Slot selection is deterministic and restart-safe:
+`000.jpg`..`287.jpg` (`SENSE_RING_SLOTS=288` — 48 h at 10 min; amended
+2026-08-17 to a default of 144, one day, alongside the 24 h max age below),
+overwritten in place. Slot selection is deterministic and restart-safe:
 `(minutes_since_unix_epoch_utc // interval) % slots`, so a restarted service
 resumes writing where the clock says, not where it left off. No other files
 appear in feed directories and no timestamp enters a filename: the honoured
@@ -125,6 +151,11 @@ failing together points at the capture side.
 Inactive feeds keep their last ring contents (stale mtimes remain honest
 data) and are probed once daily; a successful grab that differs from the
 last frame reactivates the feed.
+
+Amended 2026-08-17: `SENSE_MAX_AGE_HOURS` (default 24) removes, each cycle,
+any ring frame of a configured feed older than that many hours, so nothing
+older than a day remains and a feed that stops goes dark rather than holding
+its last frames until the ring wraps. 0 keeps the behaviour above.
 
 Detector state (counters, previous thumbnails) is kept in memory only. The
 only writable location is `/sense`, which the agent reads, so even a dotfile

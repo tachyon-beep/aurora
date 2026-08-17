@@ -171,6 +171,13 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      from are the only contents, and all are agent-readable surfaces that stay within invariant 2.
      The sense service shares a network with no other service (`sense_egress` is its alone), so
      the viewer remains the sole occupant of the compose default network.
+   - The **books surface** (`/books`) is baked into the agent image at build time from the
+     repository's gitignored `books/` directory (only `books/.gitkeep` is tracked, and
+     `.dockerignore` keeps it out of the image, so a fresh clone builds an empty `/books`). It is
+     operator-curated documents only — no README, index, or captions — root-owned on the read-only
+     rootfs, copied nowhere else, and never rendered by the stage. It is named in the garden's
+     `runtime.md` in one factual sentence, the `/corpus` pattern. What goes in it is the operator's
+     call within invariant 2; nothing on the image may describe or list it.
 
 4. **Human docs stay out of the agent's world.** The agent image (`Dockerfile`) copies an explicit
    **allow-list** of files into `/opt/agent`. Do **not** add `README.md`, `CLAUDE.md`, `docs/`, or

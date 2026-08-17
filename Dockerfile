@@ -3,7 +3,7 @@ FROM python:3.13-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends git ca-certificates \
        rustc cargo sbcl gcc libc6-dev make pforth swi-prolog-core nasm jq \
-       sqlite3 libsqlite3-dev libffi-dev miller datamash ripgrep \
+       sqlite3 libsqlite3-dev libffi-dev miller datamash ripgrep poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY vendor/ /tmp/vendor/
@@ -24,6 +24,11 @@ ENV CARGO_HOME=/build/.cargo \
     XDG_CACHE_HOME=/build/.cache
 
 RUN useradd --create-home --uid 1000 appuser
+
+# Operator-provided documents, read-only in the container: the contents of
+# the repository's gitignored books/ directory at build time (its .gitkeep is
+# excluded by .dockerignore, so an empty directory yields an empty /books).
+COPY books/ /books/
 
 COPY --chown=appuser:appuser agent.py agent_stock.py chassis.py watchdog.py proxy.py recorder_streams.py parse_transcripts.py system_prompt.txt user_prompt.txt /opt/agent/
 COPY --chown=appuser:appuser entrypoint.sh /usr/local/bin/entrypoint.sh

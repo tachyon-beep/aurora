@@ -168,6 +168,9 @@ Preparation creates and mounts the preallocated 5 GiB `/build` image, creates th
 bind source, builds any missing offline Rust/Common Lisp/model assets, and generates the garden.
 Complete vendor assets are retained on later runs.
 
+Documents placed in the repository's `books/` directory (gitignored; PDFs or anything else) are
+copied into the agent image at `/books`, read-only, on the next `docker compose build`.
+
 The recorder comes up first, then the agent begins its loop, talking to the model through the
 recorder. Transcripts accumulate on the `transcripts` volume.
 

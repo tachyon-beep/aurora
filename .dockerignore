@@ -20,3 +20,4 @@ session_context.json
 !garden_export
 volumes
 vendor/kitchen/target
+books/.gitkeep

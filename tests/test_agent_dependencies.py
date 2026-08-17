@@ -44,6 +44,7 @@ EXPECTED_PACKAGES = [
     "model2vec",
     "filigree",
     "loomweave",
+    "pypdf",
 ]
 
 

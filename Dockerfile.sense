@@ -1,5 +1,10 @@
 FROM python:3.13-slim
 
+# yt-dlp needs a JavaScript runtime for YouTube extraction; deno is the one
+# it enables by default. Taken from the official image rather than fetched
+# by an install script.
+COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/*

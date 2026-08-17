@@ -2,11 +2,15 @@
 
 Each configured feed gets a directory under the sense volume holding slots
 000.jpg..NNN.jpg, overwritten in place. Slot selection is derived from wall
-clock time so a restart resumes the same rotation. A per-feed detector marks
+clock time so a restart resumes the same rotation. Within each interval the
+feeds are grabbed one at a time at evenly spaced offsets rather than together
+at the boundary. A per-feed detector marks
 feeds inactive when frames stop changing or grabs keep failing; inactive
 feeds are probed once daily and reactivate when a probe frame differs from
 the last one seen. The only writes are the frames, status.json, and the
-short-lived temporaries each is atomically renamed from.
+short-lived temporaries each is atomically renamed from. Frames older than
+an optional maximum age are removed each cycle; without one, a frame stays
+until the ring overwrites its slot.
 """
 
 import json
@@ -24,8 +28,9 @@ from PIL import Image
 SENSE_DIR = os.environ.get("SENSE_DIR", "/sense")
 
 DEFAULT_INTERVAL_MINUTES = 10
-DEFAULT_RING_SLOTS = 288
+DEFAULT_RING_SLOTS = 144
 DEFAULT_STATIC_THRESHOLD = 2.0
+DEFAULT_MAX_AGE_HOURS = 24.0
 
 # Consecutive static grabs, and consecutive failed grabs, that mark a feed
 # inactive. Detector state is in memory only; a restart clears the counters,
@@ -59,6 +64,25 @@ def validated_feed_dir(name: str) -> str:
     return name
 
 
+def load_feeds(raw: str) -> list[dict]:
+    """Parse the feed list; entries are {id, [dir], [vf]}, dir defaulting to the position."""
+    feeds = json.loads(raw) if raw.strip() else []
+    if not isinstance(feeds, list):
+        raise ValueError("feeds must be a list")
+    seen: set[str] = set()
+    for position, feed in enumerate(feeds):
+        if not isinstance(feed, dict):
+            raise ValueError(f"feed {position} must be an object")
+        if not isinstance(feed.get("id"), str) or not feed["id"]:
+            raise ValueError(f"feed {position} needs a non-empty id")
+        feed.setdefault("dir", str(position))
+        name = validated_feed_dir(feed["dir"])
+        if name in seen:
+            raise ValueError(f"duplicate feed dir: {name!r}")
+        seen.add(name)
+    return feeds
+
+
 def reconcile_storage(root, feeds: list[dict], slots: int) -> None:
     """Remove captures outside the configured feeds and slot range."""
     root = Path(root)
@@ -79,6 +103,25 @@ def reconcile_storage(root, feeds: list[dict], slots: int) -> None:
             if candidate.suffix == ".jpg" and candidate.stem.isdigit():
                 if int(candidate.stem) >= slots:
                     candidate.unlink()
+
+
+def prune_stale(root, feeds: list[dict], now: float, max_age_seconds: float) -> None:
+    """Remove ring frames of configured feeds older than max_age_seconds; 0 keeps all."""
+    if max_age_seconds <= 0:
+        return
+    cutoff = now - max_age_seconds
+    for feed in feeds:
+        feed_dir = Path(root) / validated_feed_dir(feed["dir"])
+        if not feed_dir.is_dir():
+            continue
+        for candidate in feed_dir.iterdir():
+            if candidate.suffix != ".jpg" or not candidate.stem.isdigit():
+                continue
+            try:
+                if candidate.stat().st_mtime < cutoff:
+                    candidate.unlink()
+            except FileNotFoundError:
+                continue
 
 
 def thumbnail(path) -> list[int]:
@@ -247,23 +290,49 @@ def run_cycle(
     interval_minutes: int,
     slots: int,
     threshold: float,
+    max_age_seconds: float = 0.0,
 ) -> None:
-    """Grab every due feed once, update detector state, publish status."""
+    """Grab every due feed once, spaced across the interval; then update
+    detector state, prune old frames, and publish status.
+
+    Detector bookkeeping is anchored to the cycle's start; each grab happens
+    at its feed's offset into the interval, measured from the interval
+    boundary, so every frame lands in the slot the cycle began in. A cycle
+    that starts partway through an interval grabs at once the feeds whose
+    offsets have already passed.
+    """
     outcomes: list[tuple[FeedState, list[int] | None]] = []
     probed: list[FeedState] = []
-    for feed in feeds:
+    period = interval_minutes * 60
+    boundary = now - now % period
+    for position, feed in enumerate(feeds):
         state = states.setdefault(feed["dir"], FeedState())
         if not should_attempt(state, now):
             continue
         if not state.active:
             probed.append(state)
-        outcomes.append((state, grab_feed(feed, root, now, interval_minutes, slots)))
+        grab_at = max(now, boundary + feed_offset(position, len(feeds), period))
+        pause_until(grab_at)
+        outcomes.append((state, grab_feed(feed, root, grab_at, interval_minutes, slots)))
     if apply_outcomes(outcomes, threshold):
         # A cycle voided by the capture-side guard counts nothing, so it
         # does not consume an inactive feed's daily probe either.
         for state in probed:
             state.last_probe = now
+    prune_stale(root, feeds, now, max_age_seconds)
     write_status(root, states)
+
+
+def feed_offset(position: int, count: int, period: float) -> float:
+    """Seconds into the interval at which the feed at position is grabbed."""
+    return period * position / count
+
+
+def pause_until(moment: float) -> None:
+    """Sleep until moment; return at once when it has passed."""
+    delay = moment - time.time()
+    if delay > 0:
+        time.sleep(delay)
 
 
 def next_wake(cycle_start: float, period: float) -> float:
@@ -272,12 +341,11 @@ def next_wake(cycle_start: float, period: float) -> float:
 
 
 def main() -> None:
-    feeds = json.loads(os.environ.get("SENSE_FEEDS", "[]"))
-    for feed in feeds:
-        validated_feed_dir(feed["dir"])
+    feeds = load_feeds(os.environ.get("SENSE_FEEDS", "[]"))
     interval_minutes = int(os.environ.get("SENSE_INTERVAL_MINUTES", str(DEFAULT_INTERVAL_MINUTES)))
     slots = int(os.environ.get("SENSE_RING_SLOTS", str(DEFAULT_RING_SLOTS)))
     threshold = float(os.environ.get("SENSE_STATIC_THRESHOLD", str(DEFAULT_STATIC_THRESHOLD)))
+    max_age_hours = float(os.environ.get("SENSE_MAX_AGE_HOURS", str(DEFAULT_MAX_AGE_HOURS)))
     root = Path(SENSE_DIR)
     try:
         reconcile_storage(root, feeds, slots)
@@ -291,7 +359,16 @@ def main() -> None:
     while True:
         start = time.time()
         try:
-            run_cycle(feeds, states, root, start, interval_minutes, slots, threshold)
+            run_cycle(
+                feeds,
+                states,
+                root,
+                start,
+                interval_minutes,
+                slots,
+                threshold,
+                max_age_seconds=max_age_hours * 3600,
+            )
         except OSError as error:
             # A misconfigured or unwritable volume must not become a silent
             # crash-restart loop; report and retry at the normal cadence.

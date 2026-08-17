@@ -37,3 +37,4 @@ jplephem
 model2vec
 filigree
 loomweave
+pypdf

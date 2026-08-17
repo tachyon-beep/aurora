@@ -43,7 +43,7 @@ third-party python packages:
 
 {requirements}
 
-rustc, cargo, sbcl, pforth, swi-prolog, gcc, nasm, make, jq, sqlite3, miller, datamash, and ripgrep are installed.
+rustc, cargo, sbcl, pforth, swi-prolog, gcc, nasm, make, jq, sqlite3, miller, datamash, ripgrep, and poppler-utils are installed.
 
 a local rust crate registry is present; cargo resolves against it. common lisp systems are present under /vendor/lisp; asdf can load them. a static sentence embedding model is present under /vendor/models.
 
@@ -54,6 +54,8 @@ the container is limited to 2 cpu, 16 gib of memory, and 1024 processes. the wor
 the root filesystem is read-only. a writable location exists at /build with 10 gib of capacity. its contents are cleared when a session ends.
 
 read-only data files are present at /corpus.
+
+read-only document files are present at /books.
 
 image files appear at /sense at intervals.
 
