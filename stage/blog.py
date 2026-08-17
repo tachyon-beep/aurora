@@ -109,7 +109,7 @@ def _render_table(lines):
     head = "".join(f"<th>{render_inline(c)}</th>" for c in header)
     rows = []
     for cells in body:
-        cells = (cells + [""] * len(header))[: len(header)]
+        cells = cells[: len(header)]
         rows.append("<tr>" + "".join(f"<td>{render_inline(c)}</td>" for c in cells) + "</tr>")
     return f"<table><thead><tr>{head}</tr></thead><tbody>{''.join(rows)}</tbody></table>"
 
@@ -255,6 +255,11 @@ def _render_blocks(lines, id_prefix, counter, depth=0):
     return "\n".join(out)
 
 
+def _lines(text):
+    """text split into lines, with CRLF and lone CR normalised to LF first."""
+    return text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
 def render_markdown(text, id_prefix=""):
     """Render a markdown document to escaped HTML.
 
@@ -262,14 +267,13 @@ def render_markdown(text, id_prefix=""):
     counting from 1 in document order) so anchors are stable and never derived
     from heading text.
     """
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    return _render_blocks(lines, id_prefix, [0])
+    return _render_blocks(_lines(text), id_prefix, [0])
 
 
 def first_heading(text):
     """The text of the first ATX heading outside a code fence, or None."""
     fence = None
-    for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+    for line in _lines(text):
         if fence is not None:
             if _fence_closes(line, fence):
                 fence = None
@@ -338,12 +342,13 @@ def read_post(diode_dir, name):
     text = raw[:POST_READ_BYTES].decode("utf-8", "replace")
     epoch = _stamp_epoch(name)
     slug = _slug(name)
+    label = name.encode("utf-8", "replace").decode("utf-8")
     return {
         "name": name,
         "slug": slug,
         "epoch": epoch,
-        "stamp": _stamp_label(name, epoch),
-        "title": first_heading(text) or _stamp_label(name, epoch),
+        "stamp": _stamp_label(label, epoch),
+        "title": first_heading(text) or _stamp_label(label, epoch),
         "html": render_markdown(text, id_prefix=f"p{slug}-"),
         "truncated": truncated,
     }

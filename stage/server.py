@@ -68,7 +68,7 @@ SECURITY_HEADERS = {
 }
 
 BLOG_CSP = SECURITY_HEADERS["Content-Security-Policy"].replace(
-    "script-src 'unsafe-inline'", "script-src 'unsafe-inline' https://cdn.jsdelivr.net"
+    "script-src 'unsafe-inline'", f"script-src 'unsafe-inline' {blog_page.MERMAID_URL}"
 )
 
 
@@ -1037,9 +1037,9 @@ def blog_response(query):
     window = blog.paginate(len(names), page)
     if window is None:
         return 404, "<!doctype html><title>not found</title><p>not found</p>"
-    start, end, pages = window
+    start, end, total_pages = window
     posts = [p for p in (blog.read_post(DIODE_DIR, n) for n in names[start:end]) if p]
-    return 200, blog_page.render_page(posts, page, pages, len(names), list_truncated)
+    return 200, blog_page.render_page(posts, page, total_pages, len(names), list_truncated)
 
 
 class StreamHandler(_BaseHandler):
@@ -1053,7 +1053,13 @@ class StreamHandler(_BaseHandler):
                 200, telemetry_page.TELEMETRY_PAGE_HTML, content_type="text/html; charset=utf-8"
             )
         elif route == "/blog":
-            status, body = blog_response(parse_qs(parsed.query))
+            try:
+                status, body = blog_response(parse_qs(parsed.query))
+            except Exception:
+                status, body = (
+                    500,
+                    "<!doctype html><title>error</title><p>the blog could not be rendered</p>",
+                )
             self._send(
                 status,
                 body,

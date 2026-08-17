@@ -1,3 +1,4 @@
+import os
 import time
 
 import pytest
@@ -205,6 +206,28 @@ def test_nesting_up_to_the_cap_is_structural_and_beyond_it_is_text():
     assert "&gt;&gt; a" in out
 
 
+def test_render_output_is_bounded_relative_to_input():
+    """No construct may turn a post into more than a small constant multiple of
+    its own size, and each must render inside a second: the page is public and
+    the posts are agent-authored."""
+    wide_table = "|" + "h|" * 6000 + "\n|" + "-|" * 3 + "\n" + "|a|\n" * 3500
+    cases = (
+        wide_table,
+        "|" * 30000 + "\n" + "|-" * 3 + "\n" + ("|" * 30000 + "\n") * 2,
+        ("- a\n" * 8000),
+        "".join("  " * (i % 20) + "- a\n" for i in range(3000)),
+        ("> " * 16 + "a\n") * 1500,
+        ("# a\n") * 12000,
+        ("**a** *b* `c` [d](https://e) ![f](https://g)\n") * 1200,
+        ("```\n" + "x\n" + "```\n") * 6000,
+    )
+    for text in cases:
+        start = time.perf_counter()
+        out = blog.render_markdown(text, id_prefix="p20260817_120000_000000-")
+        assert time.perf_counter() - start < 1.0, text[:20]
+        assert len(out) <= 32 * len(text) + 1024, (text[:20], len(text), len(out))
+
+
 def _blog(tmp_path):
     diode = tmp_path / "diode"
     (diode / "blog").mkdir(parents=True)
@@ -282,6 +305,18 @@ def test_read_post_refuses_links_and_missing(tmp_path):
     assert blog.read_post(str(diode), "a") is None
     assert blog.read_post(str(diode), "missing") is None
     assert blog.read_post(str(diode), "../outside") is None
+
+
+def test_read_post_with_an_undecodable_filename_still_renders(tmp_path):
+    diode = _blog(tmp_path)
+    name = os.fsdecode(b"\xff-post")
+    (diode / "blog" / (name + ".md")).write_text("just text", encoding="utf-8")
+    names, _ = blog.list_posts(str(diode))
+    assert names == [name]
+    post = blog.read_post(str(diode), name)
+    for key in ("slug", "stamp", "title", "html"):
+        post[key].encode("utf-8")
+    assert post["title"] == "?-post"
 
 
 @pytest.mark.parametrize(

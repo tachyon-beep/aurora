@@ -1,5 +1,6 @@
 import http.client
 import json
+import os
 import threading
 from urllib.parse import quote
 
@@ -1464,9 +1465,9 @@ def test_blog_route_serves_posts_and_widens_only_script_src(tmp_path, monkeypatc
     assert b'<pre class="mermaid">graph TD; A--&gt;B</pre>' in body
     csp = headers.get("Content-Security-Policy")
     assert csp == server.BLOG_CSP
-    assert "script-src 'unsafe-inline' https://cdn.jsdelivr.net" in csp
+    assert f"script-src 'unsafe-inline' {server.blog_page.MERMAID_URL}" in csp
     assert (
-        csp.replace(" https://cdn.jsdelivr.net", "")
+        csp.replace(f" {server.blog_page.MERMAID_URL}", "")
         == (server.SECURITY_HEADERS["Content-Security-Policy"])
     )
     assert headers.get_all("Content-Security-Policy") == [csp]
@@ -1493,3 +1494,25 @@ def test_blog_route_empty_folder(tmp_path, monkeypatch):
     assert status == 200 and b"Nothing posted." in body
     status, _, _ = call_stream_route("/blog?page=2")
     assert status == 404
+
+
+def test_blog_route_survives_an_undecodable_filename(tmp_path, monkeypatch):
+    diode = tmp_path / "diode"
+    (diode / "blog").mkdir(parents=True)
+    (diode / "blog" / (os.fsdecode(b"\xff-post") + ".md")).write_text("# Odd\n", encoding="utf-8")
+    (diode / "blog" / "20260817_120000_000000.md").write_text("# Fine\n", encoding="utf-8")
+    monkeypatch.setattr(server, "DIODE_DIR", str(diode))
+    status, _, body = call_stream_route("/blog")
+    assert status == 200
+    assert b"Fine" in body and b"Odd" in body
+
+
+def test_blog_route_returns_500_not_a_dropped_connection_when_rendering_raises(monkeypatch):
+    def boom(_diode_dir):
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(server.blog, "list_posts", boom)
+    status, headers, body = call_stream_route("/blog")
+    assert status == 500
+    assert b"could not be rendered" in body
+    assert headers.get("Content-Security-Policy") == server.BLOG_CSP
