@@ -328,6 +328,25 @@ def test_write_output_does_not_collide_within_one_second(volume):
     assert open(second, encoding="utf-8").read() == "SECOND"
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        "search ../../etc/passwd",
+        "search /etc/passwd",
+        "search ..\\..\\windows",
+        "search a\x00b",
+        "search ／．．",
+    ],
+)
+def test_write_output_cannot_escape_the_output_directory(command, volume):
+    path = video.write_output(command, "x")
+    name = _os.path.basename(path)
+    assert _os.path.dirname(path) == video.OUTPUT_DIR
+    assert "/" not in name and "\\" not in name
+    assert ".." not in name
+    assert "\x00" not in name
+
+
 # pruning
 
 

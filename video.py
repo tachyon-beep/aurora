@@ -274,7 +274,7 @@ def write_output(command, text):
     stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
     slug = _output_slug(command)
     name = f"{stamp}_{slug}.txt"
-    while len(name.encode("utf-8")) > OUTPUT_NAME_MAX_BYTES:
+    while slug and len(name.encode("utf-8")) > OUTPUT_NAME_MAX_BYTES:
         slug = slug[:-1]
         name = f"{stamp}_{slug}.txt"
     path = os.path.join(OUTPUT_DIR, name)
@@ -300,6 +300,10 @@ def prune_tree(directory, keep, suffix):
         try:
             entries.append((os.stat(path).st_mtime, path))
         except OSError:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
             continue
     entries.sort()
     for _, path in entries[: max(0, len(entries) - keep)]:
