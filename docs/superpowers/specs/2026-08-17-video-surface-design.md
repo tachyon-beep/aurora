@@ -376,6 +376,29 @@ talking.
 
 A crashed or hung subprocess fails one command, not the poll loop.
 
+### Subprocess and pid hygiene
+
+The service runs under `pids_limit: 128` and is the only component in this design that
+spawns processes. Twenty stills an hour is twenty ffmpeg invocations, each with a
+timeout, and a resolve may run alongside one. A killed-but-unreaped child holds a pid,
+so a leak accumulates until the service cannot fork — at which point every command
+fails, the in-memory counters are lost on the ensuing restart, and the budget resets.
+Pid hygiene is therefore load-bearing for containment here and not only for
+availability:
+
+- One subprocess in flight at a time; commands execute in order, as the diode's do.
+- Every invocation is `kill`ed on timeout and then **waited on**, so no zombie survives
+  the command that created it.
+- The process group is terminated, not just the direct child — ffmpeg and yt-dlp both
+  spawn helpers (yt-dlp invokes deno for extraction), and killing only the parent
+  orphans them.
+- A test asserts the child count returns to its baseline after a timeout, a non-zero
+  exit, and a successful run.
+
+This is stated rather than left to implementation because resource-exhaustion bugs are
+the class the agent has already demonstrated it finds and repairs on its own, inside a
+run.
+
 ## Files changed
 
 | File | Change |
