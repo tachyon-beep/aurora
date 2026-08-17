@@ -50,7 +50,8 @@ cleanup() {
     "${COMPOSE_PROJECT_NAME}_telemetry" \
     "${COMPOSE_PROJECT_NAME}_llm_sock" \
     "${COMPOSE_PROJECT_NAME}_llm_console" \
-    "${COMPOSE_PROJECT_NAME}_pump" >/dev/null 2>&1 || true
+    "${COMPOSE_PROJECT_NAME}_pump" \
+    "${COMPOSE_PROJECT_NAME}_video" >/dev/null 2>&1 || true
   rm -rf "$VERIFY_BUILD_DIR"
 }
 trap cleanup EXIT
@@ -177,6 +178,50 @@ for _ in $(seq 1 60); do
 done
 if [ "$sense_status_ok" -ne 1 ]; then
   echo "FAIL: /sense/status.json has not appeared"; exit 1
+fi
+
+echo "==> /video is present in the agent and writable"
+docker compose exec -T agent test -d /video
+if ! docker compose exec -T agent sh -c 'echo x > /video/_probe && rm -f /video/_probe'; then
+  echo "FAIL: /video is not writable by the agent"; exit 1
+fi
+
+echo "==> video holds no credential"
+# A shape match against the full container env ('(KEY|TOKEN|SECRET|PASSWORD)=')
+# would false-positive on GPG_KEY, which python:3.13-slim (video's base image)
+# sets to verify the CPython tarball -- that is image noise, not a leaked
+# credential. Named enumeration of this stack's actual credential variables,
+# matching the specific-name idiom the ELEVENLABS check below already uses,
+# checks the property that matters without tripping on base-image internals.
+if docker compose exec -T video env \
+  | grep -Eq 'ELEVENLABS|OPENROUTER|LLM_API_KEY|STAGE_CONSOLE_TOKEN|STAGE_SUMMARY_API_KEY|TUNNEL_TOKEN'; then
+  echo "FAIL: a credential is present in the video service environment"; exit 1
+fi
+
+echo "==> stage (aurora-stage) does not mount the video volume"
+stage_cid=$(docker compose ps -q stage)
+[ -n "$stage_cid" ] || { echo "FAIL: stage container not running"; exit 1; }
+if docker inspect "$stage_cid" 2>/dev/null | grep -q '"Destination": "/video"'; then
+  echo "FAIL: stage mounts /video"; exit 1
+fi
+
+echo "==> the video service shares no network with the viewer"
+video_nets=$(docker inspect "$(docker compose ps -q video)" \
+  --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}')
+case "$video_nets" in
+  *_default*) echo "FAIL: video is attached to the default network"; exit 1 ;;
+esac
+
+echo "==> the video service publishes state.json"
+video_state_ok=0
+for _ in 1 2 3 4 5 6; do
+  if docker compose exec -T agent test -f /video/state.json 2>/dev/null; then
+    video_state_ok=1; break
+  fi
+  sleep 5
+done
+if [ "$video_state_ok" -ne 1 ]; then
+  echo "FAIL: /video/state.json has not appeared"; exit 1
 fi
 
 echo "==> cargo builds a new project offline against /vendor"
@@ -450,7 +495,7 @@ agent_cid=$(docker compose ps -q agent)
 if ! docker inspect "$agent_cid" 2>/dev/null | grep -q '"Destination": "/pump"'; then
   echo "FAIL: the agent does not mount /pump"; exit 1
 fi
-for svc in recorder diode sense viewer stage; do
+for svc in recorder diode sense video viewer stage; do
   cid=$(docker compose ps -q "$svc" 2>/dev/null || true)
   [ -n "$cid" ] || continue
   if docker inspect "$cid" 2>/dev/null | grep -q '"Destination": "/pump"'; then

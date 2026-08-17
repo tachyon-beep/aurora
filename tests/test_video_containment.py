@@ -357,3 +357,12 @@ def test_env_example_does_not_document_a_dead_variable():
     # A documented knob that does nothing is worse than no knob.
     text = read(".env.example")
     assert "VIDEO_STILL_KEEP" not in text
+
+
+# live-stack verification
+
+
+def test_verify_script_checks_the_video_surface():
+    text = read("scripts/verify_container.sh")
+    assert "/video is present in the agent and writable" in text
+    assert "video holds no credential" in text
