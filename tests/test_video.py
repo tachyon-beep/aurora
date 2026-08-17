@@ -1078,3 +1078,417 @@ def test_reencode_returns_false_for_an_extreme_aspect_ratio(volume, monkeypatch)
     src = video.still_path("dQw4w9WgXcQ", 10)
     _Image.new("RGB", (4000, 1), "red").save(src, "JPEG")
     assert video._reencode(src) is False
+
+
+# vocabulary and dispatch
+
+
+def _state():
+    return video.ServiceState(binding=None, video_history=[], still_history=[], text_history=[])
+
+
+def _open_variables():
+    return {"enable_transcript": True, "enable_frames": True}
+
+
+def test_command_word_is_the_first_token():
+    assert video.command_word("search tide pools") == "search"
+    assert video.command_word("  help  ") == "help"
+    assert video.command_word("") == ""
+
+
+def test_available_commands_excludes_closed_gates():
+    names = video.available_commands({})
+    assert "search" in names
+    assert "help" in names
+    assert "still" not in names
+    assert "transcript" not in names
+
+
+def test_available_commands_includes_gated_verbs_when_open():
+    names = video.available_commands(_open_variables())
+    assert set(names) == {"help", "search", "transcript", "watch", "still"}
+
+
+@pytest.mark.parametrize(
+    "word", ["fetch", "download", "searchvideo", "sea", "watchvideo", "stills", "grab", "post"]
+)
+def test_unknown_verbs_cause_no_egress(word, volume, monkeypatch):
+    # The vocabulary is an allow-list: an unrecognised word is inert.
+    def explode(*a, **kw):
+        raise AssertionError("no egress for an unknown verb")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    text, state = video.handle_command(f"{word} anything", _open_variables(), _state())
+    assert "unknown command" in text
+    assert state.text_history == []
+    assert state.video_history == []
+    assert state.still_history == []
+
+
+def test_a_closed_gate_causes_no_egress_and_no_charge(volume, monkeypatch):
+    def explode(*a, **kw):
+        raise AssertionError("no egress behind a closed gate")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    text, state = video.handle_command("still 120", {}, _state())
+    assert "not available" in text
+    assert state.still_history == []
+
+
+def test_still_with_nothing_bound_refuses_without_egress(volume, monkeypatch):
+    def explode(*a, **kw):
+        raise AssertionError("no egress with nothing bound")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    text, state = video.handle_command("still 120", _open_variables(), _state())
+    assert "no video is bound" in text
+    assert state.still_history == []
+
+
+def test_a_malformed_id_causes_no_egress_and_no_charge(volume, monkeypatch):
+    def explode(*a, **kw):
+        raise AssertionError("no egress for a malformed id")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    text, state = video.handle_command("watch not-an-id", _open_variables(), _state())
+    assert "invalid" in text.lower()
+    assert state.video_history == []
+
+
+def test_watch_charges_the_video_allowance(volume, monkeypatch):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    text, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    assert len(state.video_history) == 1
+    assert state.binding.video_id == "dQw4w9WgXcQ"
+
+
+def test_a_second_video_in_the_same_hour_is_refused(volume, monkeypatch):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+
+    def explode(vid):
+        raise AssertionError("no resolve once the video allowance is spent")
+
+    monkeypatch.setattr(video, "resolve_binding", explode)
+    text, state = video.handle_command("watch aaaaaaaaaaa", _open_variables(), state)
+    assert "rate limited" in text
+    assert state.binding.video_id == "dQw4w9WgXcQ"
+
+
+def test_rewatching_the_bound_id_is_free_and_causes_no_egress(volume, monkeypatch):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+
+    def explode(vid):
+        raise AssertionError("no resolve when the id is already bound")
+
+    monkeypatch.setattr(video, "resolve_binding", explode)
+    text, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), state)
+    assert len(state.video_history) == 1
+    assert "dQw4w9WgXcQ" in text
+
+
+def test_the_binding_survives_an_hour_boundary(volume, monkeypatch):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    # Age the allowance out of the window; the binding is not an allowance.
+    state.video_history = [t - video.BUDGET_WINDOW - 1 for t in state.video_history]
+    monkeypatch.setattr(video, "capture_still", lambda b, s, now: ("/tmp/x.jpg", b))
+    text, state = video.handle_command("still 120", _open_variables(), state)
+    assert "no video is bound" not in text
+
+
+def test_still_charges_the_still_allowance(volume, monkeypatch):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    monkeypatch.setattr(video, "capture_still", lambda b, s, now: ("/tmp/x.jpg", b))
+    _, state = video.handle_command("still 120", _open_variables(), state)
+    assert len(state.still_history) == 1
+
+
+def test_search_charges_the_text_allowance_not_the_video_allowance(volume, monkeypatch):
+    monkeypatch.setattr(video, "search", lambda q: "no results")
+    _, state = video.handle_command("search tide pools", _open_variables(), _state())
+    assert len(state.text_history) == 1
+    assert state.video_history == []
+
+
+def test_transcript_charges_the_text_allowance(volume, monkeypatch):
+    monkeypatch.setattr(video, "transcript", lambda vid, s, e: "no transcript available")
+    _, state = video.handle_command("transcript dQw4w9WgXcQ", _open_variables(), _state())
+    assert len(state.text_history) == 1
+    assert state.video_history == []
+
+
+def test_transcript_accepts_a_window(volume, monkeypatch):
+    seen = {}
+
+    def fake(vid, start, end):
+        seen["window"] = (start, end)
+        return "ok"
+
+    monkeypatch.setattr(video, "transcript", fake)
+    video.handle_command("transcript dQw4w9WgXcQ 60 120", _open_variables(), _state())
+    assert seen["window"] == (60, 120)
+
+
+def test_a_failed_resolve_still_charges(volume, monkeypatch):
+    # Charging is at dispatch: a well-formed id that proves unavailable spends.
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: None)
+    text, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    assert len(state.video_history) == 1
+    assert "unavailable" in text
+
+
+# help and state
+
+
+def test_help_lists_open_verbs_only(volume):
+    video.write_help(_open_variables())
+    text = (volume / "HELP.md").read_text()
+    assert "search" in text
+    assert "still" in text
+
+
+def test_help_omits_closed_verbs(volume):
+    video.write_help({})
+    text = (volume / "HELP.md").read_text()
+    assert "still <" not in text
+
+
+def test_help_names_no_video_platform(volume):
+    video.write_help(_open_variables())
+    text = (volume / "HELP.md").read_text().lower()
+    assert "youtube" not in text
+    assert "youtu.be" not in text
+
+
+def test_help_carries_no_example_query(volume):
+    video.write_help(_open_variables())
+    text = (volume / "HELP.md").read_text()
+    assert "e.g." not in text
+    assert "example" not in text.lower()
+
+
+def test_state_publishes_allowances_and_the_binding(volume):
+    state = _state()
+    state.binding = _binding()
+    video.write_state(_open_variables(), state)
+    data = _json.loads((volume / "state.json").read_text())
+    assert data["bound_video"] == "dQw4w9WgXcQ"
+    assert data["duration_seconds"] == 600
+    assert "video" in data["allowances"]
+    assert "still" in data["allowances"]
+    assert "text" in data["allowances"]
+
+
+def test_state_names_no_video_platform(volume):
+    video.write_state(_open_variables(), _state())
+    text = (volume / "state.json").read_text().lower()
+    assert "youtube" not in text
+
+
+# dispatch robustness: no malformed console input may raise out of handle_command
+
+
+def test_non_string_commands_do_not_raise(volume, monkeypatch):
+    def explode(*a, **kw):
+        raise AssertionError("no egress for a non-string command")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    for bad in (None, 123, ["watch", "dQw4w9WgXcQ"], {"cmd": "watch"}):
+        text, state = video.handle_command(bad, _open_variables(), _state())
+        assert isinstance(text, str)
+        assert "unknown command" in text
+
+
+def test_whitespace_only_command_does_not_raise(volume):
+    text, state = video.handle_command("   ", _open_variables(), _state())
+    assert "unknown command" in text
+    assert state.video_history == []
+
+
+def test_non_dict_variables_do_not_raise_and_close_all_gated_verbs(volume, monkeypatch):
+    def explode(*a, **kw):
+        raise AssertionError("no egress with malformed variables")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    for bad in (None, [], "nonsense", 42, 3.5):
+        text, state = video.handle_command("watch dQw4w9WgXcQ", bad, _state())
+        assert isinstance(text, str)
+        assert "not available" in text
+        assert state.video_history == []
+
+
+def test_non_dict_variables_do_not_raise_for_an_always_open_command(volume, monkeypatch):
+    monkeypatch.setattr(video, "search", lambda q: "no results")
+    for bad in (None, [], "nonsense", 42):
+        text, state = video.handle_command("search tide pools", bad, _state())
+        assert isinstance(text, str)
+        assert len(state.text_history) == 1
+
+
+def test_console_limit_tolerates_non_dict_variables():
+    assert video.console_limit(None, "still_budget", 20) == 20
+    assert video.console_limit([], "still_budget", 20) == 20
+    assert video.console_limit("nonsense", "still_budget", 20) == 20
+
+
+def test_available_commands_tolerates_non_dict_variables():
+    assert video.available_commands(None) == ["help", "search"]
+    assert video.available_commands([]) == ["help", "search"]
+
+
+def test_write_help_tolerates_non_dict_variables(volume):
+    video.write_help(None)
+    text = (volume / "HELP.md").read_text()
+    assert "search" in text
+    assert "still <" not in text
+
+
+def test_write_state_tolerates_non_dict_variables(volume):
+    video.write_state(None, _state())
+    data = _json.loads((volume / "state.json").read_text())
+    assert data["commands"] == ["help", "search"]
+
+
+def test_a_huge_watch_argument_does_not_raise_and_causes_no_egress(volume, monkeypatch):
+    def explode(*a, **kw):
+        raise AssertionError("no egress for an oversized argument")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    huge = "a" * 200_000
+    text, state = video.handle_command(f"watch {huge}", _open_variables(), _state())
+    assert isinstance(text, str)
+    assert state.video_history == []
+
+
+def test_a_huge_search_query_is_refused_without_egress(volume, monkeypatch):
+    def explode(*a, **kw):
+        raise AssertionError("no egress for an oversized query")
+
+    monkeypatch.setattr(video, "search", explode)
+    text, state = video.handle_command("search " + "a" * 100_000, _open_variables(), _state())
+    assert "invalid query" in text
+    assert state.text_history == []
+
+
+def test_a_huge_still_offset_does_not_raise(volume, monkeypatch):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+
+    def explode(*a, **kw):
+        raise AssertionError("no egress for an oversized offset")
+
+    monkeypatch.setattr(video, "capture_still", explode)
+    huge = "9" * 5000
+    text, state = video.handle_command(f"still {huge}", _open_variables(), state)
+    assert isinstance(text, str)
+    assert state.still_history == []
+
+
+# in-memory allowances: nothing on /video can restore or reveal a spent budget
+
+
+def test_deleting_state_json_does_not_restore_the_video_allowance(volume, monkeypatch):
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    video.write_state(_open_variables(), state)
+    (volume / "state.json").unlink()
+
+    def explode(vid):
+        raise AssertionError("no resolve once the allowance is spent")
+
+    monkeypatch.setattr(video, "resolve_binding", explode)
+    text, state = video.handle_command("watch aaaaaaaaaaa", _open_variables(), state)
+    assert "rate limited" in text
+
+
+def test_state_json_carries_no_raw_history_timestamps(volume):
+    state = _state()
+    state.video_history = [12345.6789]
+    state.still_history = [23456.789, 23457.789]
+    state.text_history = [34567.891]
+    video.write_state(_open_variables(), state)
+    raw = (volume / "state.json").read_text()
+    assert "12345" not in raw
+    assert "23456" not in raw
+    assert "34567" not in raw
+    data = _json.loads(raw)
+    assert set(data["allowances"]["video"].keys()) == {
+        "limit",
+        "used",
+        "window_seconds",
+        "oldest_expires_in_seconds",
+    }
+
+
+def test_write_state_tolerates_a_missing_output_directory(volume, monkeypatch):
+    _os.rmdir(str(volume / "output"))
+    _os.rmdir(str(volume / "stills"))
+    monkeypatch.setattr(video, "ensure_dirs", lambda: None)
+    video.write_state(_open_variables(), _state())
+    data = _json.loads((volume / "state.json").read_text())
+    assert data["outputs"] == []
+    assert data["stills"] == []
+
+
+# the poll loop
+
+
+def test_run_video_seeds_console_only_when_absent(volume, monkeypatch):
+    class _StopLoop(Exception):
+        pass
+
+    def fake_sleep(seconds):
+        raise _StopLoop()
+
+    monkeypatch.setattr(video.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        video.run_video()
+    assert (volume / "console.json").exists()
+    data = _json.loads((volume / "console.json").read_text())
+    assert data == {"commands": [], "variables": {}}
+
+
+def test_run_video_does_not_clobber_an_existing_console(volume, monkeypatch):
+    class _StopLoop(Exception):
+        pass
+
+    (volume / "console.json").write_text(
+        _json.dumps({"commands": [], "variables": {"text_budget": 3}})
+    )
+
+    def fake_sleep(seconds):
+        raise _StopLoop()
+
+    monkeypatch.setattr(video.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        video.run_video()
+    data = _json.loads((volume / "console.json").read_text())
+    assert data["variables"] == {"text_budget": 3}
+
+
+def test_write_output_tolerates_a_non_string_command(volume):
+    # load_console only checks that commands is a list, not that each item
+    # is a string; write_output must still produce a result file.
+    path = video.write_output(123, "unknown command: ")
+    assert _os.path.exists(path)
+    assert open(path, encoding="utf-8").read() == "unknown command: "
+
+
+def test_run_video_tolerates_a_non_string_command_in_the_console(volume, monkeypatch):
+    class _StopLoop(Exception):
+        pass
+
+    (volume / "console.json").write_text(_json.dumps({"commands": [123], "variables": {}}))
+
+    def fake_sleep(seconds):
+        raise _StopLoop()
+
+    monkeypatch.setattr(video.time, "sleep", fake_sleep)
+    with pytest.raises(_StopLoop):
+        video.run_video()
+    outputs = list((volume / "output").glob("*.txt"))
+    assert len(outputs) == 1

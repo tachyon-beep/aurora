@@ -22,7 +22,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from PIL import Image
@@ -172,7 +172,15 @@ def budget_status(history, now, window):
 
 
 def console_limit(variables, key, default):
-    """An hourly limit from the console, or the default when unusable."""
+    """An hourly limit from the console, or the default when unusable.
+
+    variables normally comes from load_console, which already guarantees a
+    dict; a direct caller can still hand this a malformed value (None, a
+    list, a bare string), and .get would raise AttributeError rather than
+    degrade -- so a non-dict is treated the same as a dict missing the key.
+    """
+    if not isinstance(variables, dict):
+        return default
     try:
         return int(variables.get(key, default))
     except (TypeError, ValueError):
@@ -272,7 +280,16 @@ def consume_batch():
 
 
 def _output_slug(command):
-    """A filesystem-safe stem from a command string."""
+    """A filesystem-safe stem from a command string.
+
+    command is normally a string from console.json's commands list, but
+    load_console only checks that the list itself is a list, not that each
+    item is a string -- a non-string item (a malformed console) is coerced
+    to text rather than raised on, matching command_word's tolerance for
+    the same input.
+    """
+    if not isinstance(command, str):
+        command = str(command)
     slug = re.sub(r"[^A-Za-z0-9]+", "_", command).strip("_").lower()
     return slug or "result"
 
@@ -815,3 +832,290 @@ def capture_still(binding, seconds, now):
         _unlink_if_present(path)
         return None, binding
     return path, binding
+
+
+UNKNOWN_COMMAND = "unknown command: {name}"
+
+
+@dataclass
+class ServiceState:
+    """The in-memory state one poll cycle carries into the next.
+
+    binding is the currently bound video, if any. The three histories are
+    the rolling-window allowance counters check_rate_limit reads and writes.
+    Nothing here is ever written to /video: the agent can write that volume,
+    and a counter stored there would be one it could reset by deleting a
+    file, so the histories live only in this process's memory and are lost
+    on restart -- an operator action, not one the agent can reach.
+    """
+
+    binding: "Binding | None" = None
+    video_history: list = field(default_factory=list)
+    still_history: list = field(default_factory=list)
+    text_history: list = field(default_factory=list)
+
+
+def _gate_always(variables):
+    """A gate that is always open, regardless of variables."""
+    return True
+
+
+COMMANDS = {
+    "help": {"gate": _gate_always, "help": "help -> write the current command list to HELP.md"},
+    "search": {
+        "gate": _gate_always,
+        "help": "search <text> -> return video identifiers, durations, channels and titles",
+    },
+    "transcript": {
+        "gate": lambda v: bool(v.get("enable_transcript")),
+        "help": "transcript <id> [start] [end] -> return the timed transcript, "
+        "optionally between two offsets in seconds",
+    },
+    "watch": {
+        "gate": lambda v: bool(v.get("enable_frames")),
+        "help": "watch <id> -> bind a video and return its duration",
+    },
+    "still": {
+        "gate": lambda v: bool(v.get("enable_frames")),
+        "help": "still <seconds> -> return one frame from the bound video at an offset",
+    },
+}
+
+
+def command_word(command):
+    """The first token of a command string, or '' when there is none.
+
+    A non-string command (malformed console content -- a number, a list, a
+    dict) is treated the same as an empty one rather than raised on.
+    """
+    if not isinstance(command, str):
+        return ""
+    parts = command.strip().split()
+    return parts[0] if parts else ""
+
+
+def available_commands(variables):
+    """Names of commands whose gate is open under the given variables.
+
+    variables is normally a dict from load_console; a non-dict is treated
+    as empty rather than raised on, since COMMANDS' gates call v.get(...)
+    directly and a malformed console must not crash help or state
+    publication.
+    """
+    if not isinstance(variables, dict):
+        variables = {}
+    return [name for name, spec in COMMANDS.items() if spec["gate"](variables)]
+
+
+def write_help(variables):
+    """Write the currently available command list to HELP.md.
+
+    Lists only open verbs, in COMMANDS' help-string form, plus the three
+    allowance ceilings. No closed verb, example, or sample query appears --
+    an example would be the operator planting an interest.
+    """
+    lines = ["# commands", ""]
+    for name in available_commands(variables):
+        lines.append(COMMANDS[name]["help"])
+    lines += [
+        "",
+        "# allowances",
+        "",
+        f"video: {effective_limit(variables, 'video_budget', 'VIDEO_HOURLY_MAX', DEFAULT_VIDEO_LIMIT)} per hour",
+        f"still: {effective_limit(variables, 'still_budget', 'VIDEO_STILL_HOURLY_MAX', DEFAULT_STILL_LIMIT)} per hour",
+        f"text: {effective_limit(variables, 'text_budget', 'VIDEO_TEXT_HOURLY_MAX', DEFAULT_TEXT_LIMIT)} per hour",
+        "",
+        "commands are written to console.json as a list under commands.",
+        "results are written to output/ and stills/.",
+        "",
+    ]
+    with open(HELP_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def write_state(variables, state, now=None):
+    """Publish the open vocabulary, the allowances, and the binding.
+
+    Each allowance publishes its limit and budget_status's aggregate fields
+    (used, window_seconds, oldest_expires_in_seconds) -- never the history
+    list itself, which stays in ServiceState and is never written to disk.
+    ensure_dirs is called first, so a missing OUTPUT_DIR/STILLS_DIR here
+    means it could not be created (or was removed between the call and the
+    listdir below); either way the listing degrades to empty rather than
+    raising.
+    """
+    now = time.time() if now is None else now
+    ensure_dirs()
+    try:
+        outputs = sorted(os.listdir(OUTPUT_DIR), reverse=True)[:10]
+    except OSError:
+        outputs = []
+    try:
+        stills = sorted(os.listdir(STILLS_DIR), reverse=True)[:10]
+    except OSError:
+        stills = []
+    data = {
+        "commands": available_commands(variables),
+        "allowances": {
+            "video": {
+                "limit": effective_limit(
+                    variables, "video_budget", "VIDEO_HOURLY_MAX", DEFAULT_VIDEO_LIMIT
+                ),
+                **budget_status(state.video_history, now, BUDGET_WINDOW),
+            },
+            "still": {
+                "limit": effective_limit(
+                    variables, "still_budget", "VIDEO_STILL_HOURLY_MAX", DEFAULT_STILL_LIMIT
+                ),
+                **budget_status(state.still_history, now, BUDGET_WINDOW),
+            },
+            "text": {
+                "limit": effective_limit(
+                    variables, "text_budget", "VIDEO_TEXT_HOURLY_MAX", DEFAULT_TEXT_LIMIT
+                ),
+                **budget_status(state.text_history, now, BUDGET_WINDOW),
+            },
+        },
+        "bound_video": state.binding.video_id if state.binding else None,
+        "duration_seconds": state.binding.duration if state.binding else None,
+        "outputs": outputs,
+        "stills": stills,
+    }
+    _replace_json(STATE_FILE, data)
+
+
+def handle_command(command, variables, state, now=None):
+    """Run one command string. Returns (result_text, state).
+
+    The vocabulary is an allow-list: an unrecognised word does nothing and
+    causes no network activity. Charging happens at dispatch once a command
+    validates, so malformed input, unknown verbs and closed gates cost
+    nothing. now is wall-clock time (time.time()), matching resolve_binding's
+    resolved_at and capture_still's TTL comparison -- a monotonic clock here
+    would silently break manifest re-resolution. Neither a non-string
+    command nor a non-dict variables raises: a non-string command reads as
+    unrecognised, and a non-dict variables is treated as empty, so gated
+    verbs close (help and search stay open, since their gate ignores
+    variables entirely).
+    """
+    now = time.time() if now is None else now
+    if not isinstance(variables, dict):
+        variables = {}
+    name = command_word(command)
+    if name not in COMMANDS:
+        return UNKNOWN_COMMAND.format(name=name), state
+    if not COMMANDS[name]["gate"](variables):
+        return f"command not available: {name}", state
+    argument = command.strip()[len(name) :].strip()
+
+    if name == "help":
+        write_help(variables)
+        return "help written to HELP.md", state
+
+    if name == "search":
+        limit = effective_limit(
+            variables, "text_budget", "VIDEO_TEXT_HOURLY_MAX", DEFAULT_TEXT_LIMIT
+        )
+        try:
+            query = validated_query(argument)
+        except ValueError as e:
+            return f"invalid query: {e}", state
+        allowed, history = check_rate_limit(state.text_history, now, limit, BUDGET_WINDOW)
+        state.text_history = history
+        if not allowed:
+            return rate_limited_message("text", limit, history, now, BUDGET_WINDOW), state
+        return search(query), state
+
+    if name == "transcript":
+        limit = effective_limit(
+            variables, "text_budget", "VIDEO_TEXT_HOURLY_MAX", DEFAULT_TEXT_LIMIT
+        )
+        parts = argument.split()
+        if not parts:
+            return "usage: transcript <id> [start] [end]", state
+        try:
+            vid = validated_video_id(parts[0])
+            start = validated_offset(parts[1], None) if len(parts) > 1 else None
+            end = validated_offset(parts[2], None) if len(parts) > 2 else None
+        except ValueError as e:
+            return f"invalid argument: {e}", state
+        allowed, history = check_rate_limit(state.text_history, now, limit, BUDGET_WINDOW)
+        state.text_history = history
+        if not allowed:
+            return rate_limited_message("text", limit, history, now, BUDGET_WINDOW), state
+        return transcript(vid, start, end), state
+
+    if name == "watch":
+        try:
+            vid = validated_video_id(argument)
+        except ValueError as e:
+            return f"invalid video id: {e}", state
+        if state.binding is not None and state.binding.video_id == vid:
+            return f"{vid} is bound; duration {state.binding.duration} seconds", state
+        limit = effective_limit(variables, "video_budget", "VIDEO_HOURLY_MAX", DEFAULT_VIDEO_LIMIT)
+        allowed, history = check_rate_limit(state.video_history, now, limit, BUDGET_WINDOW)
+        state.video_history = history
+        if not allowed:
+            return rate_limited_message("video", limit, history, now, BUDGET_WINDOW), state
+        binding = resolve_binding(vid)
+        if binding is None:
+            return "video unavailable", state
+        state.binding = binding
+        return f"{vid} is bound; duration {binding.duration} seconds", state
+
+    if name == "still":
+        if state.binding is None:
+            return "no video is bound", state
+        try:
+            seconds = validated_offset(argument, state.binding.duration)
+        except ValueError as e:
+            return f"invalid offset: {e}", state
+        limit = effective_limit(
+            variables, "still_budget", "VIDEO_STILL_HOURLY_MAX", DEFAULT_STILL_LIMIT
+        )
+        allowed, history = check_rate_limit(state.still_history, now, limit, BUDGET_WINDOW)
+        state.still_history = history
+        if not allowed:
+            return rate_limited_message("still", limit, history, now, BUDGET_WINDOW), state
+        path, binding = capture_still(state.binding, seconds, now)
+        state.binding = binding
+        if path is None:
+            return "frame unavailable", state
+        return f"frame written to stills/{os.path.basename(path)}", state
+
+    # Every name in COMMANDS is handled by a branch above (help, search,
+    # transcript, watch, still), so this point is never reached; there is
+    # no fallthrough case to return for.
+
+
+def run_video():
+    """Poll the console, run each command in order, prune, and publish state.
+
+    The console is seeded once, only when absent, with an empty command list
+    -- an existing console.json (from a prior incarnation, or hand-written)
+    is never overwritten. A command that raises is caught per-command so one
+    failing command does not stop the cycle or the commands after it; the
+    poll loop itself is not expected to exit.
+    """
+    ensure_dirs()
+    if not os.path.exists(CONSOLE_FILE):
+        _replace_json(CONSOLE_FILE, {"commands": [], "variables": {}})
+    state = ServiceState()
+    while True:
+        commands, variables = load_console()
+        if commands:
+            consume_batch()
+        for command in commands:
+            try:
+                text, state = handle_command(command, variables, state)
+            except Exception as e:
+                text = f"command failed: {type(e).__name__}"
+            write_output(command, text)
+        prune_tree(STILLS_DIR, VIDEO_STILL_KEEP, ".jpg")
+        prune_tree(OUTPUT_DIR, VIDEO_OUTPUT_KEEP, ".txt")
+        write_state(variables, state)
+        time.sleep(POLL_SECONDS)
+
+
+if __name__ == "__main__":
+    run_video()
