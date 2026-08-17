@@ -226,6 +226,19 @@ Independently of that, `stills/` is bounded by `VIDEO_STILL_KEEP` (200, oldest
 discarded first — roughly ten hours of maximal use, ~40 MB at the bounded resolution)
 and `output/` by a file-count cap on the same discipline.
 
+**Pruning is service-side and unconditional**, on the poll cycle, requiring no agent
+action and no command. It must not be a verb, and must not be conditional on the
+console being readable or on a command having been dispatched. The reason is that the
+alternative is self-sealing: an agent whose volume is full cannot write the command
+that would clean it, so a cleanup verb would be unreachable exactly when it is needed.
+The same reasoning applies to a malformed `console.json` — the service prunes on its
+cycle regardless, so a volume cannot be wedged full by a file the agent can no longer
+successfully rewrite.
+
+This is the general rule the failure section below follows: where a resource can be
+exhausted, recovery is the owning service's job, because a failure that removes the
+means of its own repair is a dead end rather than friction.
+
 ## Command vocabulary
 
 | Command | Gate | Charges | Effect |
@@ -394,6 +407,9 @@ availability:
   orphans them.
 - A test asserts the child count returns to its baseline after a timeout, a non-zero
   exit, and a successful run.
+- A test asserts pruning runs on a cycle where no command was dispatched and on one
+  where `console.json` is unparseable, so neither an idle nor a wedged console can let
+  the volume grow unbounded.
 
 This is stated rather than left to implementation because resource-exhaustion bugs are
 the class the agent has already demonstrated it finds and repairs on its own, inside a
