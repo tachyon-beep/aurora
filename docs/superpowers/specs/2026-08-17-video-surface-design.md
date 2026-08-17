@@ -136,14 +136,23 @@ agent writes console.json
 
 ### Guarantee closing the new channel
 
-> The video service accepts an **11-character video id** and a bounded search query —
-> **never a URL**. Every upstream URL is composed by the service itself, so no
-> agent-authored string reaches a host, scheme, or path. It holds no credential and
-> mounts nothing else of the agent's world; its volume reaches the agent and this
-> service alone, so no third-party still can arrive on the public page. Rates are
-> clamped by the operator-side `VIDEO_HOURLY_MAX`, `VIDEO_STILL_HOURLY_MAX` and
-> `VIDEO_TEXT_HOURLY_MAX`, on the `min(console value, operator max)` pattern
-> `DIODE_HOURLY_MAX` uses.
+> The video service accepts an **11-character video id** and a length- and
+> charset-bounded search query — **never a URL**. Every upstream URL is composed by the
+> service itself, so no agent-authored string reaches a host, scheme, or path. It holds
+> no credential and mounts nothing else of the agent's world; **the stage does not
+> mount its volume**, so nothing this service writes is rendered automatically on any
+> outward-facing page. Rates are clamped by the operator-side `VIDEO_HOURLY_MAX`,
+> `VIDEO_STILL_HOURLY_MAX` and `VIDEO_TEXT_HOURLY_MAX`, on the `min(console value,
+> operator max)` pattern `DIODE_HOURLY_MAX` uses, and the counters those ceilings clamp
+> live on a volume the agent does not mount.
+
+Two things that sentence deliberately does **not** claim. It does not say a still can
+never reach the public page: the agent writes `/diode`, the stage reads it, and an
+agent that chose to relay something outward could. What the mount fact closes is
+*automatic* publication with no agent decision and no human in the loop — precisely
+what the `still` deferral named, where an eye following new frames would publish
+third-party video stills by itself. Agent-initiated relay is the already-accepted
+`commons` profile, unchanged by this design.
 
 ### Why the diode's SSRF defenses cannot simply be reused, and what replaces them
 
@@ -157,7 +166,12 @@ mechanics carry the weight instead:
    single place a URL exists in this design, and before ffmpeg sees it the service
    applies the diode's own discipline: https only, host suffix within
    `{googlevideo.com, youtube.com}`, resolved addresses rejected if private, loopback,
-   link-local or otherwise reserved.
+   link-local or otherwise reserved. The residual is named rather than papered over:
+   ffmpeg resolves the hostname again when it connects, so the address check is
+   best-effort against a rebind between validation and fetch. The host allow-list, not
+   the address check, is what bounds where the fetch can go. Pinning the validated
+   address is not available here — media hostnames vary per request — and this is the
+   same residual the diode already carries on every fetch.
 2. **ffmpeg runs `-protocol_whitelist https,tls,tcp,crypto`** — no `file`, no `concat`
    — the hardening the on-demand sense design named as required if `still` were ever
    built. Every frame is then re-encoded through Pillow at a bounded resolution, so
@@ -174,6 +188,13 @@ agent could restore by deleting a file. The diode already threads `fetch_history
 in-process for this reason and this service does the same. `state.json` publishes what
 remains; nothing the agent can write restores it. Counters reset on service restart,
 which is operator action, matching the diode's existing profile.
+
+One consequence of in-memory counters is worth naming: the service runs
+`restart: unless-stopped`, so a crash resets every allowance. That is not a path the
+agent controls — it cannot signal or reach the process — but it does mean a repeated
+crash would silently restore budget. The failure discipline below (one command fails,
+never the poll loop) is therefore load-bearing for the budget and not only for
+availability.
 
 ### Ceilings are operator-side
 
@@ -255,6 +276,12 @@ Three rulings inside the coupling:
 
 **Search** — up to 10 results, each a line carrying id, duration, channel and title,
 each field capped. Written to `output/`.
+
+The query is validated before dispatch: a length cap (200 characters) and a charset
+that excludes control characters and newlines. yt-dlp receives it as a single
+`ytsearch10:` argument in an argument list, never a shell string, so the cap and
+charset are hygiene against a malformed extractor argument rather than the boundary —
+the boundary is that it is an argument, not a command line.
 
 **Transcript** — timed lines (`[MM:SS] text`), capped at 500 KB with an explicit
 truncation marker; the `start`/`end` window is how a long video is read within the cap.
@@ -370,6 +397,10 @@ Unit tests run with no network and no binaries, as the sense tests do: `yt-dlp` 
   `docker-compose.yml`, so a later mount edit fails a test. This is what keeps the mount
   fact load-bearing.
 - The ffmpeg invocation carries the protocol allow-list.
+- A search query containing shell metacharacters, newlines or control characters is
+  refused or reaches yt-dlp as one inert argument; no invocation is a shell string.
+- The compose service definition carries no credential-shaped environment variable —
+  the same check `verify_container.sh` makes of the agent.
 
 **Budget**
 - Dispatch charges; malformed input, unknown verbs and closed gates do not.
@@ -409,3 +440,6 @@ Unit tests run with no network and no binaries, as the sense tests do: `yt-dlp` 
 - **Clip extraction**; the surface samples frames, it does not transfer media.
 - **Any stage rendering of this volume.** Reaching it would require mounting the volume
   into the stage, which is the fact this design's containment rests on.
+- **A dedicated per-video-id rate limit.** With one video an hour, id-level abuse is
+  already bounded by the coarser ceiling; a second counter would add state without
+  closing anything the hourly allowance leaves open.
