@@ -110,7 +110,9 @@ from jsdelivr with an SRI integrity hash. The stage container itself makes no re
   followed by an inline `mermaid.initialize({ startOnLoad: true, securityLevel:
   "strict", theme: "dark" })`. The version and hash are pinned in `blog_page.py`
   and named in the README.
-- The telemetry strip gains a `blog` link. The stream page is not changed.
+- The telemetry strip gains a `blog` link. The stream page's masthead gains one link,
+  `← blog`, at the left end of the row whose right end already carries `telemetry →`;
+  nothing else on the stream page changes.
 
 ## Tests
 
@@ -138,4 +140,4 @@ from jsdelivr with an SRI integrity hash. The stage container itself makes no re
 ## Out of scope
 
 Editing or deleting posts through the diode, an RSS feed, per-post pages, search,
-and any change to the stream page's rail.
+and any change to the stream page beyond the masthead link.

@@ -20,7 +20,7 @@
 - Run tests with `/home/john/aurora/.venv/bin/python -m pytest -q --ignore=tests/test_container_smoke.py -p no:cacheprovider`; lint with `/home/john/aurora/.venv/bin/ruff format . && /home/john/aurora/.venv/bin/ruff check .`. (The worktree has no `.venv`; use the main checkout's.)
 - `tests/test_sense.py` has 20 pre-existing failures on this branch's base commit; they are not this work's concern. Every other test must pass.
 - Commit messages are factual and benign; end each with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
-- The stream page (`stage/pages.py`) is not changed.
+- The stream page (`stage/pages.py`) changes in exactly one way: a `← blog` link at the left end of the masthead's second row, mirroring the existing `telemetry →` link at its right end. Nothing else on the stream page changes.
 
 ---
 
@@ -1313,8 +1313,9 @@ Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `stage/telemetry_page.py` (strip near line 223; CSS `#to-stream` near lines 52–54 and 194)
+- Modify: `stage/pages.py` (masthead `#mh-b` near line 667; CSS `#to-telemetry` near lines 252–256)
 - Modify: `README.md` (stage pages list near line 200), `CLAUDE.md` (invariant 3 diode bullet near line 131)
-- Test: `tests/test_stage_telemetry_page.py`
+- Test: `tests/test_stage_telemetry_page.py`, `tests/test_stage_pages.py`
 
 **Interfaces:** none new.
 
@@ -1329,9 +1330,34 @@ def test_telemetry_strip_links_to_the_blog():
 
 (That file already has `from stage import server, telemetry_page`.)
 
+In `tests/test_stage_pages.py`, replace the existing test near line 875:
+
+```python
+def test_the_masthead_links_to_the_telemetry_panel():
+    """The one link on the broadcast page: internal, to the at-home panel. OBS
+    renders it as text; a phone or laptop viewer can follow it."""
+    assert '<a id="to-telemetry" href="/telemetry">telemetry →</a>' in HTML
+    assert HTML.count("<a ") == 1
+```
+
+with:
+
+```python
+def test_the_masthead_links_left_to_the_blog_and_right_to_the_telemetry_panel():
+    """The two links on the broadcast page, both internal: the blog at the left
+    end of the masthead's second row, the at-home panel at its right end. OBS
+    renders them as text; a phone or laptop viewer can follow them."""
+    assert '<a id="to-blog" href="/blog">← blog</a>' in HTML
+    assert '<a id="to-telemetry" href="/telemetry">telemetry →</a>' in HTML
+    assert HTML.count("<a ") == 2
+    assert HTML.index('id="to-blog"') < HTML.index('class="chip c-think"')
+```
+
+Also add `"#to-blog",` to the selector tuple that lists `"#to-telemetry",` near line 384 of that file (the tuple of masthead selectors whose declared font sizes are checked).
+
 - [ ] **Step 2: Run to verify failure**
 
-Run: `/home/john/aurora/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_stage_telemetry_page.py -k blog`
+Run: `/home/john/aurora/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_stage_telemetry_page.py tests/test_stage_pages.py -k "blog or masthead"`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
@@ -1340,6 +1366,38 @@ In `stage/telemetry_page.py`:
 - After the line `  <a id="to-stream" href="/">← the stream</a>` add `  <a id="to-blog" href="/blog">the blog →</a>`.
 - Change the two selectors `#to-stream {` (main CSS, ~line 52) and `#to-stream:hover {` to `#to-stream, #to-blog {` and `#to-stream:hover, #to-blog:hover {`.
 - In the `@media (max-width: 719px)` block change `#to-stream { order: 1; ...}` to `#to-stream, #to-blog { order: 1; white-space: nowrap; min-height: 40px; }`.
+
+In `stage/pages.py`:
+- In the masthead, make the blog link the first child of `#mh-b`, i.e. change
+  ```
+      <div id="mh-b">
+        <span class="chip c-think">
+  ```
+  to
+  ```
+      <div id="mh-b">
+        <a id="to-blog" href="/blog">← blog</a>
+        <span class="chip c-think">
+  ```
+- Change the CSS comment and rules near line 252 from
+  ```
+  /* The one link on the page: the at-home telemetry panel. Static text to an OBS
+     source; a phone or laptop viewer can follow it. */
+  #to-telemetry { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint);
+    text-decoration: none; }
+  #to-telemetry:hover, #to-telemetry:focus-visible { color: var(--vital); text-decoration: underline; }
+  ```
+  to
+  ```
+  /* The two links on the page: the blog at the left end of this row, the at-home
+     telemetry panel at the right. Static text to an OBS source; a phone or laptop
+     viewer can follow them. */
+  #to-blog, #to-telemetry { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint);
+    text-decoration: none; }
+  #to-blog:hover, #to-blog:focus-visible,
+  #to-telemetry:hover, #to-telemetry:focus-visible { color: var(--vital); text-decoration: underline; }
+  ```
+  If `tests/test_stage_pages.py::_declared_size` (which finds a rule by `"\n" + selector + " {"`) then fails to find `#to-blog {` or `#to-telemetry {`, keep the two rules separate instead — one `#to-blog { ... }` block and one `#to-telemetry { ... }` block with identical declarations — so both selectors start a line.
 
 In `README.md`, change "It serves three pages:" to "It serves four pages:" and insert after the telemetry bullet:
 
@@ -1364,14 +1422,14 @@ In `CLAUDE.md`, in invariant 3's diode bullet, after the sentence ending "…mir
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `/home/john/aurora/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_stage_telemetry_page.py tests/test_stage_telemetry_js.py`
+Run: `/home/john/aurora/.venv/bin/python -m pytest -q -p no:cacheprovider tests/test_stage_telemetry_page.py tests/test_stage_telemetry_js.py tests/test_stage_pages.py tests/test_stage_pages_js.py`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add stage/telemetry_page.py tests/test_stage_telemetry_page.py README.md CLAUDE.md
-git commit -m "Link the blog from the telemetry strip and document it in the README and CLAUDE.md
+git add stage/telemetry_page.py stage/pages.py tests/test_stage_telemetry_page.py tests/test_stage_pages.py README.md CLAUDE.md
+git commit -m "Link the blog from the stream masthead and the telemetry strip, and document it
 
 Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>"
 ```
