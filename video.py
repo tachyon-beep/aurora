@@ -635,9 +635,12 @@ def _valid_duration(value):
     """A duration in seconds within sane bounds, or None when malformed.
 
     Guards the same third-party JSON hazards as format_duration: absent,
-    non-numeric, boolean, non-finite, negative, or an integer large enough
-    that a later string conversion would raise (Python refuses past 4300
-    digits).
+    non-numeric, boolean, non-finite, negative, or absurdly large. A literal
+    long enough to raise on parsing (Python refuses past 4300 digits) never
+    reaches this function at all -- json.loads raises first, and the caller
+    rejects the whole payload. DURATION_MAX_SECONDS catches everything
+    shorter than that: any value from 13 digits up is already well past any
+    real video's length.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
@@ -694,7 +697,16 @@ def resolve_binding(video_id):
 
 
 def still_path(video_id, seconds):
-    """A path for one frame: id, offset, and a token carrying no ordering."""
+    """A path for one frame: id, offset, and a token carrying no ordering.
+
+    seconds is validated here as well as by capture_still, since it is
+    interpolated directly into a filename: an unvalidated value could
+    otherwise carry a path separator out of STILLS_DIR, a control character
+    into the filesystem call, or a magnitude past what str() can ever render.
+    Raises ValueError for a malformed offset, the same contract
+    validated_offset already carries elsewhere in this file.
+    """
+    seconds = validated_offset(seconds, DURATION_MAX_SECONDS)
     ensure_dirs()
     return os.path.join(STILLS_DIR, f"{video_id}_{seconds}_{secrets.token_hex(4)}.jpg")
 
@@ -704,13 +716,19 @@ def _reencode(path):
 
     The claimed dimensions are read from the header before any pixel data is
     decoded: a header can claim a size far larger than the actual data, and
-    decoding trusts the claim to size the whole pixel buffer. This check runs
-    ahead of Pillow's own decompression-bomb guard, which only raises past
-    roughly double its default warning threshold and would otherwise decode
-    up to that point first. A file that is not a valid image, one whose
-    claimed size is rejected by either guard, or one whose aspect ratio would
-    scale to a degenerate height at STILL_MAX_WIDTH, returns False rather
-    than raising.
+    decoding trusts the claim to size the whole pixel buffer. Pillow's own
+    decompression-bomb guard does not help below roughly double its default
+    warning threshold (it only warns there, never refuses, and does so
+    without decoding either) -- this check rejects a claim between there and
+    STILL_MAX_PIXELS before any decode is attempted, which Pillow's own guard
+    would otherwise let straight through. This is the one place in the
+    service that hands third-party bytes to a decoder outside the standard
+    library, and its plugins are not guaranteed to stay inside a fixed set of
+    exception types, so failure here is caught broadly, matching
+    _fetch_caption's same "payload or sentinel" contract: a file that is not
+    a valid image, one whose claimed size is rejected by either guard, or one
+    whose aspect ratio would scale to a degenerate height at STILL_MAX_WIDTH,
+    returns False rather than raising.
     """
     try:
         with Image.open(path) as img:
@@ -724,7 +742,7 @@ def _reencode(path):
                     return False
                 frame = frame.resize((STILL_MAX_WIDTH, scaled_height))
             frame.save(path, "JPEG", quality=85)
-    except (OSError, ValueError, Image.DecompressionBombError):
+    except Exception:
         return False
     return True
 
@@ -740,6 +758,13 @@ def _unlink_if_present(path):
 def capture_still(binding, seconds, now):
     """Capture one frame from the bound video. Returns (path or None, binding).
 
+    seconds is validated before it can reach either still_path's filename or
+    the ffmpeg -ss argument; a malformed value returns (None, binding) rather
+    than raising. This is an independent floor, not a substitute for
+    dispatch-time validation against the video's actual duration -- it
+    accepts any offset up to DURATION_MAX_SECONDS regardless of how long the
+    bound video actually is.
+
     A manifest older than its TTL is re-resolved here and not charged: one
     watch was dispatched, and signed media URLs are short-lived by nature.
     ffmpeg's -y can create or truncate its output file before it errors, and
@@ -748,6 +773,10 @@ def capture_still(binding, seconds, now):
     captured frame.
     """
     if binding is None:
+        return None, binding
+    try:
+        seconds = validated_offset(seconds, DURATION_MAX_SECONDS)
+    except ValueError:
         return None, binding
     if binding.manifest is None or now - binding.resolved_at > MANIFEST_TTL_SECONDS:
         refreshed = resolve_binding(binding.video_id)

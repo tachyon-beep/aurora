@@ -756,6 +756,52 @@ def test_still_path_carries_id_offset_and_a_hex_token(volume):
     int(token, 16)
 
 
+def test_still_path_is_confined_to_stills_dir(volume):
+    # Pins the directory for a benign call: nothing previously asserted this
+    # at all, for any input.
+    path = video.still_path("dQw4w9WgXcQ", 120)
+    assert _os.path.dirname(path) == video.STILLS_DIR
+
+
+@pytest.mark.parametrize(
+    "hostile_seconds",
+    [
+        "../../../../tmp/evil",
+        "120\x00",
+        -5,
+        "not a number",
+    ],
+)
+def test_still_path_refuses_hostile_seconds_that_would_escape_stills_dir(volume, hostile_seconds):
+    # A path separator, a NUL byte, or any other malformed offset must never
+    # reach os.path.join: each of these would otherwise place the written
+    # file outside STILLS_DIR, or hand a NUL byte to a later filesystem or
+    # subprocess call.
+    with pytest.raises(ValueError):
+        video.still_path("dQw4w9WgXcQ", hostile_seconds)
+
+
+@pytest.mark.parametrize(
+    "hostile_seconds",
+    [
+        "../../../../tmp/evil",
+        "120\x00",
+        -5,
+        "not a number",
+    ],
+)
+def test_capture_still_returns_none_for_hostile_seconds_without_running_anything(
+    volume, monkeypatch, hostile_seconds
+):
+    def explode(args, timeout):
+        raise AssertionError("no subprocess for a malformed offset")
+
+    monkeypatch.setattr(video, "run_binary", explode)
+    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+    path, binding = video.capture_still(_binding(), hostile_seconds, now=1000.0)
+    assert path is None
+
+
 def test_capture_still_refuses_a_manifest_that_fails_validation(volume, monkeypatch):
     def explode(args, timeout):
         raise AssertionError("ffmpeg must not run on an invalid manifest")
@@ -803,13 +849,19 @@ def test_capture_still_seeks_before_the_input(volume, monkeypatch):
 
 def test_an_expired_manifest_is_re_resolved_without_charging(volume, monkeypatch):
     calls = {"resolve": 0}
+    seen_manifests = []
+    refreshed_manifest = "https://r1.googlevideo.com/videoplayback?refreshed=1"
 
     def fake_resolve(video_id):
         calls["resolve"] += 1
-        return _binding(now=9999.0)
+        return _binding(now=9999.0, manifest=refreshed_manifest)
+
+    def fake_classify(url, **kw):
+        seen_manifests.append(url)
+        return True, ""
 
     monkeypatch.setattr(video, "resolve_binding", fake_resolve)
-    monkeypatch.setattr(video, "classify_manifest", lambda url, **kw: (True, ""))
+    monkeypatch.setattr(video, "classify_manifest", fake_classify)
     monkeypatch.setattr(video, "_reencode", lambda path: True)
 
     def fake(args, timeout):
@@ -821,6 +873,10 @@ def test_an_expired_manifest_is_re_resolved_without_charging(volume, monkeypatch
     path, binding = video.capture_still(stale, 120, now=video.MANIFEST_TTL_SECONDS + 1)
     assert calls["resolve"] == 1
     assert path is not None
+    # classify_manifest must run against the refreshed manifest, not the
+    # stale one that triggered re-resolution -- a regression that swapped
+    # the order would validate a manifest already known to be expired.
+    assert seen_manifests == [refreshed_manifest]
 
 
 def test_capture_still_returns_none_when_ffmpeg_fails(volume, monkeypatch):
