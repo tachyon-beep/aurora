@@ -1,5 +1,7 @@
 import json as _json
 import os as _os
+import sys as _sys
+import time as _time
 
 import pytest
 
@@ -371,3 +373,62 @@ def test_prune_tree_ignores_other_suffixes(volume):
 
 def test_prune_tree_tolerates_a_missing_directory(volume):
     video.prune_tree(str(volume / "absent"), keep=1, suffix=".jpg")
+
+
+# subprocess hygiene
+
+
+def test_run_binary_returns_output_of_a_successful_command():
+    code, out = video.run_binary([_sys.executable, "-c", "print('hello')"], timeout=10)
+    assert code == 0
+    assert out.strip() == "hello"
+
+
+def test_run_binary_reports_a_non_zero_exit():
+    code, out = video.run_binary([_sys.executable, "-c", "raise SystemExit(3)"], timeout=10)
+    assert code == 3
+
+
+def test_run_binary_times_out_without_raising():
+    code, out = video.run_binary([_sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
+    assert code == -1
+    assert out == ""
+
+
+def test_run_binary_tolerates_a_missing_binary():
+    code, out = video.run_binary(["/nonexistent/binary/xyz"], timeout=5)
+    assert code == -1
+    assert out == ""
+
+
+def test_a_timed_out_child_is_reaped():
+    # A killed-but-unreaped child holds a pid; under pids_limit a leak
+    # eventually stops the service forking at all.
+    video.run_binary([_sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
+    # No zombie remains: waitpid finds no unreaped child.
+    with pytest.raises(ChildProcessError):
+        _os.waitpid(-1, _os.WNOHANG)
+
+
+def test_a_grandchild_is_killed_with_the_group(tmp_path):
+    # yt-dlp spawns deno; killing only the parent orphans the helper. A
+    # grandchild that outlives the timeout would prove the group was not
+    # killed, only the direct child -- so the grandchild writes a marker
+    # file after a delay, and the test asserts the marker never appears.
+    marker = tmp_path / "grandchild_survived"
+    grandchild_code = "import time; time.sleep(4); open(%r, 'w').write('alive')" % str(marker)
+    script = (
+        "import subprocess, sys, time; "
+        "subprocess.Popen([sys.executable, '-c', %r]); "
+        "time.sleep(30)" % grandchild_code
+    )
+    code, out = video.run_binary([_sys.executable, "-c", script], timeout=2)
+    assert code == -1
+    _time.sleep(6)
+    assert not marker.exists()
+
+
+def test_run_binary_rejects_a_string_command():
+    # Never a shell string: an argument list is the boundary.
+    with pytest.raises(TypeError):
+        video.run_binary("echo hello", timeout=5)

@@ -14,7 +14,9 @@ import json
 import math
 import os
 import re
+import signal
 import socket
+import subprocess
 import tempfile
 from urllib.parse import urlparse
 
@@ -311,3 +313,44 @@ def prune_tree(directory, keep, suffix):
             os.unlink(path)
         except OSError:
             continue
+
+
+RESOLVE_TIMEOUT_SECONDS = 60
+STILL_TIMEOUT_SECONDS = 120
+
+
+def run_binary(args, timeout):
+    """Run an argument list, returning (returncode, stdout). Never raises.
+
+    One subprocess is in flight at a time. On timeout the whole process group
+    is killed rather than the direct child alone -- yt-dlp spawns a JavaScript
+    runtime for extraction, and killing only the parent orphans it -- and the
+    child is then waited on, so no zombie survives the command that created it.
+    A leaked pid would eventually stop this service forking, and the restart
+    that followed would reset the in-memory allowances.
+    """
+    if not isinstance(args, (list, tuple)):
+        raise TypeError("args must be an argument list, never a shell string")
+    try:
+        process = subprocess.Popen(
+            list(args),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+    except OSError:
+        return -1, ""
+    try:
+        stdout, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except OSError:
+            process.kill()
+        try:
+            process.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.wait()
+        return -1, ""
+    return process.returncode, stdout or ""
