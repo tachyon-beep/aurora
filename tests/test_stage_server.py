@@ -488,6 +488,7 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "ended_by_choice",
         "error_count",
         "self_calls",
+        "self_edits_this_life",
     }
     assert set(snap["diode"]) == {
         "outputs",
@@ -1121,3 +1122,29 @@ def test_public_records_normalises_kind_and_absent_lives():
     assert out["lives"] == [{"ordinal": 1, "kind": "unknown", "seconds": None, "ended_epoch": None}]
     assert server._public_records({})["lives"] == []
     assert server._public_records({})["lives_omitted"] == 0
+
+
+def test_the_census_overlays_exact_life_figures_when_it_has_a_row(tmp_path, monkeypatch):
+    from stage import census
+
+    census._reset_for_tests()
+    try:
+        snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(0), _turn_entry(1)])
+        assert snap["stats"]["self_edits_this_life"] is None
+        census._MEMO["lives"] = [
+            {"ordinal": 1, "current": True, "turns": 250, "subcalls": 0, "errors": 0, "edits": 19}
+        ]
+        snap = server.stream_snapshot()
+        assert snap["stats"]["turns_this_life"] == 250
+        assert snap["stats"]["turns_this_life_exact"] is True
+        assert snap["stats"]["self_edits_this_life"] == 19
+        census._MEMO["lives"] = [{"ordinal": 7, "current": True, "turns": 1, "edits": 1}]
+        snap = server.stream_snapshot()
+        assert snap["stats"]["self_edits_this_life"] is None
+        assert snap["stats"]["turns_this_life"] == 2
+    finally:
+        census._reset_for_tests()
+
+
+def test_the_empty_snapshot_carries_a_null_self_edit_count():
+    assert server._empty_snapshot(1.0)["stats"]["self_edits_this_life"] is None

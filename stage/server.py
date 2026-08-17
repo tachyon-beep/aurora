@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from stage import (
     browse,
+    census,
     codewatch,
     commentary,
     data,
@@ -646,6 +647,7 @@ def _empty_snapshot(now):
             "transcript_turns": 0,
             "turns_this_life": 0,
             "turns_this_life_exact": False,
+            "self_edits_this_life": None,
             "last_timestamp": None,
             "last_epoch": None,
             "started_epoch": None,
@@ -687,6 +689,27 @@ def _empty_snapshot(now):
     }
 
 
+def _overlay_census(stats, row):
+    """Replace the tail-derived life figures with the census's exact ones, in place.
+
+    The census counts every core-stream entry the live transcript holds, so
+    its turn count is exact and its self-edit count does not saturate at the
+    event-list cap. Without a census row the tail figures stand and the
+    self-edit count is null, which the page reads as "count the events".
+    """
+    stats["self_edits_this_life"] = None
+    if not isinstance(row, dict):
+        return stats
+    turns = row.get("turns")
+    if isinstance(turns, int) and not isinstance(turns, bool):
+        stats["turns_this_life"] = turns
+        stats["turns_this_life_exact"] = True
+    edits = row.get("edits")
+    if isinstance(edits, int) and not isinstance(edits, bool):
+        stats["self_edits_this_life"] = edits
+    return stats
+
+
 def _assemble_snapshot(now):
     """Read every source and project it into the public snapshot shape."""
     work = os.path.join(TELEMETRY_DIR, "work")
@@ -707,6 +730,7 @@ def _assemble_snapshot(now):
         now=now,
     )
     stats["model"] = _clip(str(stats.get("model") or ""), MODEL_CAP) or None
+    _overlay_census(stats, census.cached_life(stats["incarnation"]))
     life = stats["incarnation"] if any(t.get("life") is not None for t in turns) else None
     lanes = data.stream_lanes(events_path(), now=now)
     diode = data.diode_activity(DIODE_DIR, deaths=deaths, incarnation=incarnation)
@@ -882,6 +906,10 @@ def main():
         pass
     try:
         codewatch.start_background_refresh(os.path.join(TELEMETRY_DIR, "work"))
+    except Exception:
+        pass
+    try:
+        census.start_background_refresh(transcript_path(), os.path.join(TELEMETRY_DIR, "work"))
     except Exception:
         pass
     print(f"stage: stream on :{STREAM_PORT}, console on :{CONSOLE_PORT}")

@@ -19,8 +19,34 @@ _index_lock = threading.Lock()
 _index_state = {}
 
 
+EDIT_TOOLS = ("write_file", "migrate")
+
+
+def _edit_count(response):
+    """How many self-edit tool calls the entry's first choice carries."""
+    if not isinstance(response, dict):
+        return 0
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return 0
+    message = choices[0].get("message")
+    if not isinstance(message, dict):
+        return 0
+    calls = message.get("tool_calls")
+    if not isinstance(calls, list):
+        return 0
+    count = 0
+    for call in calls:
+        if not isinstance(call, dict):
+            continue
+        fn = call.get("function")
+        if isinstance(fn, dict) and fn.get("name") in EDIT_TOOLS:
+            count += 1
+    return count
+
+
 def _record(offset, raw):
-    """One indexed line: (offset, length, epoch, stream, kind, has_error)."""
+    """One indexed line: (offset, length, epoch, stream, kind, has_error, edits)."""
     length = len(raw)
     text = raw.decode("utf-8", errors="replace").strip()
     entry = None
@@ -30,7 +56,7 @@ def _record(offset, raw):
         except ValueError:
             entry = None
     if not isinstance(entry, dict):
-        return (offset, length, None, "", "invalid", False)
+        return (offset, length, None, "", "invalid", False, 0)
     epoch = data.parse_epoch(entry.get("timestamp"))
     stream = entry.get("stream")
     if not isinstance(stream, str) or not stream:
@@ -38,7 +64,7 @@ def _record(offset, raw):
     kind = data.classify_entry_kind(entry.get("request"))
     response = entry.get("response")
     has_error = isinstance(response, dict) and bool(response.get("error"))
-    return (offset, length, epoch, stream, kind, has_error)
+    return (offset, length, epoch, stream, kind, has_error, _edit_count(response))
 
 
 def _scan(path, scanned, records):
@@ -117,15 +143,16 @@ def incarnations(transcript_path, work_dir, now=None):
     incarnation = len(notes) + 1
     deaths = data.tombstone_deaths(work_dir, now=now)
     counts = {}
-    for _offset, _length, epoch, stream, kind, has_error in records:
+    for _offset, _length, epoch, stream, kind, has_error, edits in records:
         if kind == "invalid" or stream != "core":
             continue
         life = _life_of(epoch, deaths, incarnation)
-        bucket = counts.setdefault(life, {"turns": 0, "subcalls": 0, "errors": 0})
+        bucket = counts.setdefault(life, {"turns": 0, "subcalls": 0, "errors": 0, "edits": 0})
         if kind == "subcall":
             bucket["subcalls"] += 1
         else:
             bucket["turns"] += 1
+            bucket["edits"] += edits
         if has_error:
             bucket["errors"] += 1
     endings = {}
@@ -146,7 +173,7 @@ def incarnations(transcript_path, work_dir, now=None):
     for ordinal in range(incarnation, 0, -1):
         ending = endings.get(ordinal)
         previous = endings.get(ordinal - 1)
-        bucket = counts.get(ordinal, {"turns": 0, "subcalls": 0, "errors": 0})
+        bucket = counts.get(ordinal, {"turns": 0, "subcalls": 0, "errors": 0, "edits": 0})
         out.append(
             {
                 "ordinal": ordinal,
@@ -159,6 +186,7 @@ def incarnations(transcript_path, work_dir, now=None):
                 "turns": bucket["turns"],
                 "subcalls": bucket["subcalls"],
                 "errors": bucket["errors"],
+                "edits": bucket["edits"],
             }
         )
     return out
@@ -272,7 +300,7 @@ def incarnation_turns(transcript_path, work_dir, life, offset=0, limit=DEFAULT_P
     life = _clip_int(life, 1, incarnation)
     matching = [
         index
-        for index, (_offset, _length, epoch, stream, kind, _has_error) in enumerate(records)
+        for index, (_offset, _length, epoch, stream, kind, _has_error, _edits) in enumerate(records)
         if kind != "invalid" and stream == "core" and _life_of(epoch, deaths, incarnation) == life
     ]
     offset = _clip_int(offset, 0, len(matching))
@@ -280,7 +308,7 @@ def incarnation_turns(transcript_path, work_dir, life, offset=0, limit=DEFAULT_P
     matching.reverse()
     turns = []
     for index in matching[offset : offset + limit]:
-        line_offset, length, epoch, stream, kind, _has_error = records[index]
+        line_offset, length, epoch, stream, kind, _has_error, _edits = records[index]
         entry = _load_entry(transcript_path, line_offset, length)
         if entry is None:
             continue
@@ -288,12 +316,39 @@ def incarnation_turns(transcript_path, work_dir, life, offset=0, limit=DEFAULT_P
     return {"life": life, "total": len(matching), "offset": offset, "turns": turns}
 
 
+def life_turns(transcript_path, work_dir, life, now=None):
+    """One life's core-stream loop turns, oldest first, as (index, epoch, entry).
+
+    Sub-calls are left out: the digest reads the agent's own turns. A line
+    that no longer loads (rotated away between the index and the read) is
+    skipped. Uncapped, for callers that sample the whole life themselves.
+    """
+    if now is None:
+        now = time.time()
+    records = _index(transcript_path)
+    notes = data.tombstone_paths(work_dir)
+    incarnation = len(notes) + 1
+    deaths = data.tombstone_deaths(work_dir, now=now)
+    life = _clip_int(life, 1, incarnation)
+    out = []
+    for index, (offset, length, epoch, stream, kind, _has_error, _edits) in enumerate(records):
+        if kind != "loop" or stream != "core":
+            continue
+        if _life_of(epoch, deaths, incarnation) != life:
+            continue
+        loaded = _load_entry(transcript_path, offset, length)
+        if loaded is None:
+            continue
+        out.append((index, epoch, loaded))
+    return out
+
+
 def entry(transcript_path, index):
     """One transcript record by line index, pretty-printed and capped, or None."""
     records = _index(transcript_path)
     if not isinstance(index, int) or not 0 <= index < len(records):
         return None
-    offset, length, _epoch, _stream, _kind, _has_error = records[index]
+    offset, length, _epoch, _stream, _kind, _has_error, _edits = records[index]
     raw = _read_line(transcript_path, offset, length)
     if raw is None:
         return None
@@ -360,7 +415,7 @@ def streams(transcript_path, events_path, now=None, window=3600):
         since = lane["in_flight_since"]
         if since is None or epoch < since:
             lane["in_flight_since"] = epoch
-    for _offset, _length, _epoch, stream, kind, _has_error in _index(transcript_path):
+    for _offset, _length, _epoch, stream, kind, _has_error, _edits in _index(transcript_path):
         if kind == "invalid":
             continue
         lane = lanes.setdefault(stream, _empty_lane(stream))
@@ -376,7 +431,9 @@ def stream_requests(transcript_path, name, offset=0, limit=DEFAULT_PAGE):
     records = _index(transcript_path)
     matching = [
         index
-        for index, (_offset, _length, _epoch, stream, kind, _has_error) in enumerate(records)
+        for index, (_offset, _length, _epoch, stream, kind, _has_error, _edits) in enumerate(
+            records
+        )
         if kind != "invalid" and stream == name
     ]
     offset = _clip_int(offset, 0, len(matching))
@@ -384,7 +441,7 @@ def stream_requests(transcript_path, name, offset=0, limit=DEFAULT_PAGE):
     matching.reverse()
     requests = []
     for index in matching[offset : offset + limit]:
-        line_offset, length, epoch, _stream, _kind, _has_error = records[index]
+        line_offset, length, epoch, _stream, _kind, _has_error, _edits = records[index]
         record = _load_entry(transcript_path, line_offset, length)
         if record is None:
             continue

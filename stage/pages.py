@@ -1555,9 +1555,15 @@ function renderLineage() {
   lastOrdinal = st.incarnation;
   setText($("subj-model"), st.model || "—");
   $("subj-model").title = st.model || "";
-  var ev = snap.events || [];
-  lifeEdits = 0;
-  for (var e = 0; e < ev.length; e++) if (ev[e].kind === "write" || ev[e].kind === "migrate") lifeEdits++;
+  /* The census counts self-edits over the whole live transcript; the event
+     list is a capped tail and only stands in before the census has run. */
+  if (typeof st.self_edits_this_life === "number") {
+    lifeEdits = st.self_edits_this_life;
+  } else {
+    var ev = snap.events || [];
+    lifeEdits = 0;
+    for (var e = 0; e < ev.length; e++) if (ev[e].kind === "write" || ev[e].kind === "migrate") lifeEdits++;
+  }
   renderLifeFigs(nowMs);
   renderSource();
 

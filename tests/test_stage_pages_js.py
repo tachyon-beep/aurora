@@ -1412,6 +1412,16 @@ rotateLineageFoot(60000); out.foot_wraps = fake("lineage-foot").textContent;
 
 out.steps = [labelStep(23, 366), labelStep(41, 658), labelStep(24, 658), labelStep(60, 366), labelStep(23, 0)];
 
+/* The census's exact self-edit count wins over the capped event list; a null
+   census falls back to counting the events. */
+global.snap.stats.self_edits_this_life = 23;
+global.snap.events = [{ kind: "write" }];
+renderLineage();
+out.figs_census = fake("life-figs").textContent;
+global.snap.stats.self_edits_this_life = null;
+renderLineage();
+out.figs_events = fake("life-figs").textContent;
+
 process.stdout.write(JSON.stringify(out));
 """
 
@@ -1431,6 +1441,8 @@ def test_the_lineage_scales_colours_caps_and_walks(tmp_path):
     assert out["labels"] == ["1", "2", "3", "4", "5"]
     assert out["count"] == "5 LIVES SO FAR"
     assert out["figs"] == "alive 120s · 4 turns · 2 self-edits · 2 reached out"
+    assert "23 self-edits" in out["figs_census"]
+    assert "1 self-edit ·" in out["figs_events"]
     assert out["ord"] == "5"
     assert out["heights_after_growth"] == ["2px", "30%", "45%", "60%", "100%"]
     assert out["slide_survives"] is True

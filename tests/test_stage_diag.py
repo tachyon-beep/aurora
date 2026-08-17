@@ -419,3 +419,47 @@ def test_stream_requests_treats_untagged_entries_as_core(tmp_path):
     page = diag.stream_requests(transcript, "core")
     assert page["total"] == 1
     assert page["requests"][0]["content_chars"] == 3
+
+
+def test_incarnations_counts_self_edits_per_life(tmp_path):
+    transcript = str(tmp_path / "t.jsonl")
+    work = str(tmp_path / "work")
+    os.makedirs(work)
+    _write_jsonl(
+        transcript,
+        [
+            _entry(minute=1, tool_calls=[("write_file", "{}"), ("migrate", "{}")]),
+            _entry(minute=2, tool_calls=[("reset", "{}"), ("done", "{}")]),
+            _entry(minute=3, tools=False, tool_calls=[("write_file", "{}")]),
+            _entry(minute=11, tool_calls=[("write_file", "{}")]),
+        ],
+    )
+    _tombstone(work, "incarnation-1.txt", "chose to end. turn 2 reached.", minute=10)
+    lives = diag.incarnations(transcript, work, now=_epoch(20))
+    assert lives[1]["edits"] == 2
+    assert lives[0]["edits"] == 1
+
+
+def test_life_turns_yields_one_life_oldest_first_without_subcalls(tmp_path):
+    transcript = str(tmp_path / "t.jsonl")
+    work = str(tmp_path / "work")
+    os.makedirs(work)
+    _write_jsonl(
+        transcript,
+        [
+            _entry(minute=1, content="a"),
+            _entry(minute=2, tools=False, content="sub"),
+            _entry(minute=3, content="b"),
+            _entry(minute=11, content="c"),
+        ],
+    )
+    with open(transcript, "a", encoding="utf-8") as f:
+        f.write("not json\n")
+    _tombstone(work, "incarnation-1.txt", "chose to end.", minute=10)
+    turns = diag.life_turns(transcript, work, 1, now=_epoch(20))
+    assert [index for index, _epoch_, _entry_ in turns] == [0, 2]
+    assert [e["response"]["choices"][0]["message"]["content"] for _i, _e, e in turns] == ["a", "b"]
+    assert turns[0][1] == _epoch(1)
+    current = diag.life_turns(transcript, work, 2, now=_epoch(20))
+    assert [index for index, _epoch_, _entry_ in current] == [3]
+    assert diag.life_turns(str(tmp_path / "missing.jsonl"), work, 1, now=_epoch(20)) == []
