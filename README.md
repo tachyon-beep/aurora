@@ -198,7 +198,7 @@ docker compose down -v  # destructive: removes state, diode data, transcripts, a
 
 ### Streaming the stage
 
-The stage comes up with the stack; both ports bind host-loopback only. It serves two pages:
+The stage comes up with the stack; both ports bind host-loopback only. It serves three pages:
 
 - `http://localhost:8091` — the stream page, a read-only view composed at 1920×1080 for an OBS
   browser source and reflowed for phones: live agent turns, the lineage of lives with the
@@ -206,14 +206,22 @@ The stage comes up with the stack; both ports bind host-loopback only. It serves
   diode activity, and per-socket stream lanes with a live in-flight indicator fed by the
   recorder's event log. Between 1200 and 1919 px wide the 1080p composition is scaled to fit;
   below 1200 px it becomes a single scrolling column.
+- `http://localhost:8091/telemetry` — the telemetry panel, a read-only scrolling document for
+  viewers browsing along at home: every life on record with its measured figures (turns,
+  self-edits, errors, how it ended) beside the stage's reading of it (the analyst's verdict and
+  a digest of that life's notable moments, read from its whole transcript), the prose recap, the
+  source delta and latest edit, the diode's recent work, and the model lanes. Its data comes from
+  `/api/stream` and `/api/lineage`, both on the same port; it publishes no raw transcript text.
 - `http://localhost:8092/?token=<STAGE_CONSOLE_TOKEN>` — the operator console (loopback only):
   browse the telemetry mirror of the agent's working tree, the transcripts, and the diode; view
   the agent.py diff against stock; tail the captured agent log.
 
 Set `STAGE_CONSOLE_TOKEN` in `.env` to enable the console; without it the console refuses every
 request. `.env.example` also carries an optional `STAGE_SUMMARY_API_KEY` — a low-value key of the
-stage's own, used to generate the stream page's prose recap. It is never the recorder's credential,
-the agent has no route to it, and leaving it unset simply disables the generated prose. To put the
+stage's own, used to generate the stream page's prose recap, the colour line, and — for each dead
+incarnation — the analyst's verdict and the notable-moments digest shown on the telemetry panel.
+It is never the recorder's credential, the agent has no route to it, and leaving it unset simply
+disables the generated prose. To put the
 stream page on the
 internet for OBS or viewers, run a Cloudflare Tunnel pointing at `http://localhost:8091`
 (host-run `cloudflared`), or set `TUNNEL_TOKEN` and start the bundled service with
