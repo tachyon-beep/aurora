@@ -8,8 +8,11 @@ resolves) is validated before ffmpeg receives it. No credential is present in
 this service's environment.
 """
 
+import ipaddress
 import os
 import re
+import socket
+from urllib.parse import urlparse
 
 VIDEO_DIR = os.environ.get("VIDEO_DIR", "/video")
 CONSOLE_FILE = os.path.join(VIDEO_DIR, "console.json")
@@ -67,3 +70,53 @@ def validated_offset(value, duration):
     if duration is not None and seconds > duration:
         raise ValueError("offset past the end")
     return seconds
+
+
+def _default_resolver(host):
+    """Resolve a hostname to its IP address strings."""
+    infos = socket.getaddrinfo(host, None)
+    return [info[4][0] for info in infos]
+
+
+def classify_manifest(url, resolver=_default_resolver):
+    """Return (ok, reason) for a resolved media manifest URL.
+
+    The single URL in this service that is not composed here: yt-dlp resolves
+    it, and it is checked before ffmpeg receives it. https only, host within
+    the allow-list, and no loopback, link-local, private, reserved, multicast,
+    or unspecified address. ffmpeg resolves the host again when it connects,
+    so the address check is best-effort against a rebind between validation
+    and fetch; the host allow-list is what bounds where the fetch can go.
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception as e:
+        return False, f"unparseable url: {e}"
+    if parsed.scheme != "https":
+        return False, f"scheme not allowed: {parsed.scheme or '(none)'}"
+    host = parsed.hostname
+    if not host:
+        return False, "no host"
+    if not any(host == s or host.endswith("." + s) for s in MANIFEST_HOST_SUFFIXES):
+        return False, f"host not allowed: {host}"
+    try:
+        addrs = resolver(host)
+    except Exception as e:
+        return False, f"resolution failed: {e}"
+    if not addrs:
+        return False, "no addresses"
+    for addr in addrs:
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return False, f"bad address: {addr}"
+        if (
+            ip.is_loopback
+            or ip.is_link_local
+            or ip.is_private
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            return False, f"private/loopback/reserved target: {addr}"
+    return True, ""

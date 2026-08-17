@@ -81,3 +81,80 @@ def test_offset_is_unbounded_when_duration_is_none():
 def test_invalid_offsets_are_refused(value):
     with pytest.raises(ValueError):
         video.validated_offset(value, 600)
+
+
+# manifest validation
+
+
+def public(host):
+    return ["93.184.216.34"]
+
+
+def private(host):
+    return ["10.0.0.5"]
+
+
+def loopback(host):
+    return ["127.0.0.1"]
+
+
+def test_https_manifest_on_an_allowed_host_is_accepted():
+    ok, reason = video.classify_manifest(
+        "https://r1---sn-abc.googlevideo.com/videoplayback?x=1", resolver=public
+    )
+    assert ok is True
+    assert reason == ""
+
+
+def test_http_manifest_is_refused():
+    ok, reason = video.classify_manifest("http://r1.googlevideo.com/videoplayback", resolver=public)
+    assert ok is False
+    assert "scheme" in reason
+
+
+def test_manifest_outside_the_host_allow_list_is_refused():
+    ok, reason = video.classify_manifest("https://evil.example.com/x.m3u8", resolver=public)
+    assert ok is False
+    assert "host not allowed" in reason
+
+
+def test_host_suffix_match_is_label_bounded():
+    # notgooglevideo.com must not pass by ending with the allowed suffix.
+    ok, reason = video.classify_manifest("https://notgooglevideo.com/x", resolver=public)
+    assert ok is False
+    assert "host not allowed" in reason
+
+
+def test_manifest_resolving_to_a_private_address_is_refused():
+    ok, reason = video.classify_manifest(
+        "https://r1.googlevideo.com/videoplayback", resolver=private
+    )
+    assert ok is False
+    assert "private/loopback/reserved" in reason
+
+
+def test_manifest_resolving_to_loopback_is_refused():
+    ok, reason = video.classify_manifest(
+        "https://r1.googlevideo.com/videoplayback", resolver=loopback
+    )
+    assert ok is False
+    assert "private/loopback/reserved" in reason
+
+
+def test_manifest_with_no_host_is_refused():
+    ok, reason = video.classify_manifest("https:///videoplayback", resolver=public)
+    assert ok is False
+
+
+def test_manifest_that_fails_resolution_is_refused():
+    def raises(host):
+        raise OSError("no such host")
+
+    ok, reason = video.classify_manifest("https://r1.googlevideo.com/x", resolver=raises)
+    assert ok is False
+    assert "resolution failed" in reason
+
+
+def test_unparseable_manifest_is_refused():
+    ok, reason = video.classify_manifest("://::::", resolver=public)
+    assert ok is False
