@@ -72,6 +72,7 @@ _LIST_ITEM = re.compile(r"\A( *)(?:([-*+])|(\d{1,9})[.)])[ \t]+(.*)\Z")
 _QUOTE = re.compile(r"\A {0,3}>[ ]?")
 _TABLE_SEP = re.compile(r"\A\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*\Z")
 _LANG = re.compile(r"\A[A-Za-z0-9_+-]{1,32}\Z")
+MAX_NESTING = 16
 
 
 def _fence_closes(line, fence):
@@ -115,7 +116,7 @@ def _dedent(lines):
     return [line[cut:] if line.strip() else "" for line in lines]
 
 
-def _render_list(lines, id_prefix, counter):
+def _render_list(lines, id_prefix, counter, depth=0):
     first = _LIST_ITEM.match(lines[0])
     base = len(first.group(1))
     ordered = first.group(3) is not None
@@ -130,7 +131,10 @@ def _render_list(lines, id_prefix, counter):
     for text, children in items:
         inner = render_inline(text)
         if any(c.strip() for c in children):
-            inner += _render_blocks(_dedent(children), id_prefix, counter)
+            if depth >= MAX_NESTING:
+                inner += render_inline(chr(10).join(_dedent(children)))
+            else:
+                inner += _render_blocks(_dedent(children), id_prefix, counter, depth + 1)
         parts.append(f"<li>{inner}</li>")
     if ordered:
         start = int(first.group(3))
@@ -177,7 +181,7 @@ def _list_block(lines, i):
     return block, i
 
 
-def _render_blocks(lines, id_prefix, counter):
+def _render_blocks(lines, id_prefix, counter, depth=0):
     out = []
     i = 0
     n = len(lines)
@@ -219,7 +223,12 @@ def _render_blocks(lines, id_prefix, counter):
             while i < n and _QUOTE.match(lines[i]):
                 quoted.append(_QUOTE.sub("", lines[i], count=1))
                 i += 1
-            out.append(f"<blockquote>{_render_blocks(quoted, id_prefix, counter)}</blockquote>")
+            if depth >= MAX_NESTING:
+                out.append(f"<blockquote><p>{render_inline(chr(10).join(quoted))}</p></blockquote>")
+            else:
+                out.append(
+                    f"<blockquote>{_render_blocks(quoted, id_prefix, counter, depth + 1)}</blockquote>"
+                )
             continue
         if "|" in line and i + 1 < n and _TABLE_SEP.match(lines[i + 1]) and "-" in lines[i + 1]:
             table = [lines[i], lines[i + 1]]
@@ -231,7 +240,7 @@ def _render_blocks(lines, id_prefix, counter):
             continue
         if _LIST_ITEM.match(line):
             block, i = _list_block(lines, i)
-            out.append(_render_list(block, id_prefix, counter))
+            out.append(_render_list(block, id_prefix, counter, depth))
             continue
         para = [line]
         i += 1

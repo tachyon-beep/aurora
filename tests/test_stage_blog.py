@@ -176,3 +176,28 @@ def test_first_heading():
     assert blog.first_heading("intro\n\n# The *title*\n\n## sub") == "The *title*"
     assert blog.first_heading("no heading") is None
     assert blog.first_heading("```\n# not a heading\n```\n# real") == "real"
+
+
+def test_deeply_nested_blocks_render_without_recursion_or_delay():
+    cases = (
+        ">" * 3000 + " a",
+        "> " * 5000 + "a",
+        "".join("  " * i + "- a\n" for i in range(2000)),
+        "".join(">" * i + " q\n" for i in range(1, 400)),
+    )
+    for index, text in enumerate(cases):
+        start = time.perf_counter()
+        out = blog.render_markdown(text)
+        assert time.perf_counter() - start < 1.0, text[:12]
+        assert "<script" not in out
+        if index == 0:
+            assert out.count("<blockquote>") <= blog.MAX_NESTING + 1
+        if index == 2:
+            assert out.count("<ul>") <= blog.MAX_NESTING + 1
+
+
+def test_nesting_up_to_the_cap_is_structural_and_beyond_it_is_text():
+    deep = ">" * (blog.MAX_NESTING + 3) + " a"
+    out = blog.render_markdown(deep)
+    assert out.count("<blockquote>") == blog.MAX_NESTING + 1
+    assert "&gt;&gt; a" in out
