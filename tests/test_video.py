@@ -185,6 +185,18 @@ def test_budget_status_counts_only_the_window():
     assert status["window_seconds"] == 3600
 
 
+def test_budget_status_expiry_follows_the_oldest_entry():
+    # min, not max: the earliest entry is the one that frees a slot first.
+    status = video.budget_status([1000.0, 2000.0], 2500.0, 3600)
+    assert status["oldest_expires_in_seconds"] == 2100
+
+
+def test_budget_status_of_an_empty_history_reports_no_wait():
+    status = video.budget_status([], 1000.0, 3600)
+    assert status["used"] == 0
+    assert status["oldest_expires_in_seconds"] is None
+
+
 def test_console_limit_reads_an_integer():
     assert video.console_limit({"still_budget": 5}, "still_budget", 20) == 5
 
@@ -219,8 +231,26 @@ def test_unusable_operator_ceiling_falls_back_to_the_default(monkeypatch):
     assert video.effective_limit({}, "video_budget", "VIDEO_HOURLY_MAX", 1) == 1
 
 
+def test_the_video_ceiling_comes_from_the_environment(monkeypatch):
+    monkeypatch.delenv("VIDEO_HOURLY_MAX", raising=False)
+    assert video.env_limit("VIDEO_HOURLY_MAX", 1) == 1
+    monkeypatch.setenv("VIDEO_HOURLY_MAX", "3")
+    assert video.env_limit("VIDEO_HOURLY_MAX", 1) == 3
+    monkeypatch.setenv("VIDEO_HOURLY_MAX", "not a number")
+    assert video.env_limit("VIDEO_HOURLY_MAX", 1) == 1
+    monkeypatch.setenv("VIDEO_HOURLY_MAX", "-5")
+    assert video.env_limit("VIDEO_HOURLY_MAX", 1) == 0
+
+
 def test_rate_limited_message_names_the_kind_and_the_wait():
     text = video.rate_limited_message("still", 20, [1000.0], 1600.0, 3600)
     assert "20" in text
     assert "still" in text
     assert "3000 seconds" in text
+
+
+def test_rate_limited_message_omits_the_wait_when_the_history_is_empty():
+    text = video.rate_limited_message("still", 20, [], 1600.0, 3600)
+    assert "20" in text
+    assert "still" in text
+    assert "next available" not in text
