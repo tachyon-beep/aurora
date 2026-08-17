@@ -401,6 +401,18 @@ def test_run_binary_tolerates_a_missing_binary():
     assert out == ""
 
 
+def test_run_binary_tolerates_invalid_utf8_from_the_child(tmp_path):
+    # yt-dlp surfaces titles and metadata in arbitrary encodings; a mangled
+    # byte must produce a result, not crash the poll loop. A script file is
+    # used rather than -c, since an embedded null byte in a -c program is
+    # rejected by the exec layer before it proves anything about decoding.
+    script = tmp_path / "invalid_utf8.py"
+    script.write_text("import os\nos.write(1, b'\\xff\\xfe bad \\xc3\\x28')\n")
+    code, out = video.run_binary([_sys.executable, str(script)], timeout=10)
+    assert code == 0
+    assert "�" in out
+
+
 def test_a_timed_out_child_is_reaped():
     # A killed-but-unreaped child holds a pid; under pids_limit a leak
     # eventually stops the service forking at all.

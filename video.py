@@ -327,7 +327,14 @@ def run_binary(args, timeout):
     runtime for extraction, and killing only the parent orphans it -- and the
     child is then waited on, so no zombie survives the command that created it.
     A leaked pid would eventually stop this service forking, and the restart
-    that followed would reset the in-memory allowances.
+    that followed would reset the in-memory allowances. Undecodable bytes from
+    the child are replaced rather than raised, since third-party output (a
+    video title, extractor metadata) arrives in an arbitrary encoding and a
+    mangled byte must not crash the poll loop; any other failure during
+    teardown is likewise swallowed rather than raised. Worst-case wall clock
+    is bounded at timeout + 15 seconds: up to 10 seconds draining pipes after
+    the kill, then a final wait bounded at 5 seconds, after which the call
+    returns regardless of whether the child has actually exited.
     """
     if not isinstance(args, (list, tuple)):
         raise TypeError("args must be an argument list, never a shell string")
@@ -337,6 +344,7 @@ def run_binary(args, timeout):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            errors="replace",
             start_new_session=True,
         )
     except OSError:
@@ -351,6 +359,20 @@ def run_binary(args, timeout):
         try:
             process.communicate(timeout=10)
         except subprocess.TimeoutExpired:
-            process.wait()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            except Exception:
+                pass
+        except Exception:
+            pass
+        finally:
+            if process.stdout is not None:
+                process.stdout.close()
+            if process.stderr is not None:
+                process.stderr.close()
+        return -1, ""
+    except Exception:
         return -1, ""
     return process.returncode, stdout or ""
