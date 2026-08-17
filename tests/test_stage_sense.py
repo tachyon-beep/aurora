@@ -8,6 +8,7 @@ every served name must be listing-matched, contained, and size-capped.
 import json
 import os
 
+import sense as sense_service
 from test_stage_server import call_stream_route
 
 from stage import sensecam, server
@@ -112,6 +113,26 @@ def test_frame_bytes_path_rejects_unlisted_and_traversal_names(tmp_path):
         ("1", "001.jpg"),
     ):
         assert sensecam.frame_bytes_path(str(sense), slot, name) is None, (slot, name)
+
+
+def test_the_stage_renders_exactly_the_feed_dirs_sense_accepts(tmp_path):
+    """The capture service and the stage share one feed-directory vocabulary.
+
+    sense writes a feed directory only when validated_feed_dir accepts its
+    name; the stage serves a frame only from a directory its own copy of that
+    pattern lists. A name one side takes and the other refuses is a feed
+    captured but never rendered, or offered but never written.
+    """
+    ring = _ring(tmp_path)
+    for name in ("0", "10", "007", "otter-cam_1", "A", "a_b", "cam3", "logs", "٣"):
+        _frame(ring, name, "001.jpg")
+        try:
+            sense_service.validated_feed_dir(name)
+            captured = True
+        except ValueError:
+            captured = False
+        rendered = sensecam.frame_bytes_path(str(ring), name, "001.jpg") is not None
+        assert captured == rendered, name
 
 
 def test_frame_bytes_path_rejects_a_symlink_out(tmp_path):

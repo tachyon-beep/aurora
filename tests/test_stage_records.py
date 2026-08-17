@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from stage import records
+from stage import data, records
 
 
 @pytest.fixture(autouse=True)
@@ -99,13 +99,15 @@ def test_the_book_is_memoized_on_the_tombstone_set(tmp_path, monkeypatch):
         path.write_text("Incarnation ended by done().", encoding="utf-8")
         os.utime(path, (now - age, now - age))
     reads = []
-    real_open = open
+    real_open_contained = data.open_contained
 
-    def counting_open(path, *args, **kwargs):
+    def counting_open(root, path, *args, **kwargs):
         reads.append(str(path))
-        return real_open(path, *args, **kwargs)
+        return real_open_contained(root, path, *args, **kwargs)
 
-    monkeypatch.setattr("builtins.open", counting_open)
+    # The book reads tombstones through data.open_contained, which opens a
+    # descriptor rather than calling builtins.open, so the count is taken there.
+    monkeypatch.setattr(data, "open_contained", counting_open)
     first = records.record_book(str(work), now=now)
     assert first["lives_ended"] == 2 and first["chose"] == 2
     assert len(reads) == 2

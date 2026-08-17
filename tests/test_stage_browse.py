@@ -3,6 +3,11 @@ import os
 from stage import browse
 
 
+def _handle(path):
+    """Open a path the way the routes do, so the unit tests use the real contract."""
+    return open(str(path), "rb")
+
+
 def test_resolve_within_accepts_inside_paths(tmp_path):
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "f.txt").write_text("x", encoding="utf-8")
@@ -39,20 +44,20 @@ def test_list_directory_sorts_dirs_first(tmp_path):
 def test_read_text_preview_head_tail_and_cap(tmp_path):
     p = tmp_path / "big.txt"
     p.write_text("A" * 10 + "Z" * 10, encoding="utf-8")
-    head = browse.read_text_preview(str(p), cap=10)
+    head = browse.read_text_preview(_handle(p), cap=10)
     assert head["content"] == "A" * 10
     assert head["truncated"] is True
     assert head["size"] == 20
-    tail = browse.read_text_preview(str(p), cap=10, tail=True)
+    tail = browse.read_text_preview(_handle(p), cap=10, tail=True)
     assert tail["content"] == "Z" * 10
-    full = browse.read_text_preview(str(p), cap=100)
+    full = browse.read_text_preview(_handle(p), cap=100)
     assert full["truncated"] is False
 
 
 def test_read_text_preview_detects_binary(tmp_path):
     p = tmp_path / "bin.dat"
     p.write_bytes(b"\x00\x01\x02rest")
-    got = browse.read_text_preview(str(p))
+    got = browse.read_text_preview(_handle(p))
     assert got["binary"] is True
     assert got["content"] == ""
 
@@ -62,9 +67,9 @@ def test_unified_diff_text(tmp_path):
     b = tmp_path / "b.py"
     a.write_text("one\ntwo\n", encoding="utf-8")
     b.write_text("one\nthree\n", encoding="utf-8")
-    out = browse.unified_diff_text(str(a), str(b), "stock", "current")
+    out = browse.unified_diff_text(_handle(a), _handle(b), "stock", "current")
     assert "-two" in out and "+three" in out and "stock" in out
-    same = browse.unified_diff_text(str(a), str(a), "stock", "current")
+    same = browse.unified_diff_text(_handle(a), _handle(a), "stock", "current")
     assert same == ""
 
 
@@ -74,6 +79,6 @@ def test_unified_diff_reads_capped_inputs(tmp_path, monkeypatch):
     b = tmp_path / "b.py"
     a.write_text("alpha\n" + "z" * 500, encoding="utf-8")
     b.write_text("beta\n" + "z" * 500, encoding="utf-8")
-    out = browse.unified_diff_text(str(a), str(b), "a", "b")
+    out = browse.unified_diff_text(_handle(a), _handle(b), "a", "b")
     assert "alpha" in out and "beta" in out
     assert len(out) < 1000

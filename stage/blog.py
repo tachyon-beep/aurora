@@ -12,7 +12,7 @@ import html
 import os
 import re
 
-from stage.data import contained_file
+from stage.data import contained_file, open_contained
 
 POST_READ_BYTES = 65_536
 POSTS_MAX = 1000
@@ -363,11 +363,11 @@ def read_post(diode_dir, name):
     blog_dir = os.path.join(diode_dir, "blog")
     if "/" in name or name in ("", ".", ".."):
         return None
-    full = contained_file(diode_dir, os.path.join(blog_dir, name + ".md"))
-    if full is None:
+    handle = open_contained(diode_dir, os.path.join(blog_dir, name + ".md"))
+    if handle is None:
         return None
     try:
-        with open(full, "rb") as f:
+        with handle as f:
             raw = f.read(POST_READ_BYTES + 1)
     except OSError:
         return None

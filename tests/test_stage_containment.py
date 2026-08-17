@@ -9,6 +9,8 @@ carry a cap.
 
 import datetime
 import json
+import os
+import signal
 
 from test_stage_server import call_stream_route
 
@@ -277,3 +279,87 @@ def test_blog_posts_do_not_follow_a_symlink(tmp_path):
     assert names == ["20260817_120000_000000"]
     assert SECRET not in json.dumps(rendered)
     assert blog.read_post(str(diode), "20260817_120001_000000") is None
+
+
+def test_open_contained_matches_contained_file_on_every_static_case(tmp_path):
+    """The safe reader accepts and rejects exactly what the path check does."""
+    work, _diode, secret = _roots(tmp_path)
+    inside = work / "tombstones" / "incarnation-0001.txt"
+    inside.write_text("a real note", encoding="utf-8")
+    escape = work / "tombstones" / "incarnation-0002.txt"
+    escape.symlink_to(secret)
+    internal = work / "tombstones" / "incarnation-0003.txt"
+    internal.symlink_to(inside)
+
+    with data.open_contained(str(work), str(inside)) as handle:
+        assert handle.read().decode("utf-8") == "a real note"
+    # A link that stays inside the root is still readable, as it was before.
+    with data.open_contained(str(work), str(internal)) as handle:
+        assert handle.read().decode("utf-8") == "a real note"
+
+    assert data.open_contained(str(work), str(escape)) is None
+    assert data.open_contained(str(work), str(work / "tombstones")) is None
+    assert data.open_contained(str(work), str(work / "nope.txt")) is None
+
+
+def test_open_contained_rejects_a_fifo_without_blocking(tmp_path):
+    """A fifo must be refused, not opened -- a blocking open would hang the thread."""
+    work, _diode, _secret = _roots(tmp_path)
+    fifo = work / "tombstones" / "incarnation-0009.txt"
+    os.mkfifo(fifo)
+
+    # No writer exists, so a blocking open would never return.
+    assert data.open_contained(str(work), str(fifo)) is None
+
+
+def test_open_contained_pins_the_inode_against_a_concurrent_swap(tmp_path):
+    """The agent must not be able to swap a validated file for a link before the read.
+
+    contained_file returned a path that the caller resolved a second time when it
+    opened it. A separate process renaming the file into a symlink between those
+    two resolutions made the stage read the link's target instead. This drives the
+    real read path against a real concurrent swapper and requires zero escapes.
+    """
+    work, diode, _secret = _roots(tmp_path)
+    blog_dir = diode / "blog"
+    blog_dir.mkdir()
+    post = blog_dir / "20260817_120000_000000.md"
+    post.write_text("# innocent post\n", encoding="utf-8")
+
+    marker = "PROC_SELF_ENVIRON_LEAK"
+    target = work / "pinned_secret.txt"
+    target.write_text(marker, encoding="utf-8")
+    outside = tmp_path / "outside" / "swapped.txt"
+    outside.write_text(marker, encoding="utf-8")
+
+    pid = os.fork()
+    if pid == 0:  # pragma: no cover - the swapper never returns to pytest
+        link, real = str(post) + ".l", str(post) + ".f"
+        try:
+            while True:
+                try:
+                    os.symlink(str(outside), link)
+                    os.rename(link, str(post))
+                    with open(real, "w", encoding="utf-8") as f:
+                        f.write("# innocent post\n")
+                    os.rename(real, str(post))
+                except OSError:
+                    for leftover in (link, real):
+                        try:
+                            os.remove(leftover)
+                        except OSError:
+                            pass
+        finally:
+            os._exit(0)
+
+    escapes = 0
+    try:
+        for _ in range(400):
+            rendered = blog.read_post(str(diode), "20260817_120000_000000")
+            if rendered is not None and marker in rendered["html"]:
+                escapes += 1
+    finally:
+        os.kill(pid, signal.SIGKILL)
+        os.waitpid(pid, 0)
+
+    assert escapes == 0

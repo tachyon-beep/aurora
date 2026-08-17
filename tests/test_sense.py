@@ -259,9 +259,18 @@ def test_run_cycle_writes_status_without_network(tmp_path, monkeypatch):
 # feed directory validation
 
 
-def test_feed_dir_accepts_plain_names():
-    for name in ("0", "3", "otter-cam_1", "A"):
+def test_feed_dir_accepts_bare_numerals_only():
+    for name in ("0", "3", "10", "007"):
         assert sense.validated_feed_dir(name) == name
+
+
+def test_feed_dir_rejects_captions_and_non_ascii_numerals():
+    # Letters and punctuation would carry a caption into the agent's world,
+    # and the stage lists only bare numerals as feeds. Non-ASCII digits pass
+    # str.isdigit but are not the numerals either side means.
+    for name in ("otter-cam_1", "A", "a_b", "cam3", "٣", "²"):
+        with pytest.raises(ValueError):
+            sense.validated_feed_dir(name)
 
 
 def test_feed_dir_rejects_separators_traversal_and_empties():
@@ -327,7 +336,7 @@ def test_reconcile_storage_removes_unconfigured_feed_directories(tmp_path):
 def test_main_reconciles_storage_before_the_first_capture_cycle(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setenv("SENSE_DIR", str(tmp_path))
-    monkeypatch.setenv("SENSE_FEEDS", '[{"dir":"cam","id":"x"}]')
+    monkeypatch.setenv("SENSE_FEEDS", '[{"dir":"0","id":"x"}]')
     monkeypatch.setenv("SENSE_RING_SLOTS", "7")
     monkeypatch.setattr(sense, "SENSE_DIR", str(tmp_path))
     monkeypatch.setattr(
@@ -342,7 +351,7 @@ def test_main_reconciles_storage_before_the_first_capture_cycle(tmp_path, monkey
     with pytest.raises(StopIteration):
         sense.main()
 
-    assert calls[0] == (tmp_path, [{"dir": "cam", "id": "x"}], 7)
+    assert calls[0] == (tmp_path, [{"dir": "0", "id": "x"}], 7)
     assert calls[1] == "cycle"
 
 
@@ -355,7 +364,7 @@ def test_main_carries_on_when_storage_cannot_be_reconciled(tmp_path, monkeypatch
     """
     calls = []
     monkeypatch.setattr(sense, "SENSE_DIR", str(tmp_path / "absent"))
-    monkeypatch.setenv("SENSE_FEEDS", '[{"dir":"cam","id":"x"}]')
+    monkeypatch.setenv("SENSE_FEEDS", '[{"dir":"0","id":"x"}]')
     monkeypatch.setattr(sense, "run_cycle", lambda *args, **kwargs: calls.append("cycle"))
     monkeypatch.setattr(sense.time, "time", lambda: 0.0)
     monkeypatch.setattr(sense.time, "sleep", lambda _seconds: (_ for _ in ()).throw(StopIteration))
@@ -389,12 +398,12 @@ def test_an_overrunning_cycle_is_followed_immediately():
 
 
 def test_load_feeds_defaults_dir_to_the_list_position():
-    feeds = sense.load_feeds('[{"id":"a"},{"id":"b","vf":"crop=1:1:0:0"},{"dir":"z","id":"c"}]')
+    feeds = sense.load_feeds('[{"id":"a"},{"id":"b","vf":"crop=1:1:0:0"},{"dir":"9","id":"c"}]')
 
     assert feeds == [
         {"id": "a", "dir": "0"},
         {"id": "b", "vf": "crop=1:1:0:0", "dir": "1"},
-        {"dir": "z", "id": "c"},
+        {"dir": "9", "id": "c"},
     ]
 
 

@@ -321,14 +321,10 @@ def _tombstone_note(work_dir, ordinal):
     position = len(notes) - ordinal
     if position < 0 or position >= len(notes):
         return ""
-    path = data.contained_file(work_dir, notes[position])
-    if path is None:
+    text = data._read_capped(work_dir, notes[position], data.TOMBSTONE_READ_BYTES)
+    if text is None:
         return ""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return _field(f.read(data.TOMBSTONE_READ_BYTES), NOTE_CHARS)
-    except OSError:
-        return ""
+    return _field(text, NOTE_CHARS)
 
 
 def _prompt(row, lines, note, earlier=()):

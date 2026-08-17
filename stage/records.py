@@ -57,14 +57,7 @@ def _compute(work_dir, paths, now):
     deaths = [data._tombstone_epoch(path, now) for path in paths]
     kinds = []
     for path in paths:
-        real = data.contained_file(work_dir, path)
-        text = ""
-        if real is not None:
-            try:
-                with open(real, "r", encoding="utf-8", errors="replace") as f:
-                    text = f.read(TOMBSTONE_READ_BYTES)
-            except OSError:
-                text = ""
+        text = data._read_capped(work_dir, path, TOMBSTONE_READ_BYTES) or ""
         kinds.append(data._ending_kind(text))
     chose = sum(1 for kind in kinds if kind == "declared")
     lives = []

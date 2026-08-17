@@ -5,6 +5,7 @@ import glob
 import json
 import os
 import re
+import stat
 import threading
 import time
 
@@ -80,6 +81,11 @@ def contained_file(root, path):
     every stage-side read of those roots resolves the target and rejects it when
     it lands outside the mount. Non-regular files are rejected too: a fifo would
     otherwise block the reading thread.
+
+    The answer describes the path at the moment of the call and nothing later.
+    The agent writes /diode directly and can replace a name between this check
+    and any use of the result, so a caller that goes on to read the file must
+    call open_contained instead and read from the descriptor it returns.
     """
     root_real = os.path.realpath(root)
     candidate = os.path.realpath(path)
@@ -88,6 +94,50 @@ def contained_file(root, path):
     if not os.path.isfile(candidate):
         return None
     return candidate
+
+
+def open_contained(root, path, buffering=-1):
+    """An open binary handle on path when it is a regular file inside root, else None.
+
+    The containment test that contained_file applies to a name is applied here to
+    the descriptor instead. The file is opened first, and the checks then run
+    against the object actually opened: os.fstat for the regular-file test, and
+    the /proc/self/fd link for the containment test. The caller reads from the
+    returned handle, never from the name, so the answer cannot go stale.
+
+    This is what closes the swap. The agent mounts /diode read-write and /work is
+    mirrored into /telemetry with its links intact, so between a name-based check
+    and a later open() it can rename a validated file into a symbolic link and
+    have the stage read the link's target - inside the stage's mount namespace,
+    where its own environment is reachable. A descriptor is pinned to the inode
+    it was opened on, so no later rename reaches it.
+
+    Opened with O_NONBLOCK so that a fifo returns a descriptor rather than
+    blocking the reading thread; the fstat check then rejects it. Links are
+    followed, as contained_file follows them, and rejected on the same terms
+    when they land outside the root.
+    """
+    root_real = os.path.realpath(root)
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            os.close(fd)
+            return None
+        opened = os.readlink(f"/proc/self/fd/{fd}")
+    except OSError:
+        os.close(fd)
+        return None
+    if opened != root_real and not opened.startswith(root_real + os.sep):
+        os.close(fd)
+        return None
+    try:
+        return os.fdopen(fd, "rb", buffering)
+    except OSError:
+        os.close(fd)
+        return None
 
 
 _line_count_state = {}
@@ -384,13 +434,33 @@ def annotate_lives(turns, deaths, incarnation):
     return turns
 
 
-def _read_capped(path, cap):
-    """The first cap characters of a text file, or None when it cannot be read."""
+def _read_capped(root, path, cap):
+    """The first cap bytes of a regular file inside root, decoded, or None.
+
+    Reads through open_contained, so the containment test lands on the descriptor
+    the read comes from rather than on a name that can be reassigned before the
+    open.
+    """
+    text, _stat = _read_capped_stat(root, path, cap)
+    return text
+
+
+def _read_capped_stat(root, path, cap):
+    """(decoded first cap bytes, os.stat_result) for a regular file inside root, or (None, None).
+
+    Both halves come from the one descriptor, so a caller that publishes a size or
+    an mtime beside the text is describing the file the text came from. Stating
+    the name separately would let the two disagree once the name is reassigned.
+    """
+    handle = open_contained(root, path)
+    if handle is None:
+        return None, None
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read(cap)
+        with handle as f:
+            stat_result = os.fstat(f.fileno())
+            return f.read(cap).decode("utf-8", errors="replace"), stat_result
     except OSError:
-        return None
+        return None, None
 
 
 def code_stats(work_dir):
@@ -424,8 +494,8 @@ def code_stats(work_dir):
         cached = _code_stat_state.get(work_dir)
     if cached is not None and cached[0] == key:
         return dict(cached[1])
-    current = _read_capped(current_path, CODE_READ_BYTES)
-    stock = _read_capped(stock_path, CODE_READ_BYTES)
+    current = _read_capped(work_dir, current_path, CODE_READ_BYTES)
+    stock = _read_capped(work_dir, stock_path, CODE_READ_BYTES)
     if current is None or stock is None:
         return dict(unavailable)
     added = 0
@@ -730,14 +800,10 @@ def lineage(work_dir, turns, limit=5, now=None):
     return _derive_lives(out, loop_turns(turns))
 
 
-def _capped_text(path, cap=2000):
-    if path is None:
-        return ""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read(cap)
-    except OSError:
-        return ""
+def _capped_text(root, path, cap=2000):
+    """The first cap bytes of a regular file inside root, decoded, or empty text."""
+    text = _read_capped(root, path, cap)
+    return "" if text is None else text
 
 
 def _filename_epoch(name):
@@ -879,8 +945,8 @@ def diode_activity(diode_dir, limit=8, deaths=None, incarnation=None):
         "outputs": outputs,
         "operations_total": operations_total,
         "operations_life": operations_life,
-        "console": _capped_text(contained_file(diode_dir, os.path.join(diode_dir, "console.json"))),
-        "state": _capped_text(contained_file(diode_dir, os.path.join(diode_dir, "state.json"))),
+        "console": _capped_text(diode_dir, os.path.join(diode_dir, "console.json")),
+        "state": _capped_text(diode_dir, os.path.join(diode_dir, "state.json")),
     }
 
 
@@ -1059,14 +1125,9 @@ def diode_published(diode_dir, limit=2):
     total = len(names)
     out = []
     for name in names[:limit]:
-        full = contained_file(diode_dir, os.path.join(published_dir, name))
-        if full is None:
-            continue
-        try:
-            stat = os.stat(full)
-        except OSError:
-            continue
-        text = _read_capped(full, PUBLISHED_READ_BYTES)
+        text, stat = _read_capped_stat(
+            diode_dir, os.path.join(published_dir, name), PUBLISHED_READ_BYTES
+        )
         if text is None:
             continue
         chars = len(text) if len(text) < PUBLISHED_READ_BYTES else stat.st_size
@@ -1099,16 +1160,13 @@ def diode_spoken(diode_dir, limit=2):
     total = len(names)
     out = []
     for name in names[:limit]:
-        full = contained_file(diode_dir, os.path.join(spoken_dir, name))
-        if full is None:
+        audio = open_contained(diode_dir, os.path.join(spoken_dir, name))
+        if audio is None:
             continue
-        try:
-            stat = os.stat(full)
-        except OSError:
-            continue
+        with audio:
+            stat = os.fstat(audio.fileno())
         stem = name[: -len(".mp3")]
-        sidecar = contained_file(diode_dir, os.path.join(spoken_dir, stem + ".txt"))
-        text = _read_capped(sidecar, SPOKEN_READ_BYTES) if sidecar else None
+        text = _read_capped(diode_dir, os.path.join(spoken_dir, stem + ".txt"), SPOKEN_READ_BYTES)
         epoch = _filename_epoch(name)
         if epoch is None:
             epoch = stat.st_mtime

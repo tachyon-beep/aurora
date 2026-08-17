@@ -108,8 +108,33 @@ class _BaseHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_file(self, path, content_type, extra=None):
-        """Stream a file's bytes with its length, or answer 404.
+    def _send_contained(self, root, path, content_type, max_bytes=None, extra=None):
+        """Stream a regular file inside root, or answer 404.
+
+        The file is opened through data.open_contained and everything after
+        that - the size check, the announced length, and the bytes - comes
+        from that one descriptor. Resolving the name again to stat or reopen
+        it would let the agent, which writes /diode directly, replace the
+        validated file with a link between the check and the read.
+        """
+        handle = data.open_contained(root, path)
+        if handle is None:
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        try:
+            size = os.fstat(handle.fileno()).st_size
+        except OSError:
+            handle.close()
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        if max_bytes is not None and size > max_bytes:
+            handle.close()
+            self._send(404, json.dumps({"error": "not found"}))
+            return
+        self._stream_handle(handle, size, content_type, extra)
+
+    def _stream_handle(self, handle, size, content_type, extra=None):
+        """Stream size bytes from an already-validated descriptor.
 
         The body is streamed rather than buffered: these routes serve files
         the agent writes, so concurrent requests for one file must not each
@@ -117,12 +142,6 @@ class _BaseHandler(BaseHTTPRequestHandler):
         while it is being sent cannot fill the length already announced, so
         the connection is closed rather than left short.
         """
-        try:
-            size = os.path.getsize(path)
-            handle = open(path, "rb")
-        except OSError:
-            self._send(404, json.dumps({"error": "not found"}))
-            return
         with handle:
             self.send_response(200)
             self.send_header("Content-Type", content_type)
@@ -224,19 +243,23 @@ class ConsoleHandler(_BaseHandler):
 
     def _handle_file(self, query):
         target = self._resolve(query)
-        if target is None or not os.path.isfile(target):
+        root = browse_roots().get(query.get("root", [""])[0])
+        handle = data.open_contained(root, target) if target and root else None
+        if handle is None:
             self._send(404, json.dumps({"error": "not found"}))
             return
         tail = query.get("tail", ["0"])[0] == "1"
-        self._send(200, json.dumps(browse.read_text_preview(target, tail=tail)))
+        self._send(200, json.dumps(browse.read_text_preview(handle, tail=tail)))
 
     def _handle_download(self, query):
         target = self._resolve(query)
-        if target is None or not os.path.isfile(target):
+        root = browse_roots().get(query.get("root", [""])[0])
+        if target is None or root is None:
             self._send(404, json.dumps({"error": "not found"}))
             return
         name = _sanitize_header_value(os.path.basename(target))
-        self._send_file(
+        self._send_contained(
+            root,
             target,
             "application/octet-stream",
             extra={"Content-Disposition": f'attachment; filename="{name}"'},
@@ -244,9 +267,13 @@ class ConsoleHandler(_BaseHandler):
 
     def _handle_diff(self):
         work = os.path.join(TELEMETRY_DIR, "work")
-        current = data.contained_file(TELEMETRY_DIR, os.path.join(work, "agent.py"))
-        stock = data.contained_file(TELEMETRY_DIR, os.path.join(work, "agent_stock.py"))
+        current = data.open_contained(TELEMETRY_DIR, os.path.join(work, "agent.py"))
+        stock = data.open_contained(TELEMETRY_DIR, os.path.join(work, "agent_stock.py"))
         if current is None or stock is None:
+            if current is not None:
+                current.close()
+            if stock is not None:
+                stock.close()
             self._send(404, json.dumps({"error": "mirror not available"}))
             return
         text = browse.unified_diff_text(stock, current, "agent_stock.py", "agent.py")
@@ -1114,18 +1141,12 @@ class StreamHandler(_BaseHandler):
         if not name.endswith(".mp3") or name not in listing:
             self._send(404, json.dumps({"error": "not found"}))
             return
-        target = data.contained_file(DIODE_DIR, os.path.join(spoken_dir, name))
-        if target is None:
-            self._send(404, json.dumps({"error": "not found"}))
-            return
-        try:
-            oversized = os.path.getsize(target) > AUDIO_MAX_BYTES
-        except OSError:
-            oversized = True
-        if oversized:
-            self._send(404, json.dumps({"error": "not found"}))
-            return
-        self._send_file(target, "audio/mpeg")
+        self._send_contained(
+            DIODE_DIR,
+            os.path.join(spoken_dir, name),
+            "audio/mpeg",
+            max_bytes=AUDIO_MAX_BYTES,
+        )
 
     def _handle_frame(self, route):
         """Serve one captured sense frame.
@@ -1145,7 +1166,7 @@ class StreamHandler(_BaseHandler):
         if target is None:
             self._send(404, json.dumps({"error": "not found"}))
             return
-        self._send_file(target, "image/jpeg")
+        self._send_contained(SENSE_DIR, target, "image/jpeg", max_bytes=sensecam.FRAME_MAX_BYTES)
 
 
 def make_server(port, handler):

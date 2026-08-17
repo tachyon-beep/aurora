@@ -54,11 +54,15 @@ def slot_name(index: int) -> str:
     return f"{index:03d}.jpg"
 
 
-FEED_DIR_PATTERN = re.compile(r"[A-Za-z0-9_-]+")
+# Bare ASCII numerals. A feed directory is a surface the agent reads, so it
+# carries no caption, feed name, or geography; the stage lists feeds by this
+# same pattern, and a name only one side accepts is a feed captured but never
+# rendered. `\d` is not equivalent: it also matches non-ASCII digits.
+FEED_DIR_PATTERN = re.compile(r"[0-9]+")
 
 
 def validated_feed_dir(name: str) -> str:
-    """A feed directory name: one plain path component, no separators."""
+    """A feed directory name: one bare numeral, no separators."""
     if not isinstance(name, str) or FEED_DIR_PATTERN.fullmatch(name) is None:
         raise ValueError(f"invalid feed dir: {name!r}")
     return name

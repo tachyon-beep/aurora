@@ -122,10 +122,8 @@ def _tombstone_notes(work_dir):
     total = len(paths)
     notes = []
     for position, path in enumerate(reversed(paths[-MAX_TOMBSTONES:])):
-        try:
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
-                text = f.read(TOMBSTONE_READ_BYTES)
-        except OSError:
+        text = data._read_capped(work_dir, path, TOMBSTONE_READ_BYTES)
+        if text is None:
             continue
         text = llm._collapse(text)[:TOMBSTONE_CHARS]
         if not text:
@@ -154,14 +152,13 @@ def _source_delta(work_dir):
     key = (current, _stamp(current), seed, _stamp(seed))
     if _DELTA_MEMO.get("key") == key:
         return _DELTA_MEMO.get("value")
-    try:
-        with open(current, "r", encoding="utf-8", errors="replace") as f:
-            new_lines = f.read(MAX_SOURCE_BYTES).splitlines()
-        with open(seed, "r", encoding="utf-8", errors="replace") as f:
-            old_lines = f.read(MAX_SOURCE_BYTES).splitlines()
-    except OSError:
+    new_text = data._read_capped(work_dir, current, MAX_SOURCE_BYTES)
+    old_text = data._read_capped(work_dir, seed, MAX_SOURCE_BYTES)
+    if new_text is None or old_text is None:
         _DELTA_MEMO.update({"key": key, "value": None})
         return None
+    new_lines = new_text.splitlines()
+    old_lines = old_text.splitlines()
     added = removed = 0
     for line in difflib.unified_diff(old_lines, new_lines, lineterm="", n=0):
         if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):

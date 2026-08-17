@@ -58,7 +58,7 @@ def latest_edit(work_dir, now=None):
         if key is None or key == _MEMO["key"]:
             return _current_edit()
         previous = _MEMO["lines"]
-    lines = _read_lines(path)
+    lines = _read_lines(work_dir, path)
     if lines is None:
         return cached_edit()
     edit = None
@@ -81,7 +81,7 @@ def _seed_lines(work_dir):
     seed = data.contained_file(work_dir, os.path.join(work_dir, "agent_stock.py"))
     if seed is None:
         return None
-    return _read_lines(seed)
+    return _read_lines(work_dir, seed)
 
 
 def _current_edit():
@@ -99,13 +99,15 @@ def _key(path):
     return (path, stat.st_mtime_ns, stat.st_size)
 
 
-def _read_lines(path):
-    """The capped source lines of path, or None when it cannot be read."""
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read(MAX_SOURCE_BYTES).splitlines()
-    except OSError:
-        return None
+def _read_lines(root, path):
+    """The capped source lines of path inside root, or None when it cannot be read.
+
+    Read through data.open_contained, so the containment test applies to the
+    descriptor the lines come from rather than to a name the agent can reassign
+    between the check and the read.
+    """
+    text = data._read_capped(root, path, MAX_SOURCE_BYTES)
+    return None if text is None else text.splitlines()
 
 
 def _describe(previous, current, now):
