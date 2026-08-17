@@ -664,6 +664,61 @@ def test_write_help_lists_publishing_gate(tmp_path, monkeypatch):
     assert "enable_publishing" in text
 
 
+def test_post_is_gated_by_publishing():
+    text, _ = diode.handle_command("post # hello", {}, [])
+    assert text == "command not available: post"
+    assert "post" not in diode.available_commands({})
+    assert "post" in diode.available_commands({"enable_publishing": True})
+
+
+def test_post_writes_a_markdown_file_under_blog(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "BLOG_DIR", str(tmp_path / "blog"))
+    body = "# A title\n\n```mermaid\ngraph TD; A-->B\n```"
+    text, hist = diode.handle_command(f"post {body}", {"enable_publishing": True}, [])
+    files = list((tmp_path / "blog").iterdir())
+    assert len(files) == 1
+    assert files[0].suffix == ".md"
+    assert files[0].read_text(encoding="utf-8") == body
+    assert text == f"posted to blog/{files[0].name}"
+    assert hist == []
+
+
+def test_post_requires_text_and_caps_length(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "BLOG_DIR", str(tmp_path / "blog"))
+    text, _ = diode.handle_command("post", {"enable_publishing": True}, [])
+    assert text == "usage: post <markdown>"
+    assert not (tmp_path / "blog").exists()
+    long_text = "x" * (diode.POST_TEXT_CAP + 50)
+    diode.handle_command(f"post {long_text}", {"enable_publishing": True}, [])
+    files = list((tmp_path / "blog").iterdir())
+    assert len(files[0].read_text(encoding="utf-8")) == diode.POST_TEXT_CAP
+
+
+def test_post_help_names_mermaid_and_the_shared_gate(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
+    diode.write_help({"enable_publishing": True})
+    text = (tmp_path / "HELP.md").read_text(encoding="utf-8")
+    assert "post <markdown> -> make a markdown article available outside the container" in text
+    assert "mermaid code fences are rendered as diagrams" in text
+    assert "enable_publishing: true, makes the publish and post commands available" in text
+
+
+def test_post_can_be_deferred():
+    assert diode.deferred_command_refusal("post # later") is None
+
+
+def test_state_counts_posts(tmp_path, monkeypatch):
+    monkeypatch.setattr(diode, "STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setattr(diode, "OUTPUT_DIR", str(tmp_path / "output"))
+    monkeypatch.setattr(diode, "BLOG_DIR", str(tmp_path / "blog"))
+    diode.write_state({}, [])
+    assert json.loads((tmp_path / "state.json").read_text())["post_count"] == 0
+    (tmp_path / "blog").mkdir()
+    (tmp_path / "blog" / "20260817_120000_000000.md").write_text("# a", encoding="utf-8")
+    diode.write_state({}, [])
+    assert json.loads((tmp_path / "state.json").read_text())["post_count"] == 1
+
+
 def test_blind_is_absent_from_listings_and_help(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "HELP_FILE", str(tmp_path / "HELP.md"))
     all_gates = {
