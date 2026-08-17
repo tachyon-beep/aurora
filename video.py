@@ -55,7 +55,7 @@ def validated_query(value):
 
 
 def validated_offset(value, duration):
-    """An offset in seconds: a non-negative integer within the video's duration."""
+    """An offset in seconds: a non-negative integer, bounded by the duration when one is known."""
     if isinstance(value, bool) or not isinstance(value, (str, int)):
         raise ValueError(f"invalid offset: {value!r}")
     try:
