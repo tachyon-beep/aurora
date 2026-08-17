@@ -249,10 +249,14 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   text-overflow: ellipsis; font: 400 13px/18px var(--sans); color: var(--paper-faint); }
 #provenance.offline { color: var(--fault); }
 #repo { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint); }
-/* The one link on the page: the at-home telemetry panel. Static text to an OBS
-   source; a phone or laptop viewer can follow it. */
+/* The two links on the page: the blog at the left end of this row, the at-home
+   telemetry panel at the right. Static text to an OBS source; a phone or laptop
+   viewer can follow them. */
+#to-blog { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint);
+  text-decoration: none; }
 #to-telemetry { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint);
   text-decoration: none; }
+#to-blog:hover, #to-blog:focus-visible,
 #to-telemetry:hover, #to-telemetry:focus-visible { color: var(--vital); text-decoration: underline; }
 #death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 3px;
   background: var(--taken); z-index: 20; transform-origin: left; transform: scaleX(1); }
@@ -665,6 +669,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
       </div>
     </div>
     <div id="mh-b">
+      <a id="to-blog" href="/blog">← blog</a>
       <span class="chip c-think"><i class="dot think"></i><b>THOUGHT</b></span>
       <span class="chip c-say"><i class="dot say"></i><b>SPEECH</b></span>
       <span class="chip c-act"><i class="dot act"></i><b>ACTION</b></span>

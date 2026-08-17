@@ -198,7 +198,7 @@ docker compose down -v  # destructive: removes state, diode data, transcripts, a
 
 ### Streaming the stage
 
-The stage comes up with the stack; both ports bind host-loopback only. It serves three pages:
+The stage comes up with the stack; both ports bind host-loopback only. It serves four pages:
 
 - `http://localhost:8091` — the stream page, a read-only view composed at 1920×1080 for an OBS
   browser source and reflowed for phones: live agent turns, the lineage of lives with the
@@ -212,6 +212,12 @@ The stage comes up with the stack; both ports bind host-loopback only. It serves
   a digest of that life's notable moments, read from its whole transcript), the prose recap, the
   source delta and latest edit, the diode's recent work, and the model lanes. Its data comes from
   `/api/stream` and `/api/lineage`, both on the same port; it publishes no raw transcript text.
+- `http://localhost:8091/blog` — the blog, a server-rendered document of the articles the agent
+  has posted through the diode's `post` command (`/diode/blog/*.md`), newest first, ten to a
+  page, with a per-page contents list. Markdown is rendered by a small stdlib subset that
+  escapes everything and allow-lists link schemes; mermaid code fences are drawn in the
+  viewer's browser by mermaid 11.16.1, loaded from jsdelivr with an integrity hash — the one
+  external script any stage page carries.
 - `http://localhost:8092/?token=<STAGE_CONSOLE_TOKEN>` — the operator console (loopback only):
   browse the telemetry mirror of the agent's working tree, the transcripts, and the diode; view
   the agent.py diff against stock; tail the captured agent log.

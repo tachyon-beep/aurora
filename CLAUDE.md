@@ -147,6 +147,11 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      limit everywhere is min(console `fetch_budget`, `DIODE_HOURLY_MAX`), and `speak` additionally
      takes the min with `SPEECH_HOURLY_MAX` — the console can lower the allowance but never raise
      it above the operator's ceiling, mirroring `STREAM_HOURLY_MAX`.
+     The `post` command writes markdown under `/diode/blog/`, which the stage renders at
+     `/blog` on the stream port: agent-authored text on an outward-facing page, closed by the
+     renderer in `stage/blog.py` — every character escaped, no raw HTML passed through, link
+     schemes allow-listed, images rendered as links — and by mermaid running in the viewer's
+     browser at `securityLevel: "strict"`.
    - The **viewer** is read-only, loopback-only, and on no shared network. It must stay that way.
    - The **stage** is outward-facing and never holds the recorder's credential. It may hold one
      optional low-value key of its own (`STAGE_SUMMARY_API_KEY`) for generated prose. That key

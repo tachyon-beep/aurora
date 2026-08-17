@@ -49,9 +49,9 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
   gap: 18px; padding: 6px 20px; background: var(--ink-1); border-bottom: 1px solid var(--rule-2); }
 #wordmark { margin: 0; font: 600 16px/24px var(--sans); letter-spacing: .18em; color: var(--paper);
   white-space: nowrap; }
-#to-stream { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px;
+#to-stream, #to-blog { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px;
   font: 500 15px/20px var(--sans); text-decoration: none; }
-#to-stream:hover { text-decoration: underline; }
+#to-stream:hover, #to-blog:hover { text-decoration: underline; }
 #state-cluster { display: flex; align-items: center; gap: 10px; }
 #state-word { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   color: var(--paper-dim); }
@@ -191,7 +191,7 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
   #strip { flex-wrap: wrap; gap: 4px 14px; padding: 6px 12px; }
   #wordmark { font-size: 14px; letter-spacing: .14em; flex: 1 1 auto; }
   #pause { order: 0; margin-left: auto; min-height: 40px; }
-  #to-stream { order: 1; white-space: nowrap; min-height: 40px; }
+  #to-stream, #to-blog { order: 1; white-space: nowrap; min-height: 40px; }
   #state-cluster { order: 2; }
   #state-clock, #strip-life { display: none; }
   #record-table td.ending.is-live, #record-table td.stars.is-none { display: none; }
@@ -221,6 +221,7 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
 <header id="strip">
   <h1 id="wordmark">AURORA · TELEMETRY</h1>
   <a id="to-stream" href="/">← the stream</a>
+  <a id="to-blog" href="/blog">the blog →</a>
   <div id="state-cluster" aria-label="stage state">
     <span id="state-dot" class="dot hollow" aria-hidden="true"></span>
     <span id="state-word">STANDING BY</span>
