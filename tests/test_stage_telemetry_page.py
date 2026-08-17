@@ -33,8 +33,17 @@ def test_the_record_table_splits_measured_from_the_stages_reading():
     assert 'colspan="7" role="columnheader">Measured</th>' in table
     assert 'colspan="2" class="seam" role="columnheader">The stage\'s reading</th>' in table
     heads = re.findall(r'<th scope="col"[^>]*>(.*?)</th>', table)
-    assert heads[:8] == ["#", "Ended", "Lived", "Turns", "Edits", "Errors", "Ending", "Verdict"]
-    assert 'class="vh">Noted first</span>' in table
+    assert heads[1:9] == [
+        "Ended",
+        "Lived",
+        "Turns",
+        "Edits",
+        "Errors",
+        "Ending",
+        "Verdict",
+        "Noted",
+    ]
+    assert '<span aria-hidden="true">#</span><span class="vh">Incarnation</span>' in heads[0]
     assert '<caption class="vh">' in table
     assert 'role="table"' in table
     assert "MEASURED" in HTML and "THE STAGE'S READING" in HTML  # the card eyebrows
@@ -136,6 +145,9 @@ def test_motion_and_targets_respect_reduced_motion_and_the_narrow_tier():
     assert ".disc { min-height: 44px; }" in narrow
     assert "min-height: 56px" in STYLE  # the strip
     assert "#to-stream { display: inline-flex; align-items: center; min-height: 44px" in STYLE
+    # Nothing in the narrow tier lowers a target below 44 px.
+    for rule in re.findall(r"[^{}]+\{[^}]*min-height:\s*(\d+)px[^}]*\}", narrow):
+        assert int(rule) >= 44, narrow
     assert 'preload = "none"' in HTML
     assert 'a.setAttribute("aria-labelledby", text.id);' in HTML
     assert 'tabindex="0" aria-label="latest edit excerpt"' in HTML
@@ -156,3 +168,26 @@ def test_the_route_is_wired_on_the_stream_handler():
     handler = source[source.index("class StreamHandler") :]
     assert 'route == "/telemetry"' in handler
     assert "telemetry_page.TELEMETRY_PAGE_HTML" in handler
+
+
+def test_pause_stops_the_clock_and_the_seam_and_units_are_structural():
+    script = "\n".join(re.findall(r"<script>(.*?)</script>", HTML, re.S))
+    assert "function tick() {\n  if (paused) return;" in script
+    assert 'setClass($("strip"), "paused", paused);' in script
+    assert "#strip.paused .dot { animation: none; }" in STYLE
+    assert (
+        "#strip.offline .dot { background: var(--fault); border-color: var(--fault); animation: none; }"
+        in STYLE
+    )
+    assert "--seam:" in STYLE and "--control:" in STYLE
+    assert (
+        "#record-table tr.groups th.seam, #record-table .seam { border-left: 1px solid var(--seam); }"
+        in STYLE
+    )
+    assert ".card .blk.reading { border-left: 1px solid var(--seam); padding-left: 24px; }" in STYLE
+    base = STYLE[: STYLE.index("@media (max-width: 719px)")]
+    assert "#record-table .unit { display: none; }" in base
+    assert "#offline { flex: 1 1 100%;" in STYLE  # in flow, never over the record
+    # Tool arguments never reach the page: only the phrased summary is shown.
+    assert "e.summary || e.detail" not in script
+    assert 'if (sub && !e.quoted && /^[\\[{]/.test(sub)) sub = "";' in script

@@ -449,3 +449,17 @@ def test_earlier_nominations_travel_in_the_records_so_they_are_not_repeated(tmp_
     assert user.index("earlier nomination") < user.index("END RECORDS")
     assert "most lives get NONE" in handed[0]["system"]
     assert moments.cached_digest(1)["achievement"] is None
+
+
+def test_given_up_is_a_pure_read_and_never_arms_the_desk_clock(monkeypatch):
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    assert moments.given_up(7) is False
+    assert 7 not in moments._ASKED
+    moments._SKIPPED.add(7)
+    assert moments.given_up(7) is True
+    moments._ATTEMPTS[8] = (moments.MAX_ATTEMPTS, 0.0)
+    assert moments.given_up(8) is True
+    moments._ATTEMPTS[9] = (1, 0.0)
+    assert moments.given_up(9) is False
+    monkeypatch.delenv("STAGE_SUMMARY_API_KEY")
+    assert moments.given_up(9) is True

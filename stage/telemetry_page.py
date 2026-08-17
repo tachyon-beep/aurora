@@ -26,6 +26,7 @@ TELEMETRY_PAGE_HTML = r"""<!doctype html>
   --paper: #eef3f6; --paper-dim: #b8c2ca; --paper-faint: #97a2ab;
   --think: #b3bcff; --act: #f0bd68; --world: #6fc4ff; --vital: #66d9c2;
   --fault: #ff8d8d; --chosen: #7fd7b6; --taken: #ff9f6b; --broken: #ff8d8d;
+  --seam: #4a5865; --control: #5a6b78;
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
@@ -46,7 +47,8 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 
 /* ---------- strip ---------- */
 #strip { position: sticky; top: 0; z-index: 20; min-height: 56px; display: flex; align-items: center;
-  gap: 18px; padding: 6px 20px; background: var(--ink-1); border-bottom: 1px solid var(--rule-2); }
+  flex-wrap: wrap; gap: 6px 18px; padding: 6px 20px; background: var(--ink-1);
+  border-bottom: 1px solid var(--rule-2); }
 #wordmark { margin: 0; font: 600 16px/24px var(--sans); letter-spacing: .18em; color: var(--paper);
   white-space: nowrap; }
 #to-stream { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px;
@@ -59,12 +61,14 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 #strip-life { margin-left: auto; font: 400 14px/20px var(--mono); color: var(--paper-dim);
   font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #pause { min-height: 44px; min-width: 44px; padding: 0 14px; background: none; color: var(--paper-dim);
-  border: 1px solid var(--rule-2); border-radius: 6px; font: 500 14px/20px var(--sans); cursor: pointer; }
+  border: 1px solid var(--control); border-radius: 6px; font: 500 14px/20px var(--sans); cursor: pointer; }
 #pause[aria-pressed="true"] { color: var(--act); border-color: var(--act); }
-#offline { position: absolute; left: 0; right: 0; top: 100%; padding: 8px 20px;
+#offline { flex: 1 1 100%; margin: 0 -20px -6px; padding: 8px 20px;
   background: var(--ink-2); color: var(--fault); font: 600 14px/20px var(--mono);
-  letter-spacing: .06em; border-bottom: 1px solid var(--fault); }
+  letter-spacing: .06em; border-top: 1px solid var(--fault); }
 #strip.offline #state-word, #strip.offline #state-clock { color: var(--fault); }
+#strip.offline .dot { background: var(--fault); border-color: var(--fault); animation: none; }
+#strip.paused .dot { animation: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .dot.think { background: var(--think); }
 .dot.act { background: var(--act); }
@@ -91,11 +95,11 @@ h2 { margin: 0; font: 600 13px/24px var(--mono); text-transform: uppercase; lett
 .controls .check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; }
 .controls input[type="checkbox"] { width: 20px; height: 20px; margin: 0; accent-color: var(--vital); }
 select { min-height: 44px; padding: 0 10px; background: var(--ink-2); color: var(--paper);
-  border: 1px solid var(--rule-2); border-radius: 6px; font: 400 14px/20px var(--sans); }
+  border: 1px solid var(--control); border-radius: 6px; font: 400 14px/20px var(--sans); }
 .sfoot { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-top: 12px;
   font: 400 14px/20px var(--mono); color: var(--paper-faint); }
 button.plain { min-height: 44px; padding: 0 12px; background: none; color: var(--vital);
-  border: 1px solid var(--rule-2); border-radius: 6px; font: 500 14px/20px var(--sans); cursor: pointer; }
+  border: 1px solid var(--control); border-radius: 6px; font: 500 14px/20px var(--sans); cursor: pointer; }
 .empty { margin: 4px 0 0; font: 400 17px/26px var(--serif); color: var(--paper-dim); }
 .scroller { overflow-x: auto; }
 .scroller:focus-visible { outline-offset: -2px; }
@@ -124,7 +128,7 @@ pre { margin: 0; padding: 12px 14px; background: var(--ink-0); border: 1px solid
 #record-table th { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .1em;
   color: var(--paper-faint); border-bottom: 1px solid var(--rule-2); white-space: nowrap; }
 #record-table tr.groups th { padding-bottom: 4px; border-bottom: 0; color: var(--paper-dim); }
-#record-table tr.groups th.seam, #record-table .seam { border-left: 1px solid var(--rule-2); }
+#record-table tr.groups th.seam, #record-table .seam { border-left: 1px solid var(--seam); }
 #record-table tbody tr.life { border-top: 1px solid var(--rule); }
 #record-table tbody tr.life.live td { color: var(--vital); }
 #record-table td.num { text-align: right; }
@@ -133,7 +137,8 @@ pre { margin: 0; padding: 12px 14px; background: var(--ink-0); border: 1px solid
 .disc { display: inline-flex; align-items: center; gap: 8px; min-height: 36px; min-width: 44px;
   padding: 0 8px; background: none; color: var(--paper); border: 1px solid transparent;
   border-radius: 6px; font: 400 14px/20px var(--mono); cursor: pointer; }
-.disc:hover { border-color: var(--rule-2); }
+.disc:hover { border-color: var(--control); }
+.disc .hash { display: none; }
 .disc .tri { display: inline-block; width: 0; height: 0; border: 5px solid transparent;
   border-left: 7px solid var(--paper-faint); border-right: 0; transition: transform 150ms ease; }
 .disc[aria-expanded="true"] .tri { transform: rotate(90deg); }
@@ -143,11 +148,13 @@ td.stars .glyphs { letter-spacing: .05em; color: var(--act); }
 td.stars .fig { margin-left: 8px; color: var(--paper-dim); }
 td.stars .pending, td.stars .none { color: var(--paper-faint); }
 td.noted { text-align: center; color: var(--act); font-size: 16px; }
+#record-table .unit { display: none; }
 tr.card-row td { padding: 0 0 18px; }
 .card { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 32px; padding: 14px 16px 16px;
   margin: 0 4px; background: var(--ink-2); border: 1px solid var(--rule); border-radius: 8px;
   font: 400 15px/22px var(--sans); }
 .card .blk { min-width: 0; }
+.card .blk.reading { border-left: 1px solid var(--seam); padding-left: 24px; }
 .card .eyebrow { margin-bottom: 8px; }
 .card .facts { font: 400 14px/20px var(--mono); color: var(--paper-dim); font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere; }
@@ -190,8 +197,8 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
 @media (max-width: 719px) {
   #strip { flex-wrap: wrap; gap: 4px 14px; padding: 6px 12px; }
   #wordmark { font-size: 14px; letter-spacing: .14em; flex: 1 1 auto; }
-  #pause { order: 0; margin-left: auto; min-height: 40px; }
-  #to-stream { order: 1; white-space: nowrap; min-height: 40px; }
+  #pause { order: 0; margin-left: auto; }
+  #to-stream { order: 1; white-space: nowrap; }
   #state-cluster { order: 2; }
   #state-clock, #strip-life { display: none; }
   #record-table td.ending.is-live, #record-table td.stars.is-none { display: none; }
@@ -204,6 +211,12 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
     padding: 6px 0; }
   #record-table td { padding: 0; border: 0; }
   #record-table td.seam { border-left: 0; }
+  #record-table td.stars { border-left: 1px solid var(--seam); padding-left: 10px; }
+  #record-table td.stars.sep::before { content: none; }
+  .disc .hash { display: inline; }
+  html { scroll-padding-top: 108px; }
+  #offline { margin: 0 -12px -6px; padding: 8px 12px; }
+  .card .blk.reading { border-left: 0; padding-left: 0; border-top: 1px solid var(--seam); padding-top: 14px; }
   #record-table td.narrow-hide { display: none; }
   #record-table td.num { text-align: left; }
   #record-table td.sep::before { content: "·"; color: var(--paper-faint); margin-right: 10px; }
@@ -257,7 +270,7 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
           <th scope="colgroup" colspan="2" class="seam" role="columnheader">The stage's reading</th>
         </tr>
         <tr role="row">
-          <th scope="col" role="columnheader">#</th>
+          <th scope="col" role="columnheader"><span aria-hidden="true">#</span><span class="vh">Incarnation</span></th>
           <th scope="col" role="columnheader">Ended</th>
           <th scope="col" role="columnheader">Lived</th>
           <th scope="col" class="num" role="columnheader">Turns</th>
@@ -265,7 +278,7 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
           <th scope="col" class="num" role="columnheader">Errors</th>
           <th scope="col" role="columnheader">Ending</th>
           <th scope="col" class="seam" role="columnheader">Verdict</th>
-          <th scope="col" role="columnheader"><span aria-hidden="true">●</span><span class="vh">Noted first</span></th>
+          <th scope="col" role="columnheader">Noted</th>
         </tr>
       </thead>
       <tbody id="record-body" role="rowgroup"></tbody>
@@ -496,6 +509,7 @@ function makeRow(life) {
   var disc = el("button", "disc", ord);
   disc.type = "button";
   el("span", "tri", disc).setAttribute("aria-hidden", "true");
+  el("span", "hash", disc).textContent = "#";
   var ordText = el("span", "ordn", disc);
   cells.disc = disc; cells.ordText = ordText;
   var live = el("span", "live-tag", ord); cells.live = live;
@@ -625,7 +639,7 @@ function fillCard(c, life, nowMs) {
       (life.verdict.depth ? " · " + (DEPTH_WORD[life.verdict.depth] || life.verdict.depth) : ""));
   } else {
     c.verdict.className = "verdict quiet";
-    setText(c.verdict, verdictPending(life) ? "Verdict pending." : "No verdict.");
+    setText(c.verdict, verdictPending(life) ? "The desk's verdict is still to come." : "No verdict.");
     setText(c.evidence, "");
   }
   var moments = (life.moments || []).slice().sort(function (a, b) { return a.turn - b.turn; });
@@ -642,10 +656,41 @@ function fillCard(c, life, nowMs) {
 
 /* Reconcile: rows are keyed by ordinal and updated in place; only a changed
    order moves nodes, so an open card and the focused control survive a poll. */
+/* An order the record cannot serve — no life carries the figure, as when the
+   census cannot place entries exactly — is disabled rather than left to do
+   nothing under a label that says it did something. */
+var ORDER_NEEDS = { lived: "lived_seconds", turns: "turns", edits: "edits", verdict: "verdict" };
+function usableOrders(lives) {
+  var usable = { newest: true };
+  Object.keys(ORDER_NEEDS).forEach(function (mode) {
+    var key = ORDER_NEEDS[mode];
+    usable[mode] = (lives || []).some(function (l) {
+      return l && !l.current && (key === "verdict" ? !!l.verdict : typeof l[key] === "number");
+    });
+  });
+  return usable;
+}
+function syncOrderControl(lives) {
+  var usable = usableOrders(lives), select = $("order");
+  if (!select) return usable;
+  var options = select.options || select.children || [];
+  for (var i = 0; i < options.length; i++) {
+    var opt = options[i];
+    if (opt.disabled !== !usable[opt.value]) opt.disabled = !usable[opt.value];
+  }
+  if (!usable[orderMode]) {
+    var was = orderMode;
+    orderMode = "newest";
+    if (select.value !== "newest") select.value = "newest";
+    setText($("order-status"), "no measured " + (ORDER_WORD[was] || was) + " to order by; newest first");
+  }
+  return usable;
+}
 function renderRecord() {
   if (!lineage) return;
   var nowMs = clock();
   digestModel = lineage.digest_model || "";
+  syncOrderControl(lineage.lives);
   var lives = orderLives(lineage.lives, orderMode, notedOnly);
   var body = $("record-body");
   var seen = {}, limit = showAll ? Infinity : ROW_LIMIT, shownCount = 0;
@@ -751,7 +796,11 @@ function renderSource() {
     var li = el("li", "", host);
     el("span", "", li).textContent = norm(e.headline || e.name || "");
     el("span", "age", li).textContent = e.index != null ? "turn " + e.index : "";
-    var sub = norm(e.summary || e.detail || "");
+    /* The summary is a phrase for a placed edit and the raw arguments for an
+       unplaced one; only the phrase is shown here — tool arguments stay off
+       this page. */
+    var sub = norm(e.summary || "");
+    if (sub && !e.quoted && /^[\[{]/.test(sub)) sub = "";
     if (sub) el("span", "sub", li).textContent = sub;
   });
   setHidden($("events-empty"), ev.length > 0);
@@ -791,7 +840,7 @@ function renderDiode() {
   });
   setHidden($("spoken-empty"), spoken.length > 0);
   var totals = [];
-  totals.push(plural(d.operations_total || 0, "operation") + " · " + (d.operations_life || 0) + " this life");
+  totals.push("reached out " + plural(d.operations_total || 0, "time") + " · " + (d.operations_life || 0) + " this life");
   if (d.published_total) totals.push(plural(d.published_total, "item") + " published");
   if (d.spoken_total) totals.push(plural(d.spoken_total, "utterance") + " spoken");
   setText($("diode-totals"), totals.join(" · "));
@@ -869,6 +918,7 @@ function fetchLineage() {
   }).catch(function () { setOffline(true); });
 }
 function tick() {
+  if (paused) return;
   if (snap) renderStrip();
   if (lineage) tickRecord();
 }
@@ -882,11 +932,26 @@ $("noted-only").addEventListener("change", function () {
   renderRecord();
   setText($("order-status"), notedOnly ? "showing only lives with a noted first" : "showing every life");
 });
-$("show-all").addEventListener("click", function () { showAll = true; renderRecord(); });
+$("show-all").addEventListener("click", function () {
+  showAll = true;
+  renderRecord();
+  /* The button hides itself; hand focus to the first disclosure it revealed. */
+  var body = $("record-body");
+  for (var i = 0, seen = 0; i < body.children.length; i++) {
+    var tr = body.children[i];
+    if (tr.className.indexOf("card-row") !== -1 || tr.hidden) continue;
+    if (seen++ === ROW_LIMIT) {
+      var b = tr.querySelector ? tr.querySelector(".disc") : null;
+      if (b && b.focus) b.focus();
+      break;
+    }
+  }
+});
 $("pause").addEventListener("click", function () {
   paused = !paused;
   $("pause").setAttribute("aria-pressed", paused ? "true" : "false");
   $("pause").textContent = paused ? "resume updates" : "pause updates";
+  setClass($("strip"), "paused", paused);
   if (!paused) { fetchStream(); fetchLineage(); }
 });
 fetchStream();

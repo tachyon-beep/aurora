@@ -90,8 +90,11 @@ Node.prototype.addEventListener = function (e, f) { (this.listeners[e] = this.li
 Node.prototype.click = function () { (this.listeners.click || []).forEach(function (f) { f(); }); };
 global.document = { createElement: function (t) { return new Node(t); },
   getElementById: function (id) { return byId[id] || null; } };
-["record-body", "record-empty", "show-all", "record-omitted", "record-count"].forEach(function (id) {
+["record-body", "record-empty", "show-all", "record-omitted", "record-count", "order-status"].forEach(function (id) {
   var n = new Node("div"); n.id = id; });
+var select = new Node("select"); select.id = "order"; select.value = "newest";
+select.options = ["newest", "lived", "turns", "edits", "verdict"].map(function (v) {
+  var o = new Node("option"); o.value = v; o.disabled = false; return o; });
 """
 
 
@@ -200,7 +203,7 @@ renderRecord();
 var body = $("record-body");
 function visible() {
   return body.children.filter(function (n) { return !n.hidden; }).map(function (n) {
-    return (n.className.indexOf("card-row") !== -1 ? "card:" : "") + (n.attrs.id || n.children[0].children[0].children[1].textContent);
+    return (n.className.indexOf("card-row") !== -1 ? "card:" : "") + (n.attrs.id || n.children[0].children[0].children[2].textContent);
   });
 }
 out.first = visible();
@@ -250,6 +253,16 @@ showAll = true; renderRecord();
 out.unlimited = visible().filter(function (v) { return v.indexOf("card:") !== 0; }).length;
 lineage.lives_omitted = 7; renderRecord();
 out.omitted = $("record-omitted").textContent;
+/* An inexact census nulls every count: the orders that need them are disabled
+   and a chosen one falls back to newest with an announcement. */
+lineage = { lives: [life(3, { current: true, kind: null, began_epoch: 1990, turns: null, edits: null }),
+  life(2, { turns: null, edits: null, lived_seconds: null }), life(1, { turns: null, edits: null, lived_seconds: null })],
+  lives_omitted: 0 };
+orderMode = "turns"; $("order").value = "turns";
+renderRecord();
+out.disabled = $("order").options.map(function (o) { return o.value + ":" + o.disabled; });
+out.fell_back = [orderMode, $("order").value, $("order-status").textContent];
+out.inexact_cells = [rows[2].cells.turns.textContent, rows[2].cells.edits.textContent];
 /* Nothing dead. */
 lineage = { lives: [life(1, { current: true, kind: null, began_epoch: 1990 })], lives_omitted: 0 };
 renderRecord();
@@ -297,5 +310,18 @@ def test_the_record_reconciles_rows_in_place(tmp_path):
     assert out["show_all"] == [False, "show all 31 lives"]
     assert out["unlimited"] == 31
     assert out["omitted"] == "7 earlier lives are not listed"
+    assert out["disabled"] == [
+        "newest:false",
+        "lived:true",
+        "turns:true",
+        "edits:true",
+        "verdict:true",
+    ]
+    assert out["fell_back"] == [
+        "newest",
+        "newest",
+        "no measured most turns to order by; newest first",
+    ]
+    assert out["inexact_cells"] == ["—", "—"]
     assert out["empty_shown"] is True
     assert out["empty_count"] == "0 dead lives on record"

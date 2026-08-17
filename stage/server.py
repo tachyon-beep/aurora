@@ -637,7 +637,7 @@ def _digest_state(ordinal, digest, enabled):
         return "off"
     if isinstance(digest, dict) and digest.get("moments"):
         return "ready"
-    return "skipped" if moments.settled(ordinal) else "pending"
+    return "skipped" if moments.given_up(ordinal) else "pending"
 
 
 def _public_life(row, verdict, digest, enabled):

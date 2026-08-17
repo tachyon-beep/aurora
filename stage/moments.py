@@ -174,6 +174,21 @@ def settled(ordinal, mono=None):
         return mono - first >= WAIT_SECONDS
 
 
+def given_up(ordinal):
+    """Whether the digest for this life will not come: skipped, or every attempt used.
+
+    A pure read for the lineage endpoint; unlike settled() it never arms the
+    desk's give-up clock.
+    """
+    if not enabled():
+        return True
+    with _LOCK:
+        if ordinal in _SKIPPED:
+            return True
+        record = _ATTEMPTS.get(ordinal)
+        return record is not None and record[0] >= MAX_ATTEMPTS
+
+
 def _copy(digest):
     out = dict(digest)
     out["moments"] = [dict(moment) for moment in digest.get("moments") or []]
