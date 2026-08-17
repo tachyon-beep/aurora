@@ -154,6 +154,15 @@ what the `still` deferral named, where an eye following new frames would publish
 third-party video stills by itself. Agent-initiated relay is the already-accepted
 `commons` profile, unchanged by this design.
 
+### The vocabulary is an allow-list
+
+Every verb this service honours is an explicitly named member of the table below.
+Anything else — an unknown word, a misspelling, a verb the agent composed — does
+nothing and causes no network activity. There is no default-permit path and no
+blocklist. This is the property that makes the container's interior survivable as
+hostile space: code inside it can compose any string, but it cannot invent an egress
+verb, and an unrecognised one is inert rather than merely discouraged.
+
 ### Why the diode's SSRF defenses cannot simply be reused, and what replaces them
 
 yt-dlp performs its own HTTP, so no request it makes passes through the diode's
@@ -412,7 +421,10 @@ Unit tests run with no network and no binaries, as the sense tests do: `yt-dlp` 
 
 **Vocabulary**
 - `still` with nothing bound refuses without egress.
-- Unknown verbs refuse without egress.
+- Unknown verbs refuse without egress — asserted against a generated set of words that
+  are not table members, including near-misses of the real verbs, with every network
+  and subprocess path stubbed to raise. The allow-list is the property under test, not
+  the specific unknown words.
 - `HELP.md` and `state.json` name no closed verb.
 
 **Ingest fidelity**
