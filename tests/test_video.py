@@ -158,3 +158,69 @@ def test_manifest_that_fails_resolution_is_refused():
 def test_unparseable_manifest_is_refused():
     ok, reason = video.classify_manifest("://::::", resolver=public)
     assert ok is False
+
+
+# allowances
+
+
+def test_rate_limit_allows_up_to_the_limit():
+    history = []
+    for _ in range(3):
+        allowed, history = video.check_rate_limit(history, 1000.0, 3, 3600)
+        assert allowed is True
+    allowed, history = video.check_rate_limit(history, 1000.0, 3, 3600)
+    assert allowed is False
+
+
+def test_rate_limit_forgets_entries_outside_the_window():
+    history = [0.0, 1.0, 2.0]
+    allowed, history = video.check_rate_limit(history, 4000.0, 3, 3600)
+    assert allowed is True
+    assert history == [4000.0]
+
+
+def test_budget_status_counts_only_the_window():
+    status = video.budget_status([0.0, 3999.0], 4000.0, 3600)
+    assert status["used"] == 1
+    assert status["window_seconds"] == 3600
+
+
+def test_console_limit_reads_an_integer():
+    assert video.console_limit({"still_budget": 5}, "still_budget", 20) == 5
+
+
+def test_console_limit_falls_back_on_unusable_values():
+    assert video.console_limit({"still_budget": "many"}, "still_budget", 20) == 20
+    assert video.console_limit({}, "still_budget", 20) == 20
+    assert video.console_limit({"still_budget": None}, "still_budget", 20) == 20
+
+
+def test_console_value_can_lower_the_allowance(monkeypatch):
+    monkeypatch.setenv("VIDEO_STILL_HOURLY_MAX", "20")
+    limit = video.effective_limit({"still_budget": 3}, "still_budget", "VIDEO_STILL_HOURLY_MAX", 20)
+    assert limit == 3
+
+
+def test_console_value_cannot_raise_the_allowance(monkeypatch):
+    monkeypatch.setenv("VIDEO_STILL_HOURLY_MAX", "20")
+    limit = video.effective_limit(
+        {"still_budget": 9999}, "still_budget", "VIDEO_STILL_HOURLY_MAX", 20
+    )
+    assert limit == 20
+
+
+def test_operator_ceiling_of_zero_permits_nothing(monkeypatch):
+    monkeypatch.setenv("VIDEO_HOURLY_MAX", "0")
+    assert video.effective_limit({"video_budget": 5}, "video_budget", "VIDEO_HOURLY_MAX", 1) == 0
+
+
+def test_unusable_operator_ceiling_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setenv("VIDEO_HOURLY_MAX", "lots")
+    assert video.effective_limit({}, "video_budget", "VIDEO_HOURLY_MAX", 1) == 1
+
+
+def test_rate_limited_message_names_the_kind_and_the_wait():
+    text = video.rate_limited_message("still", 20, [1000.0], 1600.0, 3600)
+    assert "20" in text
+    assert "still" in text
+    assert "3000 seconds" in text
