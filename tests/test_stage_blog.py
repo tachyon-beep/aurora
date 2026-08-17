@@ -1,3 +1,5 @@
+import time
+
 from stage import blog
 
 
@@ -62,3 +64,20 @@ def test_safe_href():
     assert blog.safe_href("#a") == "#a"
     assert blog.safe_href("javascript:x") is None
     assert blog.safe_href("") is None
+
+
+def test_inline_pathological_inputs_render_in_linear_time():
+    cases = (
+        "`" * 20000 + "a",
+        "[" * 20000,
+        "[a](" * 5000 + "b" * 20000,
+        "**" * 10000 + "a",
+        "*" * 20000,
+        "_" * 20000,
+        "![" * 10000,
+        "``" + "a" * 20000 + "`" + "b" * 20000,
+    )
+    for text in cases:
+        start = time.perf_counter()
+        blog.render_inline(text)
+        assert time.perf_counter() - start < 1.0, text[:12]

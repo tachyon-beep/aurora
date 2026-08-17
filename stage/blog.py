@@ -13,13 +13,15 @@ POST_READ_BYTES = 65_536
 POSTS_MAX = 1000
 POSTS_PER_PAGE = 10
 
+# Every class excludes its own closer and is length-capped, so no opener rescans past the next closer.
+_URL = r"[^\s()]{1,2048}(?:\([^\s()]{0,256}\)[^\s()]{0,2048})?"
 _INLINE = re.compile(
-    r"(?P<code>`+)(?P<code_text>.+?)(?P=code)"
-    r"|!\[(?P<img_alt>[^\]]*)\]\((?P<img_url>[^)\s]+)\)"
-    r"|\[(?P<link_text>[^\]]+)\]\((?P<link_url>[^)\s]+)\)"
-    r"|\*\*(?P<bold>.+?)\*\*"
-    r"|\*(?P<em>[^*\n]+?)\*"
-    r"|(?<![A-Za-z0-9_])_(?P<em2>[^_\n]+?)_(?![A-Za-z0-9_])"
+    r"(?P<code>`{1,3})(?P<code_text>[^`]{1,4096}?)(?P=code)"
+    r"|!\[(?P<img_alt>[^\[\]\n]{0,1000})\]\((?P<img_url>" + _URL + r")\)"
+    r"|\[(?P<link_text>[^\[\]\n]{1,1000})\]\((?P<link_url>" + _URL + r")\)"
+    r"|\*\*(?P<bold>[^\n]{1,4096}?)\*\*"
+    r"|\*(?P<em>[^*\n]{1,4096}?)\*"
+    r"|(?<![A-Za-z0-9_])_(?P<em2>[^_\n]{1,4096}?)_(?![A-Za-z0-9_])"
 )
 
 
