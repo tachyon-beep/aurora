@@ -147,3 +147,50 @@ def test_an_undatable_death_gives_no_span_on_either_side(tmp_path):
     lives = records.record_book(str(tmp_path))["lives"]
     assert lives[1]["seconds"] is None and lives[1]["ended_epoch"] is None
     assert lives[2]["seconds"] is None
+
+
+def _transcript(tmp_path, age_seconds):
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S.000000Z", time.gmtime(time.time() - age_seconds))
+    path = tmp_path / "agent_life_transcript.jsonl"
+    path.write_text('{"timestamp": "%s", "stream": "core"}\n' % stamp, encoding="utf-8")
+    return str(path)
+
+
+def test_the_first_life_is_dated_from_the_transcript_head(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "first note.", 500)
+    _tombstone(tmp_path, "incarnation-b.txt", "second note.", 200)
+    transcript = _transcript(tmp_path, 900)
+    book = records.record_book(str(tmp_path), transcript_path=transcript)
+    assert book["lives"][0]["ordinal"] == 1
+    assert book["lives"][0]["seconds"] == pytest.approx(400, abs=2)
+    assert book["longest_life"]["ordinal"] == 1
+    assert book["longest_life"]["seconds"] == pytest.approx(400, abs=2)
+
+
+def test_a_rotated_transcript_leaves_the_first_life_undated(tmp_path):
+    # After rotation the head postdates the first death; a span from it would
+    # be negative, so the first life stays undated rather than mis-dated.
+    _tombstone(tmp_path, "incarnation-a.txt", "first note.", 500)
+    _tombstone(tmp_path, "incarnation-b.txt", "second note.", 200)
+    transcript = _transcript(tmp_path, 100)
+    book = records.record_book(str(tmp_path), transcript_path=transcript)
+    assert book["lives"][0]["seconds"] is None
+    assert book["longest_life"]["ordinal"] == 2
+
+
+def test_without_a_transcript_the_first_life_stays_undated(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "first note.", 500)
+    _tombstone(tmp_path, "incarnation-b.txt", "second note.", 200)
+    book = records.record_book(str(tmp_path))
+    assert book["lives"][0]["seconds"] is None
+
+
+def test_the_memo_refreshes_when_the_transcript_head_changes(tmp_path):
+    _tombstone(tmp_path, "incarnation-a.txt", "first note.", 500)
+    _tombstone(tmp_path, "incarnation-b.txt", "second note.", 200)
+    transcript = _transcript(tmp_path, 900)
+    first = records.record_book(str(tmp_path), transcript_path=transcript)
+    assert first["lives"][0]["seconds"] == pytest.approx(400, abs=2)
+    _transcript(tmp_path, 100)
+    second = records.record_book(str(tmp_path), transcript_path=transcript)
+    assert second["lives"][0]["seconds"] is None

@@ -773,7 +773,7 @@ def _public_life(row, verdict, digest, enabled):
 
 def _fallback_lives(work, now):
     """Lives from the tombstone mirror alone, newest first, when the census has not run."""
-    book = records.record_book(work, now=now)
+    book = records.record_book(work, transcript_path=transcript_path(), now=now)
     incarnation = len(data.tombstone_paths(work)) + 1
     by_ordinal = {}
     for life in book.get("lives") or []:
@@ -1039,7 +1039,9 @@ def _assemble_snapshot(now):
         "lanes": _public_lanes(lanes),
         "lanes_omitted": _lanes_omitted(lanes),
         "pulse": _public_pulse(data.request_pulse(events_path(), now=now)),
-        "records": _public_records(records.record_book(work, now=now)),
+        "records": _public_records(
+            records.record_book(work, transcript_path=transcript_path(), now=now)
+        ),
         "desk": _public_desk(desk.cached_verdicts()),
         "achievements": _public_achievements(moments.achievements(ACHIEVEMENTS_CAP)),
         "sense": _public_sense(sensecam.newest_frame(SENSE_DIR, now=now)),
