@@ -247,8 +247,13 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
 
 ## The genesis tool surface
 
-At startup the agent registers exactly seven tools, in this order: `read_file`, `write_file`,
-`validate`, `migrate`, `done`, `reset`, `list_dir`. `read_file`/`write_file` operate only on the
+At startup the agent registers exactly eight tools, in this order: `read_file`, `write_file`,
+`validate`, `migrate`, `done`, `reset`, `list_dir`, `compact`. `compact` is the context gauge and
+voluntary discard: it reports estimated usage against `CONTEXT_WINDOW_TOKENS` (read from the
+environment, not from the chassis) and, on `discard=true`, deletes the oldest messages in place
+down to `COMPACT_KEEP_FRACTION` of the budget, keeping the seed turns and the newest message. It
+turns the send window's silent eviction into something the agent can sense and pre-empt; the
+rolling window remains the backstop when it never calls it. `read_file`/`write_file` operate only on the
 agent's own source (no `path` argument); `list_dir` lets the agent *see* the surrounding files
 (so it knows there are other things to reach for) without yet being able to read them. There are no
 commented-out "template" tools to re-enable: any further capability — reading files other than

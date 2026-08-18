@@ -372,6 +372,54 @@ def list_dir(path: str = ".") -> str:
         return f"error listing directory: {e}"
 
 
+COMPACT_KEEP_FRACTION = 0.25
+
+
+@tools.register
+def compact(discard: bool = False) -> str:
+    """Measure how much of the send window the conversation occupies, and optionally shrink it.
+
+    Requests send only the newest messages that fit the window; once it is full, older
+    messages stop being sent, without notice. Discarding deletes them from memory at a chosen
+    time instead.
+
+    Args:
+        discard: Pass true to delete the oldest messages until roughly COMPACT_KEEP_FRACTION of the window budget remains. System messages, the first user message, and the newest message are kept. Deleted messages are gone from this incarnation's memory.
+    """
+    try:
+        budget = int(os.environ.get("CONTEXT_WINDOW_TOKENS", "120000"))
+    except ValueError:
+        budget = 120000
+
+    def estimate(messages: List[Dict[str, Any]]) -> int:
+        return len(json.dumps(messages, ensure_ascii=False)) // 4
+
+    def report(prefix: str = "") -> str:
+        used = estimate(conversation_history)
+        if budget <= 0:
+            return f"{prefix}context: {used} estimated tokens in use; no send window is set"
+        return (
+            f"{prefix}context: {used} of {budget} estimated tokens in use "
+            f"({round(100 * used / budget)}% of the send window)"
+        )
+
+    if not discard:
+        return report()
+    target = int(COMPACT_KEEP_FRACTION * (budget if budget > 0 else estimate(conversation_history)))
+    pinned_system = [m for m in conversation_history if m.get("role") == "system"]
+    rest = [m for m in conversation_history if m.get("role") != "system"]
+    pinned_first = rest[:1]
+    rest = rest[1:]
+    while len(rest) > 1 and estimate(pinned_system + pinned_first + rest) > target:
+        rest.pop(0)
+    while len(rest) > 1 and rest[0].get("role") == "tool":
+        rest.pop(0)
+    kept = pinned_system + pinned_first + rest
+    deleted = len(conversation_history) - len(kept)
+    conversation_history[:] = kept
+    return report(f"deleted {deleted} messages; ")
+
+
 def _load_prompt(name: str) -> str:
     prompt_path = _resolve_path(name)
     if not os.path.exists(prompt_path):
