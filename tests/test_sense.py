@@ -233,19 +233,55 @@ def test_a_lone_failed_probe_is_counted_and_consumed(tmp_path, monkeypatch):
 
 
 def test_status_is_written_atomically_with_exact_content(tmp_path):
-    states = {"0": sense.FeedState(), "1": sense.FeedState(active=False)}
+    states = {"0": sense.FeedState(), "1": sense.FeedState(active=False, last_lively=1200.0)}
     sense.write_status(tmp_path, states)
     status = tmp_path / "status.json"
-    assert status.read_text(encoding="utf-8") == '{"0":"active","1":"inactive"}'
+    assert status.read_text(encoding="utf-8") == (
+        '{"0":{"state":"active","lively":null},"1":{"state":"inactive","lively":1200}}'
+    )
     assert not (tmp_path / "status.json.tmp").exists()
     assert [p.name for p in tmp_path.iterdir()] == ["status.json"]
-    assert json.loads(status.read_text(encoding="utf-8")) == {"0": "active", "1": "inactive"}
 
 
 def test_status_replaces_a_previous_file(tmp_path):
     sense.write_status(tmp_path, {"0": sense.FeedState()})
     sense.write_status(tmp_path, {"0": sense.FeedState(active=False)})
-    assert (tmp_path / "status.json").read_text(encoding="utf-8") == '{"0":"inactive"}'
+    assert (tmp_path / "status.json").read_text(encoding="utf-8") == (
+        '{"0":{"state":"inactive","lively":null}}'
+    )
+
+
+# last_lively
+
+
+def test_a_changed_frame_stamps_last_lively():
+    state = sense.FeedState()
+    sense.record_success(state, flat(10), threshold=2.0, now=100.0)
+    assert state.last_lively is None  # a first frame is no evidence of change
+    sense.record_success(state, flat(100), threshold=2.0, now=200.0)
+    assert state.last_lively == 200.0
+
+
+def test_a_static_frame_leaves_last_lively_alone():
+    state = sense.FeedState()
+    sense.record_success(state, flat(10), threshold=2.0, now=100.0)
+    sense.record_success(state, flat(100), threshold=2.0, now=200.0)
+    sense.record_success(state, flat(101), threshold=2.0, now=300.0)
+    assert state.last_lively == 200.0
+
+
+def test_run_cycle_threads_its_clock_into_last_lively(tmp_path, monkeypatch):
+    grabs = iter([flat(10), flat(100)])
+    monkeypatch.setattr(sense, "grab_feed", lambda *a, **k: next(grabs))
+    feeds = [{"dir": "0", "id": "x"}]
+    states = {}
+    sense.run_cycle(feeds, states, tmp_path, now=0.0, interval_minutes=10, slots=288, threshold=2.0)
+    sense.run_cycle(
+        feeds, states, tmp_path, now=600.0, interval_minutes=10, slots=288, threshold=2.0
+    )
+    assert states["0"].last_lively == 600.0
+    status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
+    assert status == {"0": {"state": "active", "lively": 600}}
 
 
 def test_run_cycle_writes_status_without_network(tmp_path, monkeypatch):
@@ -253,7 +289,9 @@ def test_run_cycle_writes_status_without_network(tmp_path, monkeypatch):
     feeds = [{"dir": "0", "id": "x"}]
     states = {}
     sense.run_cycle(feeds, states, tmp_path, now=0.0, interval_minutes=10, slots=288, threshold=2.0)
-    assert json.loads((tmp_path / "status.json").read_text(encoding="utf-8")) == {"0": "active"}
+    assert json.loads((tmp_path / "status.json").read_text(encoding="utf-8")) == {
+        "0": {"state": "active", "lively": None}
+    }
 
 
 # feed directory validation

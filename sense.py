@@ -147,6 +147,7 @@ class FeedState:
     failure_run: int = 0
     last_thumb: list[int] | None = field(default=None, repr=False)
     last_probe: float = 0.0
+    last_lively: float | None = None
 
 
 def should_attempt(state: FeedState, now: float) -> bool:
@@ -160,11 +161,18 @@ def record_success(
     state: FeedState,
     thumb: list[int],
     threshold: float = DEFAULT_STATIC_THRESHOLD,
+    now: float = 0.0,
 ) -> None:
-    """Fold a successful grab into the detector state."""
+    """Fold a successful grab into the detector state.
+
+    A grab that measurably differs from the previous one stamps last_lively;
+    a first frame is no evidence of change and stamps nothing.
+    """
     state.failure_run = 0
     diff = None if state.last_thumb is None else mean_abs_diff(thumb, state.last_thumb)
     static = diff is not None and diff < threshold
+    if diff is not None and not static:
+        state.last_lively = now
     if state.active:
         if static:
             state.static_run += 1
@@ -188,6 +196,7 @@ def record_failure(state: FeedState) -> None:
 def apply_outcomes(
     outcomes: list[tuple[FeedState, list[int] | None]],
     threshold: float = DEFAULT_STATIC_THRESHOLD,
+    now: float = 0.0,
 ) -> bool:
     """Update detector state for one cycle's grab outcomes.
 
@@ -202,13 +211,19 @@ def apply_outcomes(
         if thumb is None:
             record_failure(state)
         else:
-            record_success(state, thumb, threshold)
+            record_success(state, thumb, threshold, now)
     return True
 
 
 def write_status(root, states: dict[str, FeedState]) -> None:
-    """Atomically publish per-feed activity, and nothing else, at the root."""
-    payload = {name: "active" if state.active else "inactive" for name, state in states.items()}
+    """Atomically publish per-feed activity and last change time at the root."""
+    payload = {
+        name: {
+            "state": "active" if state.active else "inactive",
+            "lively": None if state.last_lively is None else int(state.last_lively),
+        }
+        for name, state in states.items()
+    }
     root = Path(root)
     tmp = root / "status.json.tmp"
     tmp.write_text(json.dumps(payload, separators=(",", ":")), encoding="utf-8")
@@ -318,7 +333,7 @@ def run_cycle(
         grab_at = max(now, boundary + feed_offset(position, len(feeds), period))
         pause_until(grab_at)
         outcomes.append((state, grab_feed(feed, root, grab_at, interval_minutes, slots)))
-    if apply_outcomes(outcomes, threshold):
+    if apply_outcomes(outcomes, threshold, now):
         # A cycle voided by the capture-side guard counts nothing, so it
         # does not consume an inactive feed's daily probe either.
         for state in probed:
