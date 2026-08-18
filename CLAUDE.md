@@ -183,8 +183,17 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      validated id or query; URLs it receives back from the resolver — the media manifest,
      a caption track — are third-party data and are re-validated before use (https only,
      host allow-list matched on label boundaries, private/loopback/reserved rejection,
-     redirect re-validation on every hop), so no unvalidated URL reaches `ffmpeg` or an
-     HTTP fetch. The guarantee closing this channel: the service holds **no credential of
+     redirect re-validation on every hop), so no unvalidated URL reaches an HTTP fetch
+     and no unvalidated *manifest* reaches `ffmpeg`. That check does not reach one case:
+     when the resolved manifest is a **playlist** (an HLS/DASH URL, which a live stream
+     yields), `ffmpeg` fetches the segment URLs listed inside it, and those are not
+     re-validated — the `-protocol_whitelist` holds them to https, and nothing bounds
+     their host. Both validation sites resolve through DNS and fail closed when it is
+     unavailable, so a check that cannot complete refuses rather than proceeds. The agent
+     supplies only an 11-character id and cannot publish a video, so it has no way to
+     author such a playlist; it is the service's own guarantee below, not the manifest
+     check, that closes this.
+     The guarantee closing this channel: the service holds **no credential of
      any kind**, mounts nothing else of the agent's world, and is the sole occupant of
      `video_egress`. Its reach is clamped by the operator-side `VIDEO_HOURLY_MAX`,
      `VIDEO_STILL_HOURLY_MAX` and `VIDEO_TEXT_HOURLY_MAX` on the `min(console value,

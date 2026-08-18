@@ -1629,7 +1629,7 @@ def test_run_video_survives_a_deeply_nested_console_and_keeps_running(volume, mo
     # The loop reached the end of a full cycle (state.json published)
     # rather than dying on the malformed console, and the file itself was
     # left alone rather than cleared or rewritten out from under the agent
-    # -- there were no commands to consume, so consume_batch never ran.
+    # -- consume_batch read it, found no commands, and so wrote nothing back.
     assert (volume / "state.json").exists()
     data = _json.loads((volume / "state.json").read_text())
     assert isinstance(data["commands"], list)
@@ -1923,3 +1923,115 @@ def test_run_video_reaches_the_first_cycle_when_the_console_seed_fails(volume, m
     assert not (volume / "console.json").exists()
     with pytest.raises(_Sentinel):
         video.run_video()
+
+
+# review findings: agent-readable surface correctness and write discipline
+
+
+def _live_binding(now=1000.0):
+    """A live stream: yt-dlp reports no duration, so _valid_duration yields None."""
+    return video.Binding(
+        video_id="dQw4w9WgXcQ",
+        duration=None,
+        manifest="https://manifest.googlevideo.com/api/manifest/hls_playlist/x.m3u8",
+        resolved_at=now,
+    )
+
+
+def test_watch_renders_no_python_none_for_a_live_binding(volume, monkeypatch):
+    # Invariant 2: every surface the agent reads stays bland and factual. A
+    # leaked Python None reads as broken code, which is the "fix the bug"
+    # frame invariant 2 exists to prevent. The module's own convention for an
+    # absent field is the word "unknown" -- transcript's header already uses
+    # it for kind and language.
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _live_binding())
+    text, _ = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    assert "None" not in text
+    assert "unknown" in text
+
+
+def test_watch_renders_no_python_none_on_the_already_bound_path(volume, monkeypatch):
+    # The early return for an already-bound video is a second, separate render
+    # site; fixing only the first would leave this one leaking.
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _live_binding())
+    _, state = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    text, _ = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), state)
+    assert "None" not in text
+    assert "unknown" in text
+
+
+def test_watch_reports_a_known_duration_in_seconds(volume, monkeypatch):
+    # The seconds figure is load-bearing -- the agent hands it back to `still`
+    # as an offset -- so this must not degrade into format_duration's "M:SS".
+    monkeypatch.setattr(video, "resolve_binding", lambda vid: _binding())
+    text, _ = video.handle_command("watch dQw4w9WgXcQ", _open_variables(), _state())
+    assert "600 seconds" in text
+
+
+def test_state_json_lists_the_most_recently_captured_still(volume):
+    # write_state means "the newest ten", but still filenames lead with the
+    # video id rather than a timestamp, so a name sort orders by id instead.
+    # The frame the agent was just told about must appear however its id sorts.
+    for i in range(12):
+        (volume / "stills" / f"zZzZzZzZzZz_{i}_deadbeef.jpg").write_bytes(b"")
+    newest = volume / "stills" / "aBcDeFgHiJk_5_cafebabe.jpg"
+    newest.write_bytes(b"")
+    _os.utime(newest, (2_000_000_000, 2_000_000_000))
+    video.write_state({}, _state())
+    published = _json.loads((volume / "state.json").read_text())
+    assert newest.name in published["stills"]
+    # Newest first, not merely present: nothing else pins the sort direction.
+    assert published["stills"][0] == newest.name
+    assert len(published["stills"]) == 10
+
+
+def test_state_json_lists_the_most_recent_output(volume):
+    # The same property for output/, which holds today only by virtue of
+    # write_output's timestamp prefix. Assert the behaviour, not the prefix,
+    # so a later change to the naming scheme cannot silently re-break it.
+    for i in range(12):
+        (volume / "output" / f"20260101_00000{i}_000000_old.txt").write_text("")
+    newest = volume / "output" / "19990101_000000_000000_new.txt"
+    newest.write_text("")
+    _os.utime(newest, (2_000_000_000, 2_000_000_000))
+    video.write_state({}, _state())
+    published = _json.loads((volume / "state.json").read_text())
+    assert newest.name in published["outputs"]
+    assert published["outputs"][0] == newest.name
+
+
+def test_run_cycle_reads_the_console_exactly_once(volume, monkeypatch):
+    # Two separate reads (load_console, then consume_batch re-reading) open a
+    # window in which a command the agent appends between them is cleared
+    # without ever being dispatched. One authoritative read-and-clear closes
+    # that window; what remains is only the read-modify-write residue this
+    # volume's consoles already share.
+    (volume / "console.json").write_text(_json.dumps({"commands": ["help"], "variables": {}}))
+    reads = []
+    real_open = open
+
+    def counting_open(path, mode="r", *args, **kwargs):
+        if str(path) == video.CONSOLE_FILE and "r" in mode:
+            reads.append(str(path))
+        return real_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", counting_open)
+    video.run_cycle(_state())
+    assert len(reads) == 1
+    # The command still dispatched and the batch still cleared, so the read
+    # count above cannot be satisfied by simply doing less work.
+    assert (volume / "HELP.md").exists()
+    assert _json.loads((volume / "console.json").read_text())["commands"] == []
+
+
+def test_write_help_does_not_write_through_a_planted_symlink(volume):
+    # /video is agent-writable, so a symlink at HELP.md is constructible.
+    # state.json and console.json are already safe -- _replace_json's
+    # os.replace replaces the link rather than following it -- and HELP.md is
+    # the one file still written with a plain open, which follows it.
+    victim = volume / "victim"
+    victim.write_text("ORIGINAL")
+    _os.symlink(victim, video.HELP_FILE)
+    video.write_help(_open_variables())
+    assert victim.read_text() == "ORIGINAL"
+    assert not _os.path.islink(video.HELP_FILE)

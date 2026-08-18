@@ -272,15 +272,19 @@ def ensure_dirs():
             pass
 
 
-def _replace_json(path, data):
-    """Write data to path as JSON through a temporary file and one os.replace.
+def _replace_text(path, text):
+    """Write text to path through a temporary file and one os.replace.
 
     A write interrupted partway leaves the existing file as it was, so a
     reader after a crash sees the previous contents rather than a truncated
-    file it would have to discard.
+    file it would have to discard. os.replace also replaces a symlink planted
+    at path instead of following it the way a plain open would -- /video is
+    agent-writable, so that link is one the agent can create. A symlink's own
+    permission bits are never inherited for the same reason; only a regular
+    file's are.
     """
     try:
-        mode = os.stat(path).st_mode & 0o777
+        mode = 0o644 if os.path.islink(path) else os.stat(path).st_mode & 0o777
     except OSError:
         mode = 0o644
     directory = os.path.dirname(path) or "."
@@ -288,7 +292,7 @@ def _replace_json(path, data):
     try:
         os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+            f.write(text)
         os.replace(tmp, path)
     finally:
         try:
@@ -297,8 +301,17 @@ def _replace_json(path, data):
             pass
 
 
-def load_console():
-    """Read (commands, variables) from CONSOLE_FILE; defaults on missing/malformed.
+def _replace_json(path, data):
+    """Write data to path as JSON, through _replace_text's atomic replace.
+
+    Serialising before the temporary file exists means data this cannot
+    render raises without leaving one behind.
+    """
+    _replace_text(path, json.dumps(data, indent=2))
+
+
+def _read_console():
+    """The console's raw object, or {} when it is missing or malformed.
 
     console.json is agent-writable, so its content is untrusted the same way
     a request body would be: deeply nested JSON (e.g. thousands of nested
@@ -313,9 +326,14 @@ def load_console():
         with open(CONSOLE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError, RecursionError):
-        return [], {}
-    commands = data.get("commands", []) if isinstance(data, dict) else []
-    variables = data.get("variables", {}) if isinstance(data, dict) else {}
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _console_fields(data):
+    """(commands, variables) from a console object, each coerced to its own type."""
+    commands = data.get("commands", [])
+    variables = data.get("variables", {})
     if not isinstance(commands, list):
         commands = []
     if not isinstance(variables, dict):
@@ -323,33 +341,41 @@ def load_console():
     return commands, variables
 
 
-def consume_batch():
-    """Atomically clear the commands list in CONSOLE_FILE, preserving variables.
+def load_console():
+    """Read (commands, variables) from CONSOLE_FILE; defaults on missing/malformed."""
+    return _console_fields(_read_console())
 
-    Reads the same untrusted file load_console does, so it carries the same
-    RecursionError hazard for the same reason (see load_console); a
-    malformed file degrades to a fresh commands/variables pair rather than
-    raising, exactly as load_console would report it on the next read. The
-    write-back can still fail on its own terms -- a full volume or a
-    permission change on VIDEO_DIR raises out of _replace_json -- and since
-    this runs before the dispatch loop on every cycle that has commands,
-    that failure must not propagate: the caller's own commands list, already
-    captured from load_console, still gets dispatched this cycle regardless,
-    and the file is simply left for the next read to contend with.
+
+def consume_batch():
+    """Read the console and clear its command list in one pass; returns (commands, variables).
+
+    The returned pair comes from the same single read that decides what to
+    clear. run_cycle used to read once through load_console and again here,
+    which left a window between the two reads: a command the agent appended
+    inside it was cleared without ever being dispatched. One read closes
+    that window. What remains is the read-modify-write residue every console
+    on an agent-writable volume shares -- an append landing between this
+    read and the write-back below is still lost.
+
+    Nothing is written when there are no commands, so an idle cycle neither
+    recreates a console the agent deleted nor rewrites the variables it set.
+    Carries _read_console's RecursionError hazard for the same reason, and
+    degrades the same way. The write-back can still fail on its own terms --
+    a full volume or a permission change on VIDEO_DIR raises out of
+    _replace_json -- and that failure must not propagate: the commands this
+    call already returned still get dispatched this cycle regardless, and
+    the file is simply left for the next read to contend with.
     """
-    try:
-        with open(CONSOLE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError, RecursionError):
-        data = {}
-    if not isinstance(data, dict):
-        data = {}
-    data["commands"] = []
-    data.setdefault("variables", {})
-    try:
-        _replace_json(CONSOLE_FILE, data)
-    except OSError:
-        pass
+    data = _read_console()
+    commands, variables = _console_fields(data)
+    if commands:
+        data["commands"] = []
+        data.setdefault("variables", {})
+        try:
+            _replace_json(CONSOLE_FILE, data)
+        except OSError:
+            pass
+    return commands, variables
 
 
 def _output_slug(command):
@@ -517,6 +543,19 @@ def format_duration(seconds):
     if total < 0 or total > DURATION_MAX_SECONDS:
         return "-"
     return f"{total // 60}:{total % 60:02d}"
+
+
+def duration_phrase(duration):
+    """The duration clause of a binding message; 'unknown' when none was reported.
+
+    A live stream carries no duration, so _valid_duration yields None for it,
+    and interpolating that directly would put a Python None on a surface the
+    agent reads. Seconds rather than format_duration's "M:SS" because the
+    agent hands this figure straight back to `still` as an offset.
+    """
+    if duration is None:
+        return "duration unknown"
+    return f"duration {duration} seconds"
 
 
 def _cap(value, limit):
@@ -1004,7 +1043,9 @@ def write_help(variables):
 
     Lists only open verbs, in COMMANDS' help-string form, plus the three
     allowance ceilings. No closed verb, example, or sample query appears --
-    an example would be the operator planting an interest.
+    an example would be the operator planting an interest. Written through
+    _replace_text, like every other file this service publishes, so a symlink
+    the agent plants at HELP.md is replaced rather than written through.
     """
     lines = ["# commands", ""]
     for name in available_commands(variables):
@@ -1021,8 +1062,32 @@ def write_help(variables):
         "results are written to output/ and stills/.",
         "",
     ]
-    with open(HELP_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    _replace_text(HELP_FILE, "\n".join(lines))
+
+
+def newest_names(directory, count=10):
+    """The newest `count` filenames in a directory, newest first.
+
+    Ordered by mtime, the way prune_tree already decides what to keep, rather
+    than by name: a name sort only tracks recency when the name leads with a
+    timestamp, which write_output's stem does and still_path's (video id,
+    offset, token) does not. Sorting on the filesystem's own answer keeps this
+    listing correct for both, and for any later naming scheme. A file that
+    disappears between the listing and its stat is dropped rather than raised
+    on, and an unreadable directory degrades to empty.
+    """
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return []
+    stamped = []
+    for name in names:
+        try:
+            stamped.append((os.stat(os.path.join(directory, name)).st_mtime, name))
+        except OSError:
+            continue
+    stamped.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [name for _, name in stamped[:count]]
 
 
 def write_state(variables, state, now=None):
@@ -1033,19 +1098,13 @@ def write_state(variables, state, now=None):
     list itself, which stays in ServiceState and is never written to disk.
     ensure_dirs is called first, so a missing OUTPUT_DIR/STILLS_DIR here
     means it could not be created (or was removed between the call and the
-    listdir below); either way the listing degrades to empty rather than
+    listing below); either way newest_names degrades to empty rather than
     raising.
     """
     now = time.time() if now is None else now
     ensure_dirs()
-    try:
-        outputs = sorted(os.listdir(OUTPUT_DIR), reverse=True)[:10]
-    except OSError:
-        outputs = []
-    try:
-        stills = sorted(os.listdir(STILLS_DIR), reverse=True)[:10]
-    except OSError:
-        stills = []
+    outputs = newest_names(OUTPUT_DIR)
+    stills = newest_names(STILLS_DIR)
     data = {
         "commands": available_commands(variables),
         "allowances": {
@@ -1145,7 +1204,7 @@ def handle_command(command, variables, state, now=None):
         except ValueError as e:
             return str(e), state
         if state.binding is not None and state.binding.video_id == vid:
-            return f"{vid} is bound; duration {state.binding.duration} seconds", state
+            return f"{vid} is bound; {duration_phrase(state.binding.duration)}", state
         limit = effective_limit(variables, "video_budget", "VIDEO_HOURLY_MAX", DEFAULT_VIDEO_LIMIT)
         allowed, history = check_rate_limit(state.video_history, now, limit, BUDGET_WINDOW)
         state.video_history = history
@@ -1155,7 +1214,7 @@ def handle_command(command, variables, state, now=None):
         if binding is None:
             return "video unavailable", state
         state.binding = binding
-        return f"{vid} is bound; duration {binding.duration} seconds", state
+        return f"{vid} is bound; {duration_phrase(binding.duration)}", state
 
     if name == "still":
         if state.binding is None:
@@ -1188,15 +1247,15 @@ def run_cycle(state):
     Pruning and state publication run on every cycle regardless of console
     state -- an idle cycle and an unparseable console prune exactly as a
     busy one does, because a cleanup command would be unreachable exactly
-    when the volume is full. The command list is cleared before dispatch
-    (consume_batch, before the loop below), so a command that crashes the
-    process cannot run again on restart.
+    when the volume is full. consume_batch reads the console and clears the
+    command list in one pass, before the loop below, so a command that
+    crashes the process cannot run again on restart and no command can be
+    cleared between two reads without being dispatched.
 
-    Nothing the agent can write to /video may end this cycle: load_console
+    Nothing the agent can write to /video may end this cycle: consume_batch
     and ensure_dirs already degrade rather than raise for the malformed
     inputs they are known to see (deeply nested JSON, a file where a
-    directory belongs), and consume_batch degrades the same way on both its
-    read and its write-back. A command that raises is caught per-command,
+    directory belongs), on both the read and the write-back. A command that raises is caught per-command,
     recorded as "command failed: <ExceptionType>", and does not stop the
     commands after it. write_output's and write_state's own calls here are
     each wrapped as a second line of defense, broadly rather than narrowed
@@ -1207,9 +1266,7 @@ def run_cycle(state):
     narrow that to a single exception type.
     """
     ensure_dirs()
-    commands, variables = load_console()
-    if commands:
-        consume_batch()
+    commands, variables = consume_batch()
     for command in commands:
         try:
             text, state = handle_command(command, variables, state)
@@ -1239,7 +1296,7 @@ def run_video():
     inside it -- from ever running at all, which is exactly the self-sealing
     failure this service is built to avoid: the one thing that could
     relieve a full volume never gets to run because the volume is full.
-    load_console already reads a missing file as ([], {}), so the loop
+    consume_batch already reads a missing file as ([], {}), so the loop
     starts and prunes regardless of whether the seed landed. The poll loop
     itself is not expected to exit; run_cycle carries the rest of that
     discipline.
