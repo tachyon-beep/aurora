@@ -268,10 +268,14 @@ are on the image allow-list alongside `chassis.py`.
   `docker compose build`; the entrypoint seeds `/llm/console/console.json` only when it is
   **absent**, so an existing console volume keeps whatever it already has.
 - Agent-image packages live in `requirements-agent.txt`; `scripts/build_garden.py` generates the
-  garden runtime inventory from that manifest. Keep the approved set within 100 MiB of the
+  garden runtime inventory from that manifest. Keep the approved set within 250 MiB of the
   pre-change image built on the same host. Do not add ML runtimes, local models, browser engines,
   agent frameworks, cloud SDKs, or service daemons without a new design decision and an image-size
-  measurement.
+  measurement. (The ceiling was 100 MiB until 2026-08-17, when it was raised by operator decision
+  to admit `scipy` and `netCDF4` alongside `duckdb`; measured cost of that set is 238 MiB. The
+  rationale is recorded in `docs/superpowers/specs/2026-08-17-a-world-with-a-past-design.md` §4.7 —
+  a package is admitted as a toolkit the agent *may* grow into, never as one it is expected to use,
+  so latency of use is not evidence against inclusion.)
 
 ## Conventions
 

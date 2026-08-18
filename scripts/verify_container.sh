@@ -141,7 +141,7 @@ docker compose exec -T agent sh -c '
 '
 
 echo "==> agent new runtime packages import; loomweave and filigree respond"
-docker compose exec -T agent python -c "import filigree, z3, hy, tenacity, jplephem, model2vec"
+docker compose exec -T agent python -c "import filigree, z3, hy, tenacity, jplephem, model2vec, duckdb, skyfield, scipy, netCDF4"
 docker compose exec -T agent loomweave --version >/dev/null
 docker compose exec -T agent filigree --version >/dev/null
 

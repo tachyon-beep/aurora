@@ -45,6 +45,10 @@ EXPECTED_PACKAGES = [
     "filigree",
     "loomweave",
     "pypdf",
+    "duckdb",
+    "skyfield",
+    "scipy",
+    "netCDF4",
 ]
 
 

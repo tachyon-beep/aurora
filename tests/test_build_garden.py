@@ -183,6 +183,10 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
     assert "cleared when a session ends" in runtime
     assert "/corpus" in runtime
     assert "image files appear at /sense at intervals" in runtime
+    assert "- duckdb" in runtime
+    assert "- skyfield" in runtime
+    assert "- scipy" in runtime
+    assert "- netcdf4" in runtime
 
 
 def test_documents_exclude_banned_anchors(tmp_path: Path) -> None:

@@ -38,3 +38,7 @@ model2vec
 filigree
 loomweave
 pypdf
+duckdb
+skyfield
+scipy
+netCDF4
