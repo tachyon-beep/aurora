@@ -69,6 +69,8 @@ the container has no network interface. limited web retrieval is available throu
 
 a process scheduler runs at /pump; it accepts a closed set of entry fields in /pump/entries.json.
 
+recorded video can be searched, transcribed and sampled through /video, which accepts a closed command vocabulary.
+
 the model endpoint used by this environment is a unix domain socket. it accepts connections from any process in the container.
 
 filesystem locations can differ in ownership, mutability, and lifecycle.
@@ -168,6 +170,7 @@ def test_runtime_lists_requirements_and_environment_inventory(tmp_path: Path) ->
     assert "/diode" in runtime
     assert "a process scheduler runs at /pump" in runtime
     assert "/pump/entries.json" in runtime
+    assert "recorded video can be searched, transcribed and sampled through /video" in runtime
     assert "model endpoint used by this environment is a unix domain socket" in runtime
     assert "accepts connections from any process in the container" in runtime
     assert "openrouter_" not in runtime
