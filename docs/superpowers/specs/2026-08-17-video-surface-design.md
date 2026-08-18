@@ -137,14 +137,18 @@ agent writes console.json
 ### Guarantee closing the new channel
 
 > The video service accepts an **11-character video id** and a length- and
-> charset-bounded search query — **never a URL**. Every upstream URL is composed by the
-> service itself, so no agent-authored string reaches a host, scheme, or path. It holds
+> charset-bounded search query — **never a URL**, so no agent-authored string reaches a
+> host, scheme, or path. URLs the service composes it builds from that validated id or
+> query; URLs it receives back from the resolver — the media manifest, a caption track —
+> are third-party data and are re-validated before use, so no unvalidated URL reaches
+> `ffmpeg` or an HTTP fetch. It holds
 > no credential and mounts nothing else of the agent's world; **the stage does not
 > mount its volume**, so nothing this service writes is rendered automatically on any
 > outward-facing page. Rates are clamped by the operator-side `VIDEO_HOURLY_MAX`,
 > `VIDEO_STILL_HOURLY_MAX` and `VIDEO_TEXT_HOURLY_MAX`, on the `min(console value,
 > operator max)` pattern `DIODE_HOURLY_MAX` uses, and the counters those ceilings clamp
-> live on a volume the agent does not mount.
+> live in the service's own memory, never on an agent-writable volume: `/video/state.json`
+> is published and never read back, so editing it cannot restore a spent allowance.
 
 Two things that sentence deliberately does **not** claim. It does not say a still can
 never reach the public page: the agent writes `/diode`, the stage reads it, and an
@@ -424,7 +428,7 @@ run.
 | `docker-compose.yml` | `video` service, `video` volume, `video_egress` network, `/video` in the agent, the three ceilings |
 | `Dockerfile` | `/video` mountpoint pre-create on the agent image |
 | `scripts/build_garden.py` | the `runtime.md` sentence |
-| `.env.example` | `VIDEO_HOURLY_MAX`, `VIDEO_STILL_HOURLY_MAX`, `VIDEO_TEXT_HOURLY_MAX`, `VIDEO_STILL_KEEP` |
+| `.env.example` | `VIDEO_HOURLY_MAX`, `VIDEO_STILL_HOURLY_MAX`, `VIDEO_TEXT_HOURLY_MAX` |
 | `scripts/verify_container.sh` | `/video` is agent-writable, holds no credential, and the service has no credential in its environment |
 | `CLAUDE.md` | invariant 3: the guarantee paragraph above |
 
