@@ -38,12 +38,28 @@ if ! ls "$OUT/writing/fonts"/*.ttf >/dev/null 2>&1; then
         chown -R '"$(id -u):$(id -g)"' /fonts'
 fi
 
-echo "== chess: Syzygy 3-4-5 tablebases (~1 GB, resumable)"
+echo "== chess: Syzygy tablebases, pruned after mirroring"
+# Tablebase files are named by their piece letters, so the piece count is the
+# stem length minus the separating 'v' (KQvK is 4 pieces). Everything up to 4
+# pieces is kept; among the 5-piece tables only the pawnless ones are, which is
+# the classically studied material and drops the pawn-structure tail. The
+# oracle earns its place; its former byte dominance did not.
+SYZYGY_KEEP_PAWNLESS_5=${SYZYGY_KEEP_PAWNLESS_5:-1}
 mkdir -p "$OUT/chess/syzygy"
 wget -q -e robots=off -c -r -np -nd -A '*.rtbw,*.rtbz' -P "$OUT/chess/syzygy" \
     https://tablebase.lichess.ovh/tables/standard/3-4-5-wdl/ \
     https://tablebase.lichess.ovh/tables/standard/3-4-5-dtz/
 find "$OUT/chess/syzygy" -name 'robots.txt*' -delete 2>/dev/null || true
+for f in "$OUT/chess/syzygy"/*.rtb*; do
+    [ -e "$f" ] || continue
+    stem=$(basename "$f"); stem=${stem%.*}
+    pieces=$(printf '%s' "$stem" | tr -d v | wc -c)
+    [ "$pieces" -le 4 ] && continue
+    case "$stem" in
+        *P*) rm -f "$f" ;;
+        *) [ "$SYZYGY_KEEP_PAWNLESS_5" = "1" ] || rm -f "$f" ;;
+    esac
+done
 
 echo "== history: SILSO sunspot numbers"
 mkdir -p "$OUT/history/sunspots"

@@ -126,3 +126,13 @@ def test_fetch_corpus_keeps_notation_without_audio_or_renderings() -> None:
     assert "-name '*.krn'" in kern_section
     assert "*.mid" not in kern_section.replace("! -name '*.krn'", "")
     assert "-delete" in kern_section
+
+
+def test_fetch_corpus_bounds_the_tablebase_download() -> None:
+    script = _read("scripts/fetch_corpus.sh")
+
+    # The tablebases dominated corpus bytes; the mirror must be pruned rather
+    # than kept whole. 5-piece is 935 of the 939 MB, so the prune has to reach
+    # into 5-piece selectively instead of cutting at the piece count.
+    assert "SYZYGY_KEEP_PAWNLESS_5" in script
+    assert "rm -f" in script
