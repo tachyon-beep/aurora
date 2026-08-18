@@ -57,6 +57,7 @@ services:
       OPENROUTER_API_KEY: "sk-dummy"
       LLM_MODEL: ${LLM_MODEL:-}
       CONTEXT_WINDOW_TOKENS: ${CONTEXT_WINDOW_TOKENS:-120000}
+      CONTEXT_WINDOW_EVICTION_TOKENS: ${CONTEXT_WINDOW_EVICTION_TOKENS:-}
       REASONING_EFFORT: ${REASONING_EFFORT:-}
       # Resource hygiene for the process scheduler, so it cannot exhaust
       # pids_limit or mem_limit below by accident. Not a boundary: processes

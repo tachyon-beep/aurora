@@ -568,11 +568,21 @@ class ProxyHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
         }
         usage = res_data.get("usage") if isinstance(res_data, dict) else None
         if isinstance(usage, dict):
-            close_fields["usage"] = {
+            recorded = {
                 key: usage[key]
-                for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens", "cache_discount")
                 if isinstance(usage.get(key), (int, float))
             }
+            details = usage.get("prompt_tokens_details")
+            if isinstance(details, dict):
+                recorded.update(
+                    {
+                        key: details[key]
+                        for key in ("cached_tokens", "cache_write_tokens")
+                        if isinstance(details.get(key), (int, float))
+                    }
+                )
+            close_fields["usage"] = recorded
         log_event("close", stream, **close_fields)
 
         if registry is not None and stream != "core":

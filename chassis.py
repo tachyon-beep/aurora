@@ -55,7 +55,7 @@ def _window_total(count, length_sum):
     return (2 + length_sum + 2 * (count - 1)) // 4
 
 
-def clip_to_window(messages, budget_tokens=None):
+def clip_to_window(messages, budget_tokens=None, eviction_chunk_tokens=None):
     """Return the pinned messages plus the most recent messages that fit the token budget.
 
     The conversation history is kept whole in memory; this windows only what each request
@@ -64,11 +64,21 @@ def clip_to_window(messages, budget_tokens=None):
     it already falls inside the window. The window never begins on a tool result whose
     originating tool call was dropped. A budget of zero or less disables windowing and
     sends the whole history.
+
+    Eviction advances in chunks: once any messages must be dropped, the dropped prefix is
+    extended to the next multiple of eviction_chunk_tokens, counted from the start of the
+    history, so the window start holds one position while the history grows and
+    consecutive requests share a stable prefix. The chunk defaults to
+    CONTEXT_WINDOW_EVICTION_TOKENS, or to an eighth of the budget when that is unset; a
+    chunk of zero or less evicts per message.
     """
     if budget_tokens is None:
         budget_tokens = int(os.getenv("CONTEXT_WINDOW_TOKENS", str(CONTEXT_WINDOW_TOKENS)))
     if budget_tokens <= 0:
         return messages
+    if eviction_chunk_tokens is None:
+        configured = os.getenv("CONTEXT_WINDOW_EVICTION_TOKENS", "").strip()
+        eviction_chunk_tokens = int(configured) if configured else budget_tokens // 8
     system = [m for m in messages if m.get("role") == "system"]
     rest = [m for m in messages if m.get("role") != "system"]
     first_user = next((m for m in rest if m.get("role") == "user"), None)
@@ -95,6 +105,15 @@ def clip_to_window(messages, budget_tokens=None):
         kept_sum += length
         holds_first_user = holds
     kept = newest_first[::-1]
+    start = len(rest) - len(kept)
+    chunk_chars = 4 * eviction_chunk_tokens
+    if start > 0 and chunk_chars > 0:
+        dropped = sum(_message_length(m) for m in rest[:start])
+        boundary = -(-dropped // chunk_chars) * chunk_chars
+        while start < len(rest) - 1 and dropped < boundary:
+            dropped += _message_length(rest[start])
+            start += 1
+        kept = rest[start:]
     while kept and kept[0].get("role") == "tool":
         kept = kept[1:]
     if first_user is not None and not any(m is first_user for m in kept):

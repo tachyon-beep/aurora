@@ -87,3 +87,46 @@ def test_reasoning_effort_module_constant_applies_without_env(monkeypatch):
     monkeypatch.delenv("REASONING_EFFORT", raising=False)
     monkeypatch.setattr(chassis, "REASONING_EFFORT", "high")
     assert chassis.reasoning_effort() == "high"
+
+
+def _growing_history():
+    msgs = [{"role": "system", "content": "S"}]
+    msgs += [{"role": "assistant", "content": f"{i:03d}" + "y" * 400} for i in range(60)]
+    return msgs
+
+
+def _window_starts(msgs, budget_tokens, appends=3, **kwargs):
+    starts = []
+    for i in range(appends + 1):
+        out = chassis.clip_to_window(msgs, budget_tokens=budget_tokens, **kwargs)
+        starts.append(id(out[1]))
+        msgs = msgs + [{"role": "assistant", "content": f"new{i}" + "y" * 400}]
+    return starts
+
+
+def test_clip_evicts_in_chunks_so_the_window_start_is_stable_as_history_grows():
+    starts = _window_starts(_growing_history(), 2000, eviction_chunk_tokens=800)
+    assert len(set(starts)) <= 2
+
+
+def test_clip_chunked_eviction_is_on_by_default():
+    starts = _window_starts(_growing_history(), 2000)
+    assert len(set(starts)) < 4
+
+
+def test_clip_chunk_of_zero_evicts_per_message():
+    starts = _window_starts(_growing_history(), 2000, eviction_chunk_tokens=0)
+    assert len(set(starts)) == 4
+
+
+def test_clip_eviction_chunk_comes_from_the_environment(monkeypatch):
+    monkeypatch.setenv("CONTEXT_WINDOW_EVICTION_TOKENS", "800")
+    starts = _window_starts(_growing_history(), 2000)
+    assert len(set(starts)) <= 2
+
+
+def test_clip_chunked_eviction_still_fits_the_budget_and_keeps_the_latest_message():
+    msgs = _growing_history()
+    out = chassis.clip_to_window(msgs, budget_tokens=2000, eviction_chunk_tokens=800)
+    assert out[-1] is msgs[-1]
+    assert chassis._estimate_tokens(out) <= 2000

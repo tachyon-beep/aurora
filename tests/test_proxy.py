@@ -1118,3 +1118,58 @@ def test_a_transport_failure_keeps_its_reservation(stream_factory, upstream, reg
 
     assert response.status_code == 500
     assert _used_tokens(registry) >= 400
+
+
+def test_a_close_event_carries_cache_usage_fields(core_server, upstream, transcripts):
+    upstream["response"] = lambda: _BufferedResponse(
+        json.dumps(
+            {
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 5,
+                    "total_tokens": 105,
+                    "cache_discount": 0.0009,
+                    "prompt_tokens_details": {"cached_tokens": 90, "cache_write_tokens": 10},
+                },
+            }
+        ).encode("utf-8")
+    )
+
+    response = _post(core_server, {"model": "m", "messages": []})
+    assert response.status_code == 200
+
+    closes = _wait_until(
+        lambda: [event for event in _events(transcripts) if event["event"] == "close"]
+    )
+    usage = closes[-1]["usage"]
+    assert usage["total_tokens"] == 105
+    assert usage["cached_tokens"] == 90
+    assert usage["cache_write_tokens"] == 10
+    assert usage["cache_discount"] == 0.0009
+
+
+def test_a_close_event_ignores_malformed_cache_usage_fields(core_server, upstream, transcripts):
+    upstream["response"] = lambda: _BufferedResponse(
+        json.dumps(
+            {
+                "choices": [{"message": {"content": "hi"}}],
+                "usage": {
+                    "total_tokens": 7,
+                    "cache_discount": "free",
+                    "prompt_tokens_details": {"cached_tokens": None},
+                },
+            }
+        ).encode("utf-8")
+    )
+
+    response = _post(core_server, {"model": "m", "messages": []})
+    assert response.status_code == 200
+
+    closes = _wait_until(
+        lambda: [event for event in _events(transcripts) if event["event"] == "close"]
+    )
+    usage = closes[-1]["usage"]
+    assert usage["total_tokens"] == 7
+    assert "cached_tokens" not in usage
+    assert "cache_discount" not in usage
