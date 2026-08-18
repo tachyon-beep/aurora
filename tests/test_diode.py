@@ -2241,3 +2241,15 @@ def test_nearby_is_gated_and_validates_its_arguments(monkeypatch):
     text, hist = diode.handle_command("nearby 51.5,-0.12", variables, [])
     assert "Ferry Pier" in text
     assert len(hist) == 1
+
+
+def test_budget_status_carries_the_limit_when_given_one():
+    status = diode.budget_status([], 1_000_000.0, 3600, limit=1)
+    assert status["limit"] == 1
+    status = diode.budget_status([999_990.0], 1_000_000.0, 3600, limit=120)
+    assert status["limit"] == 120
+
+
+def test_budget_status_omits_the_limit_by_default():
+    status = diode.budget_status([], 1_000_000.0, 3600)
+    assert "limit" not in status

@@ -142,21 +142,25 @@ def check_rate_limit(history, now, limit, window):
     return True, recent
 
 
-def budget_status(history, now, window):
+def budget_status(history, now, window, limit=None):
     """Use of the network operation budget over the window.
 
     Prunes the history to the window rather than trusting the caller's list, so a
-    quiet period lowers the count with no command having run.
+    quiet period lowers the count with no command having run. A limit, when
+    given, is carried so the allowance is readable without spending against it.
     """
     recent = [t for t in history if now - t < window]
     oldest = None
     if recent:
         oldest = max(0, math.ceil(window - (now - min(recent))))
-    return {
+    status = {
         "used": len(recent),
         "window_seconds": window,
         "oldest_expires_in_seconds": oldest,
     }
+    if limit is not None:
+        status["limit"] = limit
+    return status
 
 
 def fetch_limit(variables):
@@ -1505,7 +1509,12 @@ def run_diode():
         write_state(
             variables,
             [str(t) for t in fetch_history],
-            budget_status(fetch_history, time.time(), FETCH_WINDOW),
+            budget_status(
+                fetch_history,
+                time.time(),
+                FETCH_WINDOW,
+                limit=min(fetch_limit(variables), diode_limit_max()),
+            ),
             len(load_pending()),
         )
         time.sleep(POLL_SECONDS)
