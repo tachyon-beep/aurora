@@ -249,14 +249,17 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   text-overflow: ellipsis; font: 400 13px/18px var(--sans); color: var(--paper-faint); }
 #provenance.offline { color: var(--fault); }
 #repo { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint); }
-/* The two links on the page: the blog at the left end of this row, the at-home
-   telemetry panel at the right. Static text to an OBS source; a phone or laptop
-   viewer can follow them. */
+/* The three links on the page: the blog at the left end of this row, the
+   senses and at-home telemetry panels at the right. Static text to an OBS
+   source; a phone or laptop viewer can follow them. */
 #to-blog { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint);
+  text-decoration: none; }
+#to-senses { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint);
   text-decoration: none; }
 #to-telemetry { flex: none; font: 400 13px/18px var(--mono); color: var(--paper-faint);
   text-decoration: none; }
 #to-blog:hover, #to-blog:focus-visible,
+#to-senses:hover, #to-senses:focus-visible,
 #to-telemetry:hover, #to-telemetry:focus-visible { color: var(--vital); text-decoration: underline; }
 #death-sweep { position: absolute; left: 0; right: 0; bottom: -2px; height: 3px;
   background: var(--taken); z-index: 20; transform-origin: left; transform: scaleX(1); }
@@ -355,17 +358,6 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   padding: 4px 10px; font: 600 13px/18px var(--mono); letter-spacing: .12em;
   color: var(--vital); }
 #return-live:focus-visible { outline: 2px solid var(--vital); outline-offset: 2px; }
-
-/* THE EYE: the newest frame on the sense ring, floated in the monologue's
-   right margin. pointer-events none so it never intercepts feed scrolling. */
-#eye { position: absolute; top: 56px; right: 22px; width: 312px; z-index: 10;
-  pointer-events: none; background: var(--ink-2); border: 1px solid var(--rule-2);
-  border-radius: 8px; padding: 6px 6px 4px; box-shadow: 0 8px 28px rgba(0,0,0,.5); }
-#eye img { display: block; width: 300px; height: 187px; object-fit: cover;
-  background: var(--ink-0); border-radius: 4px; }
-#eye-cap { font: 400 13px/18px var(--mono); color: var(--paper-faint); margin-top: 4px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-variant-numeric: tabular-nums; }
 
 #coldstart { position: absolute; left: 22px; right: 22px; top: 60px; bottom: 18px;
   display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
@@ -627,7 +619,6 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
   #now { order: 3; min-height: 150px; }
   #ribbon { order: 4; display: grid; grid-template-columns: 1fr; gap: 14px; }
   #ribbon .panel { min-height: 136px; }
-  #eye { display: none; }
   #coldstart { padding-left: 12px; }
   .turn { grid-template-columns: 1fr; padding: 10px 0 12px; }
   .turn.is-edit, .turn.is-error, .turn.is-end { grid-template-columns: 1fr; padding-left: 10px; }
@@ -675,6 +666,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
       <span class="chip c-act"><i class="dot act"></i><b>ACTION</b></span>
       <span id="provenance"></span>
       <span id="repo">github.com/tachyon-beep/aurora</span>
+      <a id="to-senses" href="/sense">senses</a>
       <a id="to-telemetry" href="/telemetry">telemetry →</a>
     </div>
     <div id="death-sweep" hidden></div>
@@ -690,10 +682,6 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
       </div>
     </div>
     <button id="return-live" type="button" hidden>&#9662; RETURN TO LIVE</button>
-    <div id="eye" hidden>
-      <img id="eye-img" alt="">
-      <div id="eye-cap"></div>
-    </div>
     <div id="coldstart" hidden>
       <h2 id="cold-head"></h2>
       <p id="cold-body"></p>
@@ -1696,26 +1684,6 @@ function renderNow() {
   setText($("now-evidence"), line + (age == null ? "" : " · " + dur(age)));
 }
 
-/* ---------- eye ---------- */
-/* The newest frame on the sense ring. The caption claims only what is true:
-   this is the ring its eye reads, aged from the frame's own capture time. */
-function renderEye() {
-  var eye = $("eye"), sense = snap.sense;
-  if (!sense || !sense.url) { eye.hidden = true; return; }
-  eye.hidden = false;
-  var img = $("eye-img");
-  if (img.__src !== sense.url) { img.__src = sense.url; img.src = sense.url; }
-  eye.__feed = sense.feed;
-  eye.__epoch = sense.captured_epoch;
-  setEyeCaption(clock());
-}
-function setEyeCaption(nowMs) {
-  var eye = $("eye");
-  if (eye.hidden) return;
-  setText($("eye-cap"), "THE EYE · feed " + eye.__feed +
-    (eye.__epoch != null ? " · " + rel(eye.__epoch, nowMs) : ""));
-}
-
 /* ---------- ribbon ---------- */
 function clearRows(host) { while (host.firstChild) host.removeChild(host.firstChild); }
 /* The server counts every result the diode has filed and places each in a life;
@@ -2074,7 +2042,6 @@ function setRelativeTimes(nowMs) {
     var m = metas[i];
     setText(m, m.__size + (m.__epoch != null ? " · " + rel(m.__epoch, nowMs) : ""));
   }
-  setEyeCaption(nowMs);
 }
 function tick() {
   if (!snap) return;
@@ -2198,7 +2165,6 @@ function render(prev) {
   renderLanes();
   renderSpoken();
   renderRibbon();
-  renderEye();
   reconcileFeed();
   tick();
   applyExpansion();

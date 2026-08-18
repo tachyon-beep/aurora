@@ -364,7 +364,6 @@ BROADCAST_SMALL_TYPE = (
     "#pulse-left",
     "#pulse-rate",
     "#return-live",
-    "#eye-cap",
     ".subrow",
     ".bl",
     "#lineage-foot",
@@ -382,6 +381,7 @@ BROADCAST_SMALL_TYPE = (
     ".divider span",
     "#repo",
     "#to-blog",
+    "#to-senses",
     "#to-telemetry",
 )
 
@@ -685,21 +685,6 @@ def test_the_legend_chips_dropped_their_captions():
     assert ".chip em" not in HTML
 
 
-def test_the_eye_shows_only_fresh_sense_frames_and_never_blocks_the_feed():
-    """Shown only when snap.sense is non-null (the server already gates on
-    frame freshness); the img re-sets src only when the url changes; the card
-    never intercepts feed scrolling; the caption claims only the ring and the
-    capture age. alt is empty — the caption carries the fact."""
-    assert 'id="eye"' in HTML
-    assert '<img id="eye-img" alt="">' in HTML
-    assert '"THE EYE · feed "' in HTML
-    assert "img.__src !== sense.url" in HTML
-    eye = HTML[HTML.index("\n#eye {") :]
-    eye = eye[: eye.index("}")]
-    assert "position: absolute" in eye
-    assert "pointer-events: none" in eye
-
-
 def _srgb_luminance(hex_colour):
     channels = []
     for i in (0, 2, 4):
@@ -830,7 +815,6 @@ def test_the_page_has_three_layout_tiers():
         "#ribbon { order: 4;",
     ):
         assert rule in flow, rule
-    assert "#eye { display: none; }" in flow
     assert "70dvh" in flow
     assert "min-height: 44px" in flow, "the return-to-live chip must be a touch target"
 
@@ -872,14 +856,17 @@ def test_bar_labels_overflow_their_cell_rather_than_clip():
     assert "overflow: hidden" not in block
 
 
-def test_the_masthead_links_left_to_the_blog_and_right_to_the_telemetry_panel():
-    """The two links on the broadcast page, both internal: the blog at the left
-    end of the masthead's second row, the at-home panel at its right end. OBS
-    renders them as text; a phone or laptop viewer can follow them."""
+def test_the_masthead_links_left_to_the_blog_and_right_to_the_senses_and_telemetry():
+    """The three links on the broadcast page, all internal: the blog at the left
+    end of the masthead's second row, the senses page and the at-home panel at
+    its right end. OBS renders them as text; a phone or laptop viewer can
+    follow them."""
     assert '<a id="to-blog" href="/blog">← blog</a>' in HTML
+    assert '<a id="to-senses" href="/sense">senses</a>' in HTML
     assert '<a id="to-telemetry" href="/telemetry">telemetry →</a>' in HTML
-    assert HTML.count("<a ") == 2
+    assert HTML.count("<a ") == 3
     assert HTML.index('id="to-blog"') < HTML.index('class="chip c-think"')
+    assert HTML.index('id="to-senses"') < HTML.index('id="to-telemetry"')
 
 
 def test_the_lineage_foot_never_wraps():

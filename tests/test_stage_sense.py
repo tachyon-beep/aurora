@@ -36,44 +36,7 @@ def _age(path, seconds):
     os.utime(path, (NOW - seconds, NOW - seconds))
 
 
-def test_newest_frame_missing_dir_is_none(tmp_path):
-    assert sensecam.newest_frame(str(tmp_path / "nope"), now=NOW) is None
-
-
-def test_newest_frame_empty_ring_is_none(tmp_path):
-    assert sensecam.newest_frame(str(_ring(tmp_path)), now=NOW) is None
-
-
-def test_newest_frame_picks_the_newest_fresh_frame_across_slots(tmp_path):
-    sense = _ring(tmp_path)
-    _age(_frame(sense, "0", "001.jpg"), 900)
-    _age(_frame(sense, "2", "140.jpg"), 60)
-
-    got = sensecam.newest_frame(str(sense), now=NOW)
-
-    assert got["feed"] == "2"
-    assert got["name"] == "140.jpg"
-    assert abs(got["captured_epoch"] - (NOW - 60)) < 1
-
-
-def test_newest_frame_ignores_non_slot_entries_and_temporaries(tmp_path):
-    sense = _ring(tmp_path)
-    (sense / "status.json").write_text("{}", encoding="utf-8")
-    _age(_frame(sense, "0", "notes.txt"), 5)
-    _age(_frame(sense, "0", ".grab.jpg"), 5)
-    _age(_frame(sense, "logs", "999.jpg"), 5)
-
-    assert sensecam.newest_frame(str(sense), now=NOW) is None
-
-
-def test_newest_frame_goes_stale(tmp_path):
-    sense = _ring(tmp_path)
-    _age(_frame(sense, "1", "010.jpg"), sensecam.FRESH_SECONDS + 1)
-
-    assert sensecam.newest_frame(str(sense), now=NOW) is None
-
-
-def test_newest_frame_rejects_a_symlinked_frame(tmp_path):
+def test_newest_frames_rejects_a_symlinked_frame(tmp_path):
     sense = _ring(tmp_path)
     secret = tmp_path / "outside" / "secret.jpg"
     secret.parent.mkdir()
@@ -82,7 +45,7 @@ def test_newest_frame_rejects_a_symlinked_frame(tmp_path):
     (sense / "0").mkdir()
     (sense / "0" / "001.jpg").symlink_to(secret)
 
-    assert sensecam.newest_frame(str(sense), now=NOW) is None
+    assert sensecam.newest_frames(str(sense)) == {}
 
 
 def test_frame_bytes_path_serves_a_listed_jpg(tmp_path):

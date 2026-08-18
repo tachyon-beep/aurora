@@ -20,6 +20,7 @@ from stage import (
     moments,
     pages,
     records,
+    sense_page,
     sensecam,
     telemetry_page,
 )
@@ -905,20 +906,39 @@ def _public_achievements(rows):
     return out
 
 
-def _public_sense(frame):
-    """The newest sense frame as a servable reference, or None."""
-    if not isinstance(frame, dict):
-        return None
-    feed = _clip(str(frame.get("feed") or ""), FEED_CAP)
-    name = str(frame.get("name") or "")
-    epoch = frame.get("captured_epoch")
-    if not feed or not name:
-        return None
-    return {
-        "feed": feed,
-        "url": "/frame/" + quote(feed, safe="") + "/" + quote(name, safe=""),
-        "captured_epoch": float(epoch) if isinstance(epoch, (int, float)) else None,
-    }
+SENSE_FEEDS_CAP = 64
+
+
+def sense_snapshot(now=None):
+    """Every feed's newest frame merged with the capture service's status.
+
+    Feeds are ordered numerically and capped; a feed that appears in only
+    one of the two sources still gets a row, with the other side's fields
+    None, so a feed that has stopped capturing stays visible as such.
+    """
+    now = time.time() if now is None else now
+    frames = sensecam.newest_frames(SENSE_DIR)
+    status = sensecam.feed_status(SENSE_DIR)
+    feeds = sorted(set(frames) | set(status), key=lambda name: (len(name), name))
+    out = []
+    for feed in feeds[:SENSE_FEEDS_CAP]:
+        frame = frames.get(feed)
+        entry = status.get(feed) or {}
+        url = None
+        epoch = None
+        if frame is not None:
+            url = "/frame/" + quote(feed, safe="") + "/" + quote(frame["name"], safe="")
+            epoch = float(frame["captured_epoch"])
+        out.append(
+            {
+                "feed": _clip(feed, FEED_CAP),
+                "url": url,
+                "captured_epoch": epoch,
+                "state": entry.get("state"),
+                "lively": entry.get("lively"),
+            }
+        )
+    return {"now": now, "fresh_seconds": sensecam.FRESH_SECONDS, "feeds": out}
 
 
 def _empty_snapshot(now):
@@ -950,7 +970,6 @@ def _empty_snapshot(now):
         "records": _empty_records(),
         "desk": None,
         "achievements": [],
-        "sense": None,
         "diode": {
             "outputs": [],
             "operations_total": 0,
@@ -1044,7 +1063,6 @@ def _assemble_snapshot(now):
         ),
         "desk": _public_desk(desk.cached_verdicts()),
         "achievements": _public_achievements(moments.achievements(ACHIEVEMENTS_CAP)),
-        "sense": _public_sense(sensecam.newest_frame(SENSE_DIR, now=now)),
         "diode": {
             "outputs": diode["outputs"][:DISPLAY_OUTPUTS],
             "operations_total": diode["operations_total"],
@@ -1112,8 +1130,12 @@ class StreamHandler(_BaseHandler):
                 content_type="text/html; charset=utf-8",
                 extra={"Content-Security-Policy": BLOG_CSP},
             )
+        elif route == "/sense":
+            self._send(200, sense_page.SENSE_PAGE_HTML, content_type="text/html; charset=utf-8")
         elif route == "/api/stream":
             self._send(200, json.dumps(stream_snapshot()))
+        elif route == "/api/sense":
+            self._send(200, json.dumps(sense_snapshot()))
         elif route == "/api/lineage":
             self._send(200, json.dumps(lineage_snapshot()))
         elif route.startswith("/audio/"):

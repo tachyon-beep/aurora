@@ -470,7 +470,6 @@ def test_stream_snapshot_carries_the_full_key_set(tmp_path, monkeypatch):
         "records",
         "desk",
         "achievements",
-        "sense",
         "diode",
         "lineage",
         "story",
@@ -513,11 +512,10 @@ def test_the_empty_snapshot_matches_a_live_one_on_the_new_keys(tmp_path, monkeyp
     assert len(empty["pulse"]["buckets"]) == len(live["pulse"]["buckets"]) == 20
     assert set(empty["records"]) == set(live["records"])
     assert empty["desk"] is None
-    assert empty["sense"] is None
     assert set(empty["code"]) == set(live["code"])
 
 
-def test_the_desk_and_sense_keys_cap_and_reject_malformed_shapes():
+def test_the_desk_key_caps_and_rejects_malformed_shapes():
     assert server._public_desk(None) is None
     assert server._public_desk({"verdicts": []}) is None
     assert server._public_desk({"verdicts": [{"ordinal": 3, "stars": True}]}) is None
@@ -541,10 +539,6 @@ def test_the_desk_and_sense_keys_cap_and_reject_malformed_shapes():
     assert len(package["verdicts"][0]["line"]) == server.DESK_LINE_CAP
     assert len(package["verdicts"][0]["evidence"]) == server.DESK_EVIDENCE_CAP
     assert len(package["model"]) == server.MODEL_CAP
-    assert server._public_sense(None) is None
-    assert server._public_sense({"feed": "", "name": "a.jpg"}) is None
-    frame = server._public_sense({"feed": "2", "name": "04 1.jpg", "captured_epoch": 5.0})
-    assert frame["url"] == "/frame/2/04%201.jpg"
 
 
 def test_snapshot_carries_a_commentary_block(tmp_path, monkeypatch):
@@ -788,7 +782,6 @@ def test_stream_snapshot_never_raises_on_missing_directories(tmp_path, monkeypat
         "records",
         "desk",
         "achievements",
-        "sense",
         "diode",
         "lineage",
         "story",
@@ -820,7 +813,6 @@ def test_stream_snapshot_returns_the_full_key_set_when_a_reader_fails(tmp_path, 
         "records",
         "desk",
         "achievements",
-        "sense",
         "diode",
         "lineage",
         "story",

@@ -141,7 +141,7 @@ def render_page(posts, page, pages, total, list_truncated):
             "BLOG",
             cluster=f'<span id="count">{_plural(total, "post")}</span>',
             left='<a href="/">← the stream</a>',
-            right='<a href="/telemetry">telemetry →</a>',
+            right='<a href="/sense">the senses</a><a href="/telemetry">telemetry →</a>',
         )
         + "\n"
         f'<div id="layout">{_nav(posts)}<main id="posts">{body}{_foot(page, pages, list_truncated)}</main></div>\n'

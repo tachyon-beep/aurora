@@ -242,7 +242,7 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
         ),
         left='<a id="to-stream" href="/">← the stream</a>',
         fill='<span id="strip-life"></span>',
-        right='<a id="to-blog" href="/blog">the blog →</a>',
+        right='<a id="to-senses" href="/sense">the senses</a><a id="to-blog" href="/blog">the blog →</a>',
         banner=(
             '<div id="offline" role="status" hidden>'
             "STAGE OFFLINE — this page cannot reach the stage</div>"

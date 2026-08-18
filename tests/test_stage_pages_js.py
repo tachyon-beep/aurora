@@ -84,12 +84,7 @@ def _lineage_block():
 
 def _now_block():
     """renderNow alone."""
-    return _block("/* ---------- now ---------- */", "/* ---------- eye ---------- */")
-
-
-def _eye_block():
-    """The eye card: gating, src caching, and the caption."""
-    return _block("/* ---------- eye ---------- */", "/* ---------- ribbon ---------- */")
+    return _block("/* ---------- now ---------- */", "/* ---------- ribbon ---------- */")
 
 
 def _lanes_block():
@@ -1525,72 +1520,6 @@ def test_now_prefers_evidence_over_phrase(tmp_path):
     assert out["evidence"] == "run_shell x3 in a row · 16s"
     assert out["phrase_fallback"] == "thinking it over"
     assert out["empty"] == "waiting for the first word"
-
-
-EYE_HARNESS = """
-var srcSets = 0;
-var img = { alt: "" };
-Object.defineProperty(img, "src", {
-  get: function () { return this.__srcval; },
-  set: function (v) { this.__srcval = v; srcSets++; }
-});
-var eye = { hidden: true };
-var cap = { textContent: "" };
-global.$ = function (id) {
-  if (id === "eye") return eye;
-  if (id === "eye-img") return img;
-  if (id === "eye-cap") return cap;
-  return { textContent: "" };
-};
-global.setText = function (node, value) { node.textContent = String(value == null ? "" : value); };
-global.rel = function (ep, nowMs) { return Math.floor(nowMs / 1000 - ep) + "s ago"; };
-var NOW = 1000000;
-global.clock = function () { return NOW; };
-global.snap = null;
-
-__BLOCK__
-
-var out = {};
-global.snap = { sense: null };
-renderEye();
-out.hidden_when_null = eye.hidden;
-
-global.snap = { sense: { feed: "0", url: "/frame/0/001.jpg", captured_epoch: NOW / 1000 - 12 } };
-renderEye();
-out.shown = !eye.hidden;
-out.src = img.src;
-out.src_sets = srcSets;
-out.caption = cap.textContent;
-
-/* The same url never re-sets src (no reload flicker); a new frame does. */
-renderEye();
-out.src_sets_after_repeat = srcSets;
-global.snap = { sense: { feed: "2", url: "/frame/2/002.jpg", captured_epoch: NOW / 1000 - 2 } };
-renderEye();
-out.src_sets_after_new = srcSets;
-out.caption_new = cap.textContent;
-
-/* When the frames go stale the server sends null and the card vanishes. */
-global.snap = { sense: null };
-renderEye();
-out.hidden_again = eye.hidden;
-
-process.stdout.write(JSON.stringify(out));
-"""
-
-
-@needs_node
-def test_the_eye_gates_on_sense_and_caches_its_src(tmp_path):
-    out = _run(EYE_HARNESS.replace("__BLOCK__", _eye_block()), tmp_path)
-    assert out["hidden_when_null"] is True
-    assert out["shown"] is True
-    assert out["src"] == "/frame/0/001.jpg"
-    assert out["src_sets"] == 1
-    assert out["caption"] == "THE EYE · feed 0 · 12s ago"
-    assert out["src_sets_after_repeat"] == 1
-    assert out["src_sets_after_new"] == 2
-    assert out["caption_new"] == "THE EYE · feed 2 · 2s ago"
-    assert out["hidden_again"] is True
 
 
 def _tiers_block():
