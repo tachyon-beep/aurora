@@ -54,6 +54,17 @@ CLONE_REF_PATTERN = re.compile(r"\A[A-Za-z0-9](?:[A-Za-z0-9._/-]{0,199})\Z")
 QUAKES_URL = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson"
 SOLARWIND_URL = "https://services.swpc.noaa.gov/products/summary/solar-wind-speed.json"
 
+NEARBY_RADIUS_DEFAULT = 1000
+NEARBY_RADIUS_MAX = 10000
+# A fixed template: only numbers are interpolated, so no query language crosses
+# the diode.
+NEARBY_URL_TEMPLATE = (
+    "https://overpass-api.de/api/interpreter?data="
+    "%5Bout%3Ajson%5D%5Btimeout%3A25%5D%3B"
+    "node%28around%3A{radius}%2C{lat}%2C{lon}%29%5Bname%5D%3B"
+    "out%20{cap}%3B"
+)
+
 BOOK_URL_TEMPLATE = "https://www.gutenberg.org/ebooks/{book_id}.txt.utf-8"
 BOOK_MAX_BYTES = 2_000_000
 BOOK_ID_PATTERN = re.compile(r"\A[0-9]{1,10}\Z")
@@ -334,6 +345,11 @@ def _library_gate(variables):
     return bool(variables.get("enable_library"))
 
 
+def _map_gate(variables):
+    """Whether the map commands are available."""
+    return bool(variables.get("enable_map"))
+
+
 COMMANDS = {
     "help": {"gate": _gate_always, "help": "help -> write the current command list to HELP.md"},
     "fetchhttp": {
@@ -418,6 +434,10 @@ COMMANDS = {
     "commons": {
         "gate": _library_gate,
         "help": "commons <title> -> fetch a wikimedia commons media file in output/",
+    },
+    "nearby": {
+        "gate": _map_gate,
+        "help": "nearby <lat,lon> [radius_m] -> return named features around coordinates",
     },
     "secret": {
         "gate": _gate_always,
@@ -519,6 +539,7 @@ def write_help(variables):
     lines.append("  enable_clone: true, makes the repository fetch command available")
     lines.append("  enable_instruments: true, makes the instrument commands available")
     lines.append("  enable_library: true, makes the library commands available")
+    lines.append("  enable_map: true, makes the map commands available")
     if speech_configured():
         lines.append("  enable_speech: true, makes the speak command available")
     text = "\n".join(lines) + "\n"
@@ -784,6 +805,32 @@ def _solarwind_lines(body):
     if not isinstance(data, dict) or not data:
         return "(no current conditions found)"
     return "\n".join(f"{key}: {value}" for key, value in data.items())
+
+
+def _nearby_lines(body):
+    """Return name, kind, and coordinate lines from an Overpass response."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return "could not parse response"
+    elements = data.get("elements") if isinstance(data, dict) else None
+    if not isinstance(elements, list):
+        return "(no features found)"
+    lines = []
+    for element in elements:
+        tags = element.get("tags") if isinstance(element, dict) else None
+        if not isinstance(tags, dict):
+            continue
+        name = tags.get("name")
+        if not name:
+            continue
+        kind = tags.get("amenity") or tags.get("place") or tags.get("natural") or ""
+        lines.append(f"{name} — {kind} — {element.get('lat')},{element.get('lon')}")
+        if len(lines) >= FEED_ITEM_CAP:
+            break
+    if not lines:
+        return "(no features found)"
+    return "\n".join(lines)
 
 
 def _gutensearch_lines(body):
@@ -1246,6 +1293,7 @@ def handle_command(command, variables, fetch_history):
             "tides",
             "solarwind",
             "gutensearch",
+            "nearby",
         )
         or name in NEWS_SOURCES
     ):
@@ -1304,6 +1352,24 @@ def handle_command(command, variables, fetch_history):
                 f"?latitude={coords[0]}&longitude={coords[1]}"
                 "&current=wave_height,wave_direction,wave_period,sea_surface_temperature"
             )
+        elif name == "nearby":
+            parts = arg.split()
+            coords = _parse_coordinates(parts[0]) if parts else None
+            radius = NEARBY_RADIUS_DEFAULT
+            if len(parts) > 1:
+                try:
+                    radius = int(parts[1])
+                except ValueError:
+                    radius = -1
+            if coords is None or not 1 <= radius <= NEARBY_RADIUS_MAX or len(parts) > 2:
+                return (
+                    "usage: nearby <lat,lon> [radius_m] with lat from -90 to 90, "
+                    f"lon from -180 to 180, and radius_m from 1 to {NEARBY_RADIUS_MAX}",
+                    fetch_history,
+                )
+            url = NEARBY_URL_TEMPLATE.format(
+                radius=radius, lat=coords[0], lon=coords[1], cap=FEED_ITEM_CAP
+            )
         elif name == "solarwind":
             url = SOLARWIND_URL
         elif name == "gutensearch":
@@ -1348,6 +1414,8 @@ def handle_command(command, variables, fetch_history):
             return _solarwind_lines(body), fetch_history
         if name == "gutensearch":
             return _gutensearch_lines(body), fetch_history
+        if name == "nearby":
+            return _nearby_lines(body), fetch_history
         return _weather_lines(body), fetch_history
 
     if name in ("fetchhttp", "fetchlinks"):

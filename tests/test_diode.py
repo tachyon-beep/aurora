@@ -2162,3 +2162,53 @@ def test_hidden_commands_emit_text_and_never_touch_the_network(tmp_path, monkeyp
         assert isinstance(text, str), name
         text.encode("utf-8")
         assert hist == []
+
+
+NEARBY_SAMPLE = json.dumps(
+    {
+        "elements": [
+            {
+                "type": "node",
+                "lat": 51.5,
+                "lon": -0.12,
+                "tags": {"name": "Ferry Pier", "amenity": "ferry_terminal"},
+            },
+            {"type": "node", "lat": 51.51, "lon": -0.13, "tags": {"name": "Old Bell"}},
+            {"type": "node", "lat": 51.52, "lon": -0.14, "tags": {"amenity": "bench"}},
+        ]
+    }
+)
+
+
+def test_nearby_lines_names_features_and_skips_unnamed():
+    text = diode._nearby_lines(NEARBY_SAMPLE)
+
+    assert "Ferry Pier — ferry_terminal — 51.5,-0.12" in text
+    assert "Old Bell" in text
+    assert "bench" not in text
+
+
+def test_nearby_lines_handle_malformed_bodies():
+    assert diode._nearby_lines("not json") == "could not parse response"
+    assert diode._nearby_lines("{}") == "(no features found)"
+    assert diode._nearby_lines('{"elements": []}') == "(no features found)"
+
+
+def test_nearby_is_gated_and_validates_its_arguments(monkeypatch):
+    fake, _ = _stub_fetch("https://", NEARBY_SAMPLE)
+    monkeypatch.setattr(diode, "_fetch", fake)
+
+    closed = {"fetch_budget": 5}
+    text, _ = diode.handle_command("nearby 51.5,-0.12", closed, [])
+    assert text == "command not available: nearby"
+
+    variables = {"enable_map": True, "fetch_budget": 5}
+    text, _ = diode.handle_command("nearby 91,0", variables, [])
+    assert text.startswith("usage: nearby")
+
+    text, _ = diode.handle_command("nearby 51.5,-0.12 99999", variables, [])
+    assert text.startswith("usage: nearby")
+
+    text, hist = diode.handle_command("nearby 51.5,-0.12", variables, [])
+    assert "Ferry Pier" in text
+    assert len(hist) == 1
