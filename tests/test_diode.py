@@ -1374,8 +1374,37 @@ def test_echo_refuses_a_delay_it_cannot_use(tmp_path, monkeypatch):
     monkeypatch.setattr(diode, "PENDING_FILE", str(tmp_path / "pending.json"))
     for command in ("echo", "echo hello", "echo soon hello", "echo -5 hello", "echo 999999999 x"):
         text, _ = diode.handle_command(command, {}, [])
-        assert text.startswith("usage: echo <seconds> <message>")
+        assert text.startswith("usage: echo <seconds|YYYY-MM-DD> <message>")
     assert not (tmp_path / "pending.json").exists()
+
+
+def test_parse_delay_accepts_an_absolute_utc_date(monkeypatch):
+    # A frozen "now" within a year of the target date: 2026-12-25T00:00:00Z
+    # minus one year is after 2025-12-25, so 1_760_000_000 (2025-10-09) would
+    # place the date beyond ECHO_DELAY_MAX. Use a "now" closer to the date.
+    monkeypatch.setattr(diode.time, "time", lambda: 1_790_000_000.0)
+
+    parsed = diode.parse_delay("2026-12-25 time")
+    assert parsed is not None
+    seconds, rest = parsed
+    assert rest == "time"
+    # 2026-12-25T00:00:00Z is 1_798_156_800 by epoch arithmetic.
+    assert seconds == 1_798_156_800 - 1_790_000_000
+
+
+def test_parse_delay_rejects_past_dates_and_beyond_the_horizon(monkeypatch):
+    monkeypatch.setattr(diode.time, "time", lambda: 1_760_000_000.0)
+
+    assert diode.parse_delay("2020-01-01 time") is None
+    assert diode.parse_delay("2099-01-01 time") is None
+    assert diode.parse_delay("not-a-date time") is None
+    assert diode.parse_delay("2026-13-45 time") is None
+
+
+def test_deferral_horizon_reaches_a_year():
+    assert diode.ECHO_DELAY_MAX == 31_536_000
+    assert diode.parse_delay(f"{31_536_000} time") is not None
+    assert diode.parse_delay(f"{31_536_001} time") is None
 
 
 def test_echo_truncates_at_the_text_cap(tmp_path, monkeypatch):

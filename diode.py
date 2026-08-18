@@ -39,7 +39,7 @@ FEED_SUMMARY_CAP = 500
 PUBLISH_TEXT_CAP = 4000
 POST_TEXT_CAP = 20_000
 
-ECHO_DELAY_MAX = 604800
+ECHO_DELAY_MAX = 31536000
 ECHO_TEXT_CAP = 4000
 DEFERRED_COMMAND_CAP = 500
 PENDING_MAX = 32
@@ -197,18 +197,29 @@ def command_word(command):
 
 
 def parse_delay(arg):
-    """Split a leading whole-second delay off an argument; None when there is not one."""
+    """Split a leading delay off an argument; None when there is not one.
+
+    The delay is either a whole number of seconds or an absolute UTC date as
+    YYYY-MM-DD, which is converted to the seconds remaining until it.
+    """
     parts = arg.split(None, 1)
     if len(parts) != 2:
         return None
-    try:
-        seconds = int(parts[0])
-    except ValueError:
-        return None
-    if not 0 <= seconds <= ECHO_DELAY_MAX:
-        return None
     rest = parts[1].strip()
     if not rest:
+        return None
+    token = parts[0]
+    try:
+        seconds = int(token)
+    except ValueError:
+        try:
+            when = datetime.datetime.strptime(token, "%Y-%m-%d").replace(
+                tzinfo=datetime.timezone.utc
+            )
+        except ValueError:
+            return None
+        seconds = int(when.timestamp() - time.time())
+    if not 0 <= seconds <= ECHO_DELAY_MAX:
         return None
     return seconds, rest
 
@@ -1172,7 +1183,7 @@ def handle_command(command, variables, fetch_history):
 
     if name in DEFERRING_COMMANDS:
         tail = "<message>" if name == "echo" else "<command>"
-        usage = f"usage: {name} <seconds> {tail} with seconds from 0 to {ECHO_DELAY_MAX}"
+        usage = f"usage: {name} <seconds|YYYY-MM-DD> {tail} with seconds from 0 to {ECHO_DELAY_MAX}"
         parsed = parse_delay(arg)
         if parsed is None:
             return usage, fetch_history
