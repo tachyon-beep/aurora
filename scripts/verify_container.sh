@@ -147,6 +147,16 @@ docker compose exec -T agent filigree --version >/dev/null
 
 echo "==> /vendor and /corpus are read-only; the registry is present"
 docker compose exec -T agent test -d /vendor/registry
+for tree in history/sunspots history/climate history/quakes place sky life notation; do
+  if ! docker compose exec -T agent test -d "/corpus/$tree"; then
+    echo "FAIL: /corpus/$tree is missing"; exit 1
+  fi
+done
+# Bare data only: provider documentation must never reach an agent surface.
+if docker compose exec -T agent sh -c \
+   'find /corpus -maxdepth 3 \( -iname "readme*" -o -iname "LICENSE*" \) | grep -q .'; then
+  echo "FAIL: provider documentation is present under /corpus"; exit 1
+fi
 if docker compose exec -T agent sh -c 'echo x > /vendor/_probe' 2>/dev/null; then
   echo "FAIL: /vendor is writable"; exit 1
 fi
