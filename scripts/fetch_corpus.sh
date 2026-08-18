@@ -45,5 +45,41 @@ wget -q -e robots=off -c -r -np -nd -A '*.rtbw,*.rtbz' -P "$OUT/chess/syzygy" \
     https://tablebase.lichess.ovh/tables/standard/3-4-5-dtz/
 find "$OUT/chess/syzygy" -name 'robots.txt*' -delete 2>/dev/null || true
 
+echo "== history: SILSO sunspot numbers"
+mkdir -p "$OUT/history/sunspots"
+for f in SN_d_tot_V2.0.csv SN_m_tot_V2.0.csv; do
+    [ -s "$OUT/history/sunspots/$f" ] || curl -sSL --retry 3 --retry-all-errors \
+        -o "$OUT/history/sunspots/$f" "https://www.sidc.be/SILSO/DATA/$f"
+done
+
+echo "== history: GHCN-Daily station metadata and a spread of years"
+mkdir -p "$OUT/history/climate"
+[ -s "$OUT/history/climate/ghcnd-stations.txt" ] || curl -sSL --retry 3 --retry-all-errors \
+    -o "$OUT/history/climate/ghcnd-stations.txt" \
+    https://www.ncei.noaa.gov/pub/data/ghcn/daily/ghcnd-stations.txt
+# A spread across the record rather than consecutive recent years: early files
+# are small because few stations existed, so 144 years of depth costs less than
+# three consecutive modern years would. 394 MB measured.
+for year in 1880 1900 1920 1940 1960 2024; do
+    [ -s "$OUT/history/climate/$year.csv.gz" ] || curl -sSL --retry 3 --retry-all-errors \
+        -o "$OUT/history/climate/$year.csv.gz" \
+        "https://www.ncei.noaa.gov/pub/data/ghcn/daily/by_year/$year.csv.gz"
+done
+
+echo "== history: global earthquake catalog"
+mkdir -p "$OUT/history/quakes"
+if [ ! -s "$OUT/history/quakes/quakes.csv" ]; then
+    : > "$OUT/history/quakes/quakes.csv.part"
+    year=1970
+    while [ "$year" -le 2025 ]; do
+        curl -sSL --retry 3 --retry-all-errors \
+            "https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&starttime=$year-01-01&endtime=$((year + 1))-01-01&minmagnitude=4.5&orderby=time-asc" \
+            | { if [ "$year" -eq 1970 ]; then cat; else tail -n +2; fi; } \
+            >> "$OUT/history/quakes/quakes.csv.part"
+        year=$((year + 1))
+    done
+    mv "$OUT/history/quakes/quakes.csv.part" "$OUT/history/quakes/quakes.csv"
+fi
+
 echo "== done"
 du -sh "$OUT"/*

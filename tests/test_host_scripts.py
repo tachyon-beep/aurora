@@ -77,3 +77,17 @@ def test_build_wipe_restores_permissions_before_removing() -> None:
     chmod = script.index("chmod -R u+rwX /build")
 
     assert chmod < script.index("find /build")
+
+
+def test_fetch_corpus_adds_history_without_provider_prose() -> None:
+    script = _read("scripts/fetch_corpus.sh")
+
+    # Each historical series terminates in a live diode instrument; all three
+    # must be present for the verification loop the corpus is being grown for.
+    assert "SN_d_tot_V2.0.csv" in script
+    assert "ghcnd-stations.txt" in script
+    assert "earthquake.usgs.gov/fdsnws/event" in script
+
+    # Bare data only: no provider documentation may land under /corpus.
+    for artefact in ("readme", "README", "LICENSE", "index.html"):
+        assert f'{artefact}"' not in script.replace("$OUT", "")
