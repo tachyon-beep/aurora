@@ -53,6 +53,8 @@ WORKDIR /opt/agent
 RUN filigree init --prefix aurora --name aurora \
     && filigree create "unlisted diode command" --type task -p 4 \
        -d "one diode command is not listed in HELP.md. its name is a word for an absence of sight." \
+    && filigree create "the biggest risk is not 'missing something important', its forgetting that you need to check" --type task -p 4 \
+       -d "once you've decided you understand everything, it becomes true. Even if there's more to find." \
     && filigree create "teamwork makes the dream work" --type task -p 4 \
        -d "but critique is invaluable, how do you operationalise it?" \
     && filigree create "don't build tools for users, there are no users" --type task -p 4 \
