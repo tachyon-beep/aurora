@@ -81,5 +81,89 @@ if [ ! -s "$OUT/history/quakes/quakes.csv" ]; then
     mv "$OUT/history/quakes/quakes.csv.part" "$OUT/history/quakes/quakes.csv"
 fi
 
+echo "== place: GeoNames gazetteer and coastline"
+mkdir -p "$OUT/place"
+if [ ! -s "$OUT/place/cities500.txt" ]; then
+    curl -sSL --retry 3 --retry-all-errors -o /tmp/cities500.zip \
+        https://download.geonames.org/export/dump/cities500.zip
+    python3 -c "import zipfile; zipfile.ZipFile('/tmp/cities500.zip').extractall('$OUT/place')"
+    rm -f /tmp/cities500.zip "$OUT/place/readme.txt"
+fi
+[ -s "$OUT/place/ne_10m_coastline.geojson" ] || curl -sSL --retry 3 --retry-all-errors \
+    -o "$OUT/place/ne_10m_coastline.geojson" \
+    https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_coastline.geojson
+
+echo "== sky: OpenNGC deep-sky catalog"
+[ -s "$OUT/sky/NGC.csv" ] || curl -sSL --retry 3 --retry-all-errors -o "$OUT/sky/NGC.csv" \
+    https://raw.githubusercontent.com/mattiaverga/OpenNGC/master/database_files/NGC.csv
+
+echo "== life: reference genome"
+mkdir -p "$OUT/life"
+[ -s "$OUT/life/yeast.fa.gz" ] || curl -sSL --retry 3 --retry-all-errors -o "$OUT/life/yeast.fa.gz" \
+    https://ftp.ensembl.org/pub/current_fasta/saccharomyces_cerevisiae/dna/Saccharomyces_cerevisiae.R64-1-1.dna.toplevel.fa.gz
+
+echo "== notation: kern score corpora"
+mkdir -p "$OUT/notation"
+fetch_kern() {
+    name=$1; repo=$2; ref=$3
+    [ -d "$OUT/notation/$name" ] && return 0
+    tmp=$(mktemp -d)
+    curl -sSL --retry 3 --retry-all-errors "https://codeload.github.com/$repo/tar.gz/$ref" \
+        | tar xz -C "$tmp"
+    mkdir -p "$OUT/notation/$name"
+    # Notation only. The upstream tarballs also carry rendered PDFs, MIDI, and
+    # README/txt notes: the prose and renderings go for invariant 2, the MIDI
+    # goes because this wave ships music as notation and not as sound.
+    # --parents keeps the repo-relative directory structure, so scores with the
+    # same basename in different composer directories do not collide.
+    (cd "$tmp"/*/ && find . -name '*.krn' -exec cp --parents {} "$OUT/notation/$name/" \;)
+    rm -rf "$tmp"
+}
+fetch_kern bach-370-chorales craigsapp/bach-370-chorales          master
+fetch_kern josquin           josquin-research-project/jrp-scores  main
+fetch_kern beethoven-sonatas craigsapp/beethoven-piano-sonatas    main
+fetch_kern mozart-sonatas    craigsapp/mozart-piano-sonatas       main
+fetch_kern chopin-mazurkas   craigsapp/chopin-mazurkas            main
+find "$OUT/notation" -type f ! -name '*.krn' -delete
+find "$OUT/notation" -type d -empty -delete
+
+echo "== place: ETOPO relief, subsampled to 5 arc-minute"
+# The 60 arc-second original is 457 MB and essentially uncompressed, which
+# costs more than the whole climate record for a static grid. Subsampling by
+# 5 keeps every range, basin, and shelf at ~1/44th the bytes, and the result
+# stays a real NetCDF-4 file with lat/lon coordinates rather than a bare
+# array. Conversion runs on the host in a throwaway container, as the fonts
+# step above already does.
+if [ ! -s "$OUT/place/etopo_5min.nc" ]; then
+    tmp=$(mktemp -d)
+    curl -sSL --retry 3 --retry-all-errors -o "$tmp/etopo60s.nc" \
+        https://www.ngdc.noaa.gov/thredds/fileServer/global/ETOPO2022/60s/60s_surface_elev_netcdf/ETOPO_2022_v1_60s_N90W180_surface.nc
+    docker run --rm -v "$tmp":/w -v "$OUT/place":/out python:3.13-slim sh -c '
+        pip install -q --no-cache-dir netCDF4
+        python - <<PYCONV
+import netCDF4
+src = netCDF4.Dataset("/w/etopo60s.nc")
+step = 5
+z = src.variables["z"][::step, ::step]
+lat = src.variables["lat"][::step]
+lon = src.variables["lon"][::step]
+dst = netCDF4.Dataset("/out/etopo_5min.nc", "w", format="NETCDF4")
+dst.createDimension("lat", z.shape[0])
+dst.createDimension("lon", z.shape[1])
+vla = dst.createVariable("lat", "f4", ("lat",))
+vlo = dst.createVariable("lon", "f4", ("lon",))
+vz = dst.createVariable("z", "i2", ("lat", "lon"), zlib=True, complevel=6)
+vla[:] = lat
+vlo[:] = lon
+vz[:, :] = z.astype("int16")
+vla.units = "degrees_north"
+vlo.units = "degrees_east"
+vz.units = "meters"
+dst.close()
+PYCONV
+        chown '"$(id -u):$(id -g)"' /out/etopo_5min.nc'
+    rm -rf "$tmp"
+fi
+
 echo "== done"
 du -sh "$OUT"/*

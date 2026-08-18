@@ -91,3 +91,38 @@ def test_fetch_corpus_adds_history_without_provider_prose() -> None:
     # Bare data only: no provider documentation may land under /corpus.
     for artefact in ("readme", "README", "LICENSE", "index.html"):
         assert f'{artefact}"' not in script.replace("$OUT", "")
+
+
+def test_fetch_corpus_adds_place_sky_and_life_in_readable_formats() -> None:
+    script = _read("scripts/fetch_corpus.sh")
+
+    assert "cities500.zip" in script
+    assert "ne_10m_coastline.geojson" in script
+    assert "NGC.csv" in script
+    assert "dna.toplevel.fa.gz" in script
+    assert "bach-370-chorales" in script
+    assert "ETOPO_2022_v1_60s" in script
+    assert "etopo_5min.nc" in script
+
+    # The 457 MB original must never reach /corpus: only the subsample is kept.
+    assert 'rm -rf "$tmp"' in script
+
+    # Every added set must be readable with the standard library, numpy, or
+    # one of the four approved packages.
+    # GeoTIFF and shapefile still have no reader on the agent image; shipping
+    # one would create a surface the agent cannot open. netCDF has left this
+    # list: netCDF4 was admitted for exactly that purpose (spec 4.7).
+    for unreadable in (".tif", ".tiff", ".shp"):
+        assert unreadable not in script
+
+
+def test_fetch_corpus_keeps_notation_without_audio_or_renderings() -> None:
+    script = _read("scripts/fetch_corpus.sh")
+
+    # Music ships as notation only. MIDI would smuggle a sound representation
+    # into a wave that deliberately excludes one, and the rendered PDFs are
+    # redundant with the notation they were rendered from.
+    kern_section = script.split("== notation")[1]
+    assert "-name '*.krn'" in kern_section
+    assert "*.mid" not in kern_section.replace("! -name '*.krn'", "")
+    assert "-delete" in kern_section
