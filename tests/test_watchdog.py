@@ -157,7 +157,7 @@ def test_clear_build_dir_does_not_follow_symlinks_out_of_locked_directories(tmp_
         _widen(build)
 
 
-def test_force_rmtree_leaves_a_symlinked_root_and_its_target_alone(tmp_path):
+def test_force_rmtree_removes_a_symlinked_root_as_a_link_leaving_its_target(tmp_path):
     outside = tmp_path / "outside"
     (outside / "sub").mkdir(parents=True)
     (outside / "sub" / "kept.txt").write_text("kept\n", encoding="utf-8")
@@ -165,8 +165,8 @@ def test_force_rmtree_leaves_a_symlinked_root_and_its_target_alone(tmp_path):
     link = tmp_path / "work.old"
     link.symlink_to(outside)
     try:
-        assert watchdog._force_rmtree(str(link)) is False
-        assert link.is_symlink()
+        assert watchdog._force_rmtree(str(link)) is True
+        assert not os.path.lexists(link)
         assert (outside / "sub").stat().st_mode & 0o777 == 0o500
         assert (outside / "sub" / "kept.txt").exists()
     finally:

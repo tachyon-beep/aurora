@@ -82,3 +82,21 @@ def test_tee_stream_survives_unwritable_log(tmp_path, capsys):
     stream = io.BytesIO(b"still echoed\n")
     watchdog._tee_stream(stream, str(tmp_path / "no" / "dir" / "log"), max_bytes=80)
     assert "still echoed" in capsys.readouterr().out
+
+
+def test_mirror_replaces_a_planted_symlink_at_the_tmp_path(tmp_path):
+    # A symlink parked at work.tmp must not wedge the mirror forever: it is
+    # removed as a link, never followed, and mirroring proceeds.
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "kept.txt").write_text("kept\n", encoding="utf-8")
+    os.symlink(str(outside), str(dest_root / "work.tmp"))
+
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+
+    assert (dest_root / "work" / "agent.py").read_text(encoding="utf-8") == "AGENT\n"
+    assert not os.path.lexists(dest_root / "work.tmp")
+    assert (outside / "kept.txt").read_text(encoding="utf-8") == "kept\n"

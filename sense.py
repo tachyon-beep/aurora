@@ -104,9 +104,18 @@ def reconcile_storage(root, feeds: list[dict], slots: int) -> None:
         if not entry.is_dir():
             continue
         for candidate in entry.iterdir():
-            if candidate.suffix == ".jpg" and candidate.stem.isdigit():
+            if candidate.suffix == ".jpg" and is_slot_stem(candidate.stem):
                 if int(candidate.stem) >= slots:
                     candidate.unlink()
+
+
+def is_slot_stem(stem: str) -> bool:
+    """Whether a filename stem is a ring slot index this service writes.
+
+    str.isdigit alone admits characters int() rejects (superscripts, for
+    one), and the service must not crash on a filename it did not write.
+    """
+    return stem.isascii() and stem.isdigit()
 
 
 def prune_stale(root, feeds: list[dict], now: float, max_age_seconds: float) -> None:
@@ -119,7 +128,7 @@ def prune_stale(root, feeds: list[dict], now: float, max_age_seconds: float) -> 
         if not feed_dir.is_dir():
             continue
         for candidate in feed_dir.iterdir():
-            if candidate.suffix != ".jpg" or not candidate.stem.isdigit():
+            if candidate.suffix != ".jpg" or not is_slot_stem(candidate.stem):
                 continue
             try:
                 if candidate.stat().st_mtime < cutoff:
@@ -255,6 +264,8 @@ def grab_frame(manifest: str, out_path, vf: str | None = None) -> bool:
         "-hide_banner",
         "-loglevel",
         "error",
+        "-protocol_whitelist",
+        "https,tls,tcp,crypto",
         "-i",
         manifest,
         "-frames:v",

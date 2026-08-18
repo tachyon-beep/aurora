@@ -2050,3 +2050,11 @@ def test_resolve_binding_pins_the_android_player_client(monkeypatch):
     argv = seen["argv"]
     flag = argv.index("--extractor-args")
     assert argv[flag + 1] == "youtube:player_client=android"
+
+
+def test_search_lines_bound_the_id_field():
+    # The id is third-party text like every other field; without a cap a
+    # hostile payload can flow an unbounded string into an output file.
+    payload = {"entries": [{"id": "A" * 100000, "title": "t"}]}
+    line = video.search_lines(payload)[0]
+    assert line.count("A") == video.SEARCH_ID_CAP

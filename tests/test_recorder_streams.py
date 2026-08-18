@@ -1122,3 +1122,71 @@ def test_readme_states_what_a_request_in_flight_counts():
     text = rs.README_TEXT
     assert "in flight" in text
     assert "until its usage is known" in text
+
+
+# the shared token pool
+
+
+def test_the_shared_pool_ceiling_defaults_to_twenty_million():
+    assert rs.global_token_limit_max() == 20_000_000
+
+
+def test_fresh_stream_names_cannot_outspend_the_shared_pool(monkeypatch):
+    # The per-name histories are fresh for every new name; the pool is not.
+    monkeypatch.setenv("STREAM_TOKEN_GLOBAL_HOURLY_MAX", "1000")
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"a": {"budget": 5}}, {})
+    registry.charge("a", 1000)
+    registry.apply({"b": {"budget": 5}}, {})
+    _, refusal, _ = registry.admit("b", b"{}")
+    assert refusal is not None
+    assert refusal[0] == 429
+    assert "across the declared sockets" in refusal[1]
+
+
+def test_the_shared_pool_refreshes_at_the_top_of_the_hour(monkeypatch):
+    monkeypatch.setenv("STREAM_TOKEN_GLOBAL_HOURLY_MAX", "1000")
+    now = [7100.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"a": {"budget": 5}}, {})
+    registry.charge("a", 1000)
+    _, refusal, _ = registry.admit("a", b"{}")
+    assert refusal is not None and refusal[0] == 429
+    now[0] = 7201.0
+    _, refusal, _ = registry.admit("a", b"{}")
+    assert refusal is None
+
+
+def test_settle_replaces_the_shared_reservation(monkeypatch):
+    monkeypatch.setenv("STREAM_TOKEN_GLOBAL_HOURLY_MAX", "1000")
+    monkeypatch.setenv("STREAM_REASONING_ALLOWANCE", "0")
+    registry = _registry()
+    registry.apply({"a": {"budget": 5}}, {})
+    body = json.dumps({"max_tokens": 1100}).encode("utf-8")
+    _, refusal, ticket = registry.admit("a", body)
+    assert refusal is None
+    _, refusal, _ = registry.admit("a", body)
+    assert refusal is not None and refusal[0] == 429
+    registry.settle("a", ticket, 10)
+    _, refusal, _ = registry.admit("a", body)
+    assert refusal is None
+
+
+def test_state_reports_the_shared_pool_with_a_remaining_percentage(monkeypatch):
+    monkeypatch.setenv("STREAM_TOKEN_GLOBAL_HOURLY_MAX", "1000")
+    now = [3600.0 * 5 + 600.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"a": {"budget": 5}}, {})
+    registry.charge("a", 250)
+    state = registry.state(streams_enabled=True)
+    shared = state["shared_tokens"]
+    assert shared["allowance"] == 1000
+    assert shared["used"] == 250
+    assert shared["remaining_percent"] == 75
+    assert shared["resets_in_seconds"] == 3000
+    assert state["streams"]["core"] == {"socket": "core.sock", "status": "active"}
+
+
+def test_the_readme_names_the_shared_pool():
+    assert "shared_tokens" in rs.README_TEXT

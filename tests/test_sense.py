@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 
 import pytest
 from PIL import Image
@@ -625,3 +627,45 @@ def test_pause_until_sleeps_only_into_the_future(monkeypatch):
     sense.pause_until(130.0)
     sense.pause_until(90.0)
     assert slept == [30.0]
+
+
+def test_reconcile_storage_survives_a_non_ascii_digit_slot_name(tmp_path):
+    # "²".isdigit() is true but int("²") raises; the slot check must not
+    # crash the service on a filename it did not write.
+    feed_dir = tmp_path / "0"
+    feed_dir.mkdir()
+    (feed_dir / "².jpg").write_bytes(b"x")
+
+    sense.reconcile_storage(tmp_path, [{"dir": "0", "id": "x"}], slots=2)
+
+    assert (feed_dir / "².jpg").exists()
+
+
+def test_prune_stale_leaves_a_non_ascii_digit_name_alone(tmp_path):
+    feed_dir = tmp_path / "0"
+    feed_dir.mkdir()
+    stray = feed_dir / "².jpg"
+    stray.write_bytes(b"x")
+    os.utime(stray, (0, 0))
+
+    sense.prune_stale(tmp_path, [{"dir": "0", "id": "x"}], now=1000.0, max_age_seconds=1.0)
+
+    assert stray.exists()
+
+
+def test_grab_frame_passes_a_protocol_whitelist(tmp_path, monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, capture_output, timeout):
+        seen["cmd"] = cmd
+        with open(cmd[-1], "wb") as handle:
+            handle.write(b"jpg")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(sense.subprocess, "run", fake_run)
+
+    assert sense.grab_frame("https://example.com/m.m3u8", tmp_path / "frame.jpg") is True
+    cmd = seen["cmd"]
+    position = cmd.index("-protocol_whitelist")
+    assert cmd[position + 1] == "https,tls,tcp,crypto"
+    assert position < cmd.index("-i")

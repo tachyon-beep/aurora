@@ -12,6 +12,7 @@ MAX_STREAMS = 8
 DEFAULT_STREAM_BUDGET = 10
 STREAM_LIMIT_MAX = 120
 STREAM_TOKEN_LIMIT_MAX = 2_000_000
+STREAM_TOKEN_GLOBAL_LIMIT_MAX = 20_000_000
 BUDGET_WINDOW = 3600
 PROMPT_BYTES_PER_TOKEN = 4
 MODEL_NAME_CAP = 200
@@ -210,6 +211,32 @@ def stream_token_limit_max():
         return max(0, int(raw))
     except ValueError:
         return STREAM_TOKEN_LIMIT_MAX
+
+
+def global_token_limit_max():
+    """The operator ceiling on tokens spent across all declared sockets per clock hour.
+
+    One pool over every declared socket together, whatever names they carry,
+    so the namespace cannot multiply the per-stream allowances. The window is
+    the clock hour: the pool empties at the top of each hour rather than
+    rolling. core.sock is outside it.
+    """
+    raw = os.environ.get("STREAM_TOKEN_GLOBAL_HOURLY_MAX", "").strip()
+    if not raw:
+        return STREAM_TOKEN_GLOBAL_LIMIT_MAX
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return STREAM_TOKEN_GLOBAL_LIMIT_MAX
+
+
+def shared_limited_message(allowance, now, window=BUDGET_WINDOW):
+    """The refusal sentence for a spent shared pool, with the time to the hour."""
+    remaining = max(0, math.ceil(window - (now % window)))
+    return (
+        f"rate limited: at most {allowance} token(s) per hour across the declared sockets"
+        f"; next available in {remaining} seconds"
+    )
 
 
 def effective_allowance(settings):
@@ -428,6 +455,12 @@ each accepted declaration is served at <name>.sock. configuration fields:
   max_tokens: positive integer. it bounds the response; reasoning does not
   count against it unless reasoning_effort is none.
 
+the declared sockets also share one token pool across all of them together,
+whatever their names: a fixed number of tokens per clock hour, emptied at
+the top of each hour rather than rolling. its size, use, and remaining
+percentage are published in streams.json as shared_tokens. core.sock is
+outside the pool and carries no allowance of any kind.
+
 declared values replace the corresponding fields of each request on that
 socket. the current sockets, their settings, and their use are in
 streams.json. the model identifiers a declaration may set are listed in
@@ -528,7 +561,26 @@ class StreamRegistry:
         self._histories = {}
         self._ticket = 0
         self._token_histories = {}
+        self._shared_hour = None
+        self._shared_entries = []
         self._clock = clock
+
+    def _shared_roll(self, now):
+        """Empty the shared pool when the clock hour has turned.
+
+        The pool's window is the clock hour, not a rolling one. A reservation
+        in flight across the boundary is simply forgotten with the old hour's
+        entries; its settle then finds no entry and changes nothing. Called
+        with the lock already held.
+        """
+        hour = int(now // BUDGET_WINDOW)
+        if hour != self._shared_hour:
+            self._shared_hour = hour
+            self._shared_entries = []
+
+    def _shared_used(self):
+        """Tokens held against the shared pool this hour. Lock already held."""
+        return sum(spent for _, spent in self._shared_entries)
 
     def _prune_histories(self, now):
         """Age out spent stamps and forget the streams left with none.
@@ -599,6 +651,10 @@ class StreamRegistry:
             self._token_histories[stream] = tokens
             if not allowed:
                 return body, (429, token_limited_message(token_allowance, tokens, now)), None
+            self._shared_roll(now)
+            shared_allowance = global_token_limit_max()
+            if self._shared_used() >= shared_allowance:
+                return body, (429, shared_limited_message(shared_allowance, now)), None
             history = self._histories.get(stream, [])
             allowed, history = check_budget(history, now, allowance)
             self._histories[stream] = history
@@ -607,6 +663,7 @@ class StreamRegistry:
             self._ticket += 1
             ticket = self._ticket
             tokens.append((now, reserved, ticket))
+            self._shared_entries.append((ticket, reserved))
         return composed, None, ticket
 
     def settle(self, stream, ticket, tokens):
@@ -623,6 +680,10 @@ class StreamRegistry:
             return
         tokens = int(tokens)
         with self._lock:
+            self._shared_roll(self._clock())
+            self._shared_entries = [
+                (held, tokens if held == ticket else spent) for held, spent in self._shared_entries
+            ]
             history = self._token_histories.get(stream)
             if not history:
                 return
@@ -639,13 +700,15 @@ class StreamRegistry:
             now = self._clock()
             self._ticket += 1
             self._token_histories.setdefault(stream, []).append((now, tokens, self._ticket))
+            self._shared_roll(now)
+            self._shared_entries.append((self._ticket, tokens))
 
     def state(self, streams_enabled=False, console_error=None, now=None):
         """The current streams.json document."""
         with self._lock:
             if now is None:
                 now = self._clock()
-            return render_state(
+            document = render_state(
                 self._settings,
                 self._rejected,
                 dict(self._histories),
@@ -654,3 +717,15 @@ class StreamRegistry:
                 console_error,
                 dict(self._token_histories),
             )
+            self._shared_roll(now)
+            allowance = global_token_limit_max()
+            used = self._shared_used()
+            remaining = max(0, allowance - used)
+            document["shared_tokens"] = {
+                "allowance": allowance,
+                "used": used,
+                "remaining_percent": int(remaining * 100 // allowance) if allowance else 0,
+                "window_seconds": BUDGET_WINDOW,
+                "resets_in_seconds": max(0, math.ceil(BUDGET_WINDOW - (now % BUDGET_WINDOW))),
+            }
+            return document

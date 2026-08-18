@@ -523,6 +523,7 @@ def run_binary(args, timeout):
 SEARCH_RESULT_COUNT = 10
 SEARCH_TITLE_CAP = 300
 SEARCH_CHANNEL_CAP = 80
+SEARCH_ID_CAP = 40
 TRANSCRIPT_MAX_BYTES = 500_000
 TRUNCATION_MARKER = "[truncated]"
 CAPTION_FETCH_TIMEOUT = 30
@@ -577,6 +578,7 @@ def search_lines(payload):
         video_id = entry.get("id")
         if not isinstance(video_id, str) or not video_id:
             continue
+        video_id = _cap(video_id, SEARCH_ID_CAP)
         duration = format_duration(entry.get("duration"))
         channel = _cap(entry.get("channel") or entry.get("uploader") or "", SEARCH_CHANNEL_CAP)
         title = _cap(entry.get("title") or "", SEARCH_TITLE_CAP)

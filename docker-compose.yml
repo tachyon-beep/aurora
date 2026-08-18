@@ -12,6 +12,11 @@ services:
       # quantity that is billed. Empty keeps the default. core.sock carries no
       # ceiling of any kind; the key budget is its limit.
       STREAM_TOKEN_HOURLY_MAX: ${STREAM_TOKEN_HOURLY_MAX:-}
+      # One token pool over all declared streams together per clock hour,
+      # emptied at the top of each hour, so fresh stream names cannot multiply
+      # the per-stream allowances. Empty keeps the default of 20,000,000.
+      # core.sock is outside it.
+      STREAM_TOKEN_GLOBAL_HOURLY_MAX: ${STREAM_TOKEN_GLOBAL_HOURLY_MAX:-}
       # Tokens added to a composed request's max_tokens when reasoning is on,
       # so a declared cap bounds the response rather than being consumed by
       # reasoning. Empty keeps the default; 0 disables the addition.

@@ -148,12 +148,17 @@ def _force_rmtree(path):
     withholds write cannot be emptied, so a plain removal stops there. The
     first pass removes what it can; when anything is left, owner access is
     restored over the remainder top-down and the removal is repeated. A
-    symbolic link is left alone rather than walked, and links inside the tree
-    are removed as links, so no mode outside the tree is ever changed.
+    symbolic link root is removed as a link and never walked, and links
+    inside the tree are removed as links, so no mode outside the tree is
+    ever changed and a planted link cannot wedge later replacements.
     Returns True when the tree is gone.
     """
     if os.path.islink(path):
-        return False
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        return not os.path.lexists(path)
     shutil.rmtree(path, ignore_errors=True)
     if not os.path.lexists(path):
         return True

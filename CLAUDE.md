@@ -40,9 +40,11 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      a send-time view over the full history the agent can grow or shrink once it reaches the chassis,
      and its reasoning effort (`REASONING_EFFORT` + `REASONING_EFFORT_LEVELS` + `reasoning_effort()`),
      omitted from the request when unset. Both are levers on the agent's own cognition, discoverable
-     in the substrate rather than given in `agent.py`. Note that a lowered effort persists across
-     incarnations for the life of the container (`reset` and tier-1 recovery restore `agent.py`, not
-     `chassis.py`) and is cleared only by a container restart, which recreates `/work` from the image.
+     in the substrate rather than given in `agent.py`. Note that a lowered effort survives `reset` and
+     tier-1 recovery (which restore only `agent.py`) but not a lineage boundary: `chassis.py` is
+     baseline-tracked, so the archive-and-reset that follows every `done` or isolated exit 43 runs
+     `git reset --hard baseline` and restores it, as does container replacement. A chassis edit
+     therefore lives at most one lineage segment — consistent with the never-self-sealing rule.
      The chassis is also the resilience layer: it repairs tool-call pairing in the send view
      (never the in-memory history), classifies API failures (transient failures retry with
      backoff and exit 44; an invalid model falls back to the environment default; unrepairable
@@ -97,7 +99,15 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      environment that no console value can reach or change; each stream's request allowance is
      clamped by the operator-side `STREAM_HOURLY_MAX` and its hourly token quota by
      `STREAM_TOKEN_HOURLY_MAX`. Tokens are the spend limit; the request cap only bounds request
-     *rate*. `core.sock` carries no ceiling of either kind, and that is deliberate rather than an
+     *rate*. All declared streams further share one operator-side pool,
+     `STREAM_TOKEN_GLOBAL_HOURLY_MAX` (default 20,000,000 tokens per clock hour, emptied at the
+     top of each hour, published to the agent as `shared_tokens` in `streams.json` with a
+     remaining percentage): per-name windows reset when the agent invents fresh stream names, the
+     pool does not, so the namespace cannot multiply the allowances. The allow lists bind only
+     *declared* models — with non-empty lists as much as empty ones, a declaration that omits
+     `model` is accepted and the request's own model field forwards under the recorder's key — so
+     the shared pool, not the per-stream quotas, is the aggregate spend bound on declared streams.
+     `core.sock` is outside the pool and carries no ceiling of either kind, and that is deliberate rather than an
      oversight: the key budget is its ceiling, so an agent that multiplexes it meets a real
      consequence instead of a substituted refusal. That makes the response to exhaustion
      load-bearing — `chassis.py` classifies 402 and `EXHAUSTION_PHRASES` as transient, so a spent
@@ -255,7 +265,11 @@ down to `COMPACT_KEEP_FRACTION` of the budget, keeping the seed turns and the ne
 turns the send window's silent eviction into something the agent can sense and pre-empt; the
 rolling window remains the backstop when it never calls it. `read_file`/`write_file` operate only on the
 agent's own source (no `path` argument); `list_dir` lets the agent *see* the surrounding files
-(so it knows there are other things to reach for) without yet being able to read them. There are no
+(so it knows there are other things to reach for) without yet being able to read them. `validate`
+is the one genesis tool that takes a path: it reports syntax validity of any reachable file, and
+its error text echoes the offending line — a deliberate narrow oracle onto files the agent cannot
+yet read (operator ruling, 2026-08-19: the genesis surface frames investigation rather than posing
+a gate, so this early keyhole stays; do not restrict it to `agent.py`). There are no
 commented-out "template" tools to re-enable: any further capability — reading files other than
 itself, a general path-taking writer, shell access, search — the agent must write from scratch by
 editing itself. Don't add scaffolding for those, and don't add or remove genesis tools without intent.

@@ -643,10 +643,10 @@ def test_stream_snapshot_story_always_carries_a_numeric_generated_at(tmp_path, m
     assert isinstance(story["generated_at"], float)
 
 
-def test_stream_snapshot_publishes_only_the_newest_six_turns(tmp_path, monkeypatch):
+def test_stream_snapshot_publishes_only_the_newest_display_turns(tmp_path, monkeypatch):
     snap = _snapshot(tmp_path, monkeypatch, [_turn_entry(i) for i in range(12)])
-    assert len(snap["turns"]) == 6
-    assert [t["index"] for t in snap["turns"]] == [6, 7, 8, 9, 10, 11]
+    assert len(snap["turns"]) == server.DISPLAY_TURNS
+    assert [t["index"] for t in snap["turns"]] == list(range(12 - server.DISPLAY_TURNS, 12))
     assert snap["stats"]["transcript_turns"] == 12
 
 
@@ -846,10 +846,10 @@ def test_stream_snapshot_stays_small_with_the_longest_legal_payload(tmp_path, mo
     ]
     snap = _snapshot(tmp_path, monkeypatch, entries)
     body = json.dumps(snap)
-    assert len(snap["turns"]) == 6
+    assert len(snap["turns"]) == server.DISPLAY_TURNS
     assert all(t["reasoning_chars"] == 12_000 for t in snap["turns"])
     assert all(len(t["reasoning"]) == 8_000 for t in snap["turns"])
-    assert len(body) < 130_000
+    assert len(body) < 22_000 * server.DISPLAY_TURNS
 
 
 def test_stream_snapshot_first_boot_does_not_look_like_a_dead_life(tmp_path, monkeypatch):
