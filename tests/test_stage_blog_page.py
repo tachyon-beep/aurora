@@ -11,7 +11,7 @@ POST = {
 }
 
 
-def test_page_carries_articles_nav_and_strip_links():
+def test_page_carries_articles_nav_and_masthead_links():
     html = blog_page.render_page([POST], 1, 1, 1, False)
     assert "<!doctype html>" in html.lower()
     assert '<article id="post-20260817_120000_000000"' in html
@@ -22,8 +22,8 @@ def test_page_carries_articles_nav_and_strip_links():
     assert "2026-08-17 12:00:00 UTC" in html
 
 
-def test_strip_links_carry_directional_arrows():
-    """The strip's two links read like the stream page's and the telemetry
+def test_masthead_links_carry_directional_arrows():
+    """The masthead's two links read like the stream page's and the telemetry
     panel's: the leftmost carries a left arrow, the rightmost a right one."""
     html = blog_page.render_page([POST], 1, 1, 1, False)
     assert '<a href="/">← the stream</a>' in html

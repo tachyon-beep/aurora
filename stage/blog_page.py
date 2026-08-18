@@ -8,6 +8,8 @@ integrity hash; without it the diagrams show as their source text.
 
 import html
 
+from stage import header
+
 MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.16.1/dist/mermaid.min.js"
 MERMAID_INTEGRITY = "sha384-aBQXj4hK6Jm05i7aQAsUV3bLdSUrHX1BGYfMB0166TtWt/RRaw+h0Eelme9OCOvy"
 
@@ -23,26 +25,19 @@ _STYLE = r"""
   --vital: #66d9c2; --world: #6fc4ff;
 }
 * { box-sizing: border-box; }
-html { scroll-padding-top: 72px; }
+html { scroll-padding-top: 112px; }
 body { margin: 0; background: var(--ink-0); color: var(--paper); font: 400 17px/1.6 var(--sans); }
 a { color: var(--vital); }
 a:focus-visible { outline: 2px solid var(--vital); outline-offset: 2px; }
 .skip { position: absolute; left: 8px; top: -60px; z-index: 30; padding: 8px 12px;
   background: var(--ink-2); color: var(--paper); border-radius: 6px; }
 .skip:focus { top: 8px; }
-#strip { position: sticky; top: 0; z-index: 20; min-height: 56px; display: flex; align-items: center;
-  flex-wrap: wrap; gap: 6px 18px; padding: 6px 20px; background: var(--ink-1);
-  border-bottom: 1px solid var(--rule-2); }
-#wordmark { margin: 0; font: 600 16px/24px var(--sans); letter-spacing: .18em; white-space: nowrap; }
-#strip a { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px;
-  font: 500 15px/20px var(--sans); text-decoration: none; }
-#strip a:hover { text-decoration: underline; }
-#count { margin-left: auto; font: 400 14px/20px var(--mono); color: var(--paper-dim);
+#count { font: 400 13px/18px var(--mono); color: var(--paper-dim);
   font-variant-numeric: tabular-nums; }
 #layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px;
   max-width: 1180px; margin: 0 auto; padding: 24px 20px 48px; }
 @media (min-width: 900px) { #layout { grid-template-columns: 240px minmax(0, 1fr); } }
-#posts-nav { align-self: start; position: sticky; top: 72px; }
+#posts-nav { align-self: start; position: sticky; top: 116px; }
 #posts-nav h2 { margin: 0 0 8px; font: 600 13px/18px var(--mono); text-transform: uppercase;
   letter-spacing: .12em; color: var(--paper-faint); }
 #posts-nav ol { margin: 0; padding: 0; list-style: none; }
@@ -140,11 +135,15 @@ def render_page(posts, page, pages, total, list_truncated):
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         '<link rel="icon" href="data:,">\n<title>aurora — blog</title>\n'
-        f"<style>{_STYLE}</style>\n</head>\n<body>\n"
+        f"<style>{header.MASTHEAD_CSS}{_STYLE}@media (max-width: 719px) {{{header.MASTHEAD_NARROW_CSS}}}</style>\n</head>\n<body>\n"
         '<a class="skip" href="#posts">Skip to the posts</a>\n'
-        '<header id="strip"><h1 id="wordmark">AURORA · BLOG</h1>'
-        '<a href="/">← the stream</a><a href="/telemetry">telemetry →</a>'
-        f'<span id="count">{_plural(total, "post")}</span></header>\n'
+        + header.masthead(
+            "BLOG",
+            cluster=f'<span id="count">{_plural(total, "post")}</span>',
+            left='<a href="/">← the stream</a>',
+            right='<a href="/telemetry">telemetry →</a>',
+        )
+        + "\n"
         f'<div id="layout">{_nav(posts)}<main id="posts">{body}{_foot(page, pages, list_truncated)}</main></div>\n'
         f'<script src="{MERMAID_URL}" integrity="{MERMAID_INTEGRITY}" crossorigin="anonymous"></script>\n'
         "<script>\nif (window.mermaid) { mermaid.initialize({ startOnLoad: true, "

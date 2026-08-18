@@ -8,7 +8,10 @@ focus survive; under 720px the same rows lay out as stacked cards. The
 JavaScript blocks are cut on their sentinel comments by the node tests.
 """
 
-TELEMETRY_PAGE_HTML = r"""<!doctype html>
+from stage import header
+
+TELEMETRY_PAGE_HTML = (
+    r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -30,7 +33,7 @@ TELEMETRY_PAGE_HTML = r"""<!doctype html>
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-html { scroll-padding-top: 64px; }
+html { scroll-padding-top: 112px; }
 body { margin: 0; background: var(--ink-0); color: var(--paper); font: 400 16px/1.5 var(--sans); }
 a { color: var(--vital); }
 a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible,
@@ -45,30 +48,26 @@ a:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
 .byline { font: 400 14px/20px var(--mono); color: var(--paper-faint); }
 
-/* ---------- strip ---------- */
-#strip { position: sticky; top: 0; z-index: 20; min-height: 56px; display: flex; align-items: center;
-  flex-wrap: wrap; gap: 6px 18px; padding: 6px 20px; background: var(--ink-1);
-  border-bottom: 1px solid var(--rule-2); }
-#wordmark { margin: 0; font: 600 16px/24px var(--sans); letter-spacing: .18em; color: var(--paper);
-  white-space: nowrap; }
-#to-stream, #to-blog { display: inline-flex; align-items: center; min-height: 44px; padding: 0 6px;
-  font: 500 15px/20px var(--sans); text-decoration: none; }
-#to-stream:hover, #to-blog:hover { text-decoration: underline; }
+/* ---------- masthead (shared with the stream page) ---------- */
+"""
+    + header.MASTHEAD_CSS
+    + r"""
+/* the page's own pieces inside the masthead */
 #state-cluster { display: flex; align-items: center; gap: 10px; }
 #state-word { font: 600 13px/18px var(--mono); text-transform: uppercase; letter-spacing: .12em;
   color: var(--paper-dim); }
 #state-clock { font: 400 13px/19px var(--mono); font-variant-numeric: tabular-nums; color: var(--paper-dim); }
-#strip-life { margin-left: auto; font: 400 14px/20px var(--mono); color: var(--paper-dim);
-  font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#strip-life { font: 400 13px/18px var(--mono); color: var(--paper-dim);
+  font-variant-numeric: tabular-nums; }
 #pause { min-height: 44px; min-width: 44px; padding: 0 14px; background: none; color: var(--paper-dim);
   border: 1px solid var(--control); border-radius: 6px; font: 500 14px/20px var(--sans); cursor: pointer; }
 #pause[aria-pressed="true"] { color: var(--act); border-color: var(--act); }
-#offline { flex: 1 1 100%; margin: 0 -20px -6px; padding: 8px 20px;
+#offline { flex: 1 1 100%; margin: 0 -20px -8px; padding: 8px 20px;
   background: var(--ink-2); color: var(--fault); font: 600 14px/20px var(--mono);
   letter-spacing: .06em; border-top: 1px solid var(--fault); }
-#strip.offline #state-word, #strip.offline #state-clock { color: var(--fault); }
-#strip.offline .dot { background: var(--fault); border-color: var(--fault); animation: none; }
-#strip.paused .dot { animation: none; }
+#masthead.offline #state-word, #masthead.offline #state-clock { color: var(--fault); }
+#masthead.offline .dot { background: var(--fault); border-color: var(--fault); animation: none; }
+#masthead.paused .dot { animation: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .dot.think { background: var(--think); }
 .dot.act { background: var(--act); }
@@ -195,12 +194,11 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
 
 /* ---------- narrow ---------- */
 @media (max-width: 719px) {
-  #strip { flex-wrap: wrap; gap: 4px 14px; padding: 6px 12px; }
-  #wordmark { font-size: 14px; letter-spacing: .14em; flex: 1 1 auto; }
-  #pause { order: 0; margin-left: auto; }
-  #to-stream, #to-blog { order: 1; white-space: nowrap; }
-  #state-cluster { order: 2; }
+"""
+    + header.MASTHEAD_NARROW_CSS
+    + r"""
   #state-clock, #strip-life { display: none; }
+  #offline { margin: 0 -12px -8px; padding: 8px 12px; }
   #record-table td.ending.is-live, #record-table td.stars.is-none { display: none; }
   main { padding: 16px 10px 32px; gap: 20px; }
   section { padding: 14px 14px 16px; }
@@ -231,19 +229,26 @@ footer { max-width: 1180px; margin: 0 auto; padding: 0 20px 48px; display: flex;
 </head>
 <body>
 <a class="skip" href="#record">Skip to the record</a>
-<header id="strip">
-  <h1 id="wordmark">AURORA · TELEMETRY</h1>
-  <a id="to-stream" href="/">← the stream</a>
-  <a id="to-blog" href="/blog">the blog →</a>
-  <div id="state-cluster" aria-label="stage state">
-    <span id="state-dot" class="dot hollow" aria-hidden="true"></span>
-    <span id="state-word">STANDING BY</span>
-    <span id="state-clock"></span>
-  </div>
-  <div id="strip-life"></div>
-  <button id="pause" type="button" aria-pressed="false">pause updates</button>
-  <div id="offline" role="status" hidden>STAGE OFFLINE — this page cannot reach the stage</div>
-</header>
+"""
+    + header.masthead(
+        "TELEMETRY",
+        cluster=(
+            '<div id="state-cluster" aria-label="stage state">'
+            '<span id="state-dot" class="dot hollow" aria-hidden="true"></span>'
+            '<span id="state-word">STANDING BY</span>'
+            '<span id="state-clock"></span>'
+            "</div>"
+            '<button id="pause" type="button" aria-pressed="false">pause updates</button>'
+        ),
+        left='<a id="to-stream" href="/">← the stream</a>',
+        fill='<span id="strip-life"></span>',
+        right='<a id="to-blog" href="/blog">the blog →</a>',
+        banner=(
+            '<div id="offline" role="status" hidden>'
+            "STAGE OFFLINE — this page cannot reach the stage</div>"
+        ),
+    )
+    + r"""
 <main>
   <section id="record" aria-labelledby="record-h">
     <div class="shead">
@@ -894,7 +899,7 @@ var paused = false, offline = false;
 function setOffline(off) {
   offline = !!off;
   setHidden($("offline"), !offline);
-  setClass($("strip"), "offline", offline);
+  setClass($("masthead"), "offline", offline);
 }
 function fetchStream() {
   if (paused) return;
@@ -952,7 +957,7 @@ $("pause").addEventListener("click", function () {
   paused = !paused;
   $("pause").setAttribute("aria-pressed", paused ? "true" : "false");
   $("pause").textContent = paused ? "resume updates" : "pause updates";
-  setClass($("strip"), "paused", paused);
+  setClass($("masthead"), "paused", paused);
   if (!paused) { fetchStream(); fetchLineage(); }
 });
 fetchStream();
@@ -964,3 +969,4 @@ setInterval(tick, 1000);
 </body>
 </html>
 """
+)

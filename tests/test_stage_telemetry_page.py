@@ -13,11 +13,12 @@ COPY = re.sub(r"<script>.*?</script>", "", BODY, flags=re.S)
 def test_the_page_is_a_document_with_a_title_heading_main_and_skip_link():
     assert "<title>aurora — telemetry</title>" in HTML
     assert '<meta name="viewport" content="width=device-width, initial-scale=1">' in HTML
-    assert '<h1 id="wordmark">AURORA · TELEMETRY</h1>' in HTML
+    assert '<span id="wordmark">AURORA</span>' in HTML
+    assert '<h1 id="page-name">TELEMETRY</h1>' in HTML
     assert '<a class="skip" href="#record">' in HTML
     assert "<main>" in HTML and "</main>" in HTML
     assert 'href="/"' in HTML  # the way back to the stream
-    assert "scroll-padding-top: 64px" in STYLE
+    assert "scroll-padding-top: 112px" in STYLE
 
 
 def test_the_sections_come_in_the_ruled_order_and_now_is_absent():
@@ -143,11 +144,7 @@ def test_motion_and_targets_respect_reduced_motion_and_the_narrow_tier():
     narrow = STYLE[STYLE.index("@media (max-width: 719px)") :]
     assert "#record-table thead { display: none; }" in narrow
     assert ".disc { min-height: 44px; }" in narrow
-    assert "min-height: 56px" in STYLE  # the strip
-    assert (
-        "#to-stream, #to-blog { display: inline-flex; align-items: center; min-height: 44px"
-        in STYLE
-    )
+    assert "#mh-b a { display: inline-flex; align-items: center; min-height: 44px" in STYLE
     # Nothing in the narrow tier lowers a target below 44 px.
     for rule in re.findall(r"[^{}]+\{[^}]*min-height:\s*(\d+)px[^}]*\}", narrow):
         assert int(rule) >= 44, narrow
@@ -159,7 +156,8 @@ def test_motion_and_targets_respect_reduced_motion_and_the_narrow_tier():
 
 def test_the_offline_state_brightens_rather_than_dims():
     assert (
-        "#strip.offline #state-word, #strip.offline #state-clock { color: var(--fault); }" in STYLE
+        "#masthead.offline #state-word, #masthead.offline #state-clock { color: var(--fault); }"
+        in STYLE
     )
     assert (
         'id="offline" role="status" hidden>STAGE OFFLINE — this page cannot reach the stage' in HTML
@@ -173,17 +171,17 @@ def test_the_route_is_wired_on_the_stream_handler():
     assert "telemetry_page.TELEMETRY_PAGE_HTML" in handler
 
 
-def test_telemetry_strip_links_to_the_blog():
+def test_telemetry_masthead_links_to_the_blog():
     assert '<a id="to-blog" href="/blog">the blog →</a>' in telemetry_page.TELEMETRY_PAGE_HTML
 
 
 def test_pause_stops_the_clock_and_the_seam_and_units_are_structural():
     script = "\n".join(re.findall(r"<script>(.*?)</script>", HTML, re.S))
     assert "function tick() {\n  if (paused) return;" in script
-    assert 'setClass($("strip"), "paused", paused);' in script
-    assert "#strip.paused .dot { animation: none; }" in STYLE
+    assert 'setClass($("masthead"), "paused", paused);' in script
+    assert "#masthead.paused .dot { animation: none; }" in STYLE
     assert (
-        "#strip.offline .dot { background: var(--fault); border-color: var(--fault); animation: none; }"
+        "#masthead.offline .dot { background: var(--fault); border-color: var(--fault); animation: none; }"
         in STYLE
     )
     assert "--seam:" in STYLE and "--control:" in STYLE
