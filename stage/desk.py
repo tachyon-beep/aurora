@@ -13,7 +13,7 @@ import re
 import threading
 import time
 
-from stage import census, data, llm, moments
+from stage import census, data, llm, moments, store
 
 DEFAULT_DURATION_SECONDS = 20
 MAX_VERDICTS = 12
@@ -58,6 +58,7 @@ MOMENT_LINE_CHARS = 160
 
 _LOCK = threading.Lock()
 _VERDICTS = {}
+_LABELS = {}
 _ATTEMPTS = {}
 _META = {"generated_at": 0.0, "model": ""}
 _START_LOCK = threading.Lock()
@@ -225,8 +226,8 @@ def _parse_verdict(reply):
     return int(match.group(1)), " ".join(match.group(2).split())[:LINE_CHARS]
 
 
-def _store(ordinal, stars, line, evidence):
-    """Cache one verdict for the life of the process."""
+def _store(ordinal, stars, line, evidence, label=None):
+    """Cache one verdict for the life of the process, and persist the labelled ones."""
     with _LOCK:
         _VERDICTS[ordinal] = {
             "ordinal": ordinal,
@@ -235,8 +236,82 @@ def _store(ordinal, stars, line, evidence):
             "evidence": evidence["line"][:EVIDENCE_CHARS],
             "depth": evidence["depth"],
         }
+        if isinstance(label, str) and label:
+            _LABELS[ordinal] = label
         _META["generated_at"] = time.time()
         _META["model"] = model_name()
+    _persist()
+
+
+def _persist():
+    """Write every labelled verdict to the state store, keyed by tombstone label."""
+    with _LOCK:
+        verdicts = {
+            _LABELS[ordinal]: dict(verdict)
+            for ordinal, verdict in _VERDICTS.items()
+            if ordinal in _LABELS
+        }
+        meta = dict(_META)
+    store.save("desk", {"verdicts": verdicts, "meta": meta})
+
+
+def _valid_verdict(verdict, ordinal):
+    """A cleaned copy of one saved verdict under the mirror's ordinal, or None."""
+    if not isinstance(verdict, dict):
+        return None
+    stars = verdict.get("stars")
+    line = verdict.get("line")
+    if isinstance(stars, bool) or not isinstance(stars, int) or not 1 <= stars <= 5:
+        return None
+    if not isinstance(line, str) or not line.strip():
+        return None
+    evidence = verdict.get("evidence")
+    depth = verdict.get("depth")
+    return {
+        "ordinal": ordinal,
+        "stars": stars,
+        "line": line[:LINE_CHARS],
+        "evidence": evidence[:EVIDENCE_CHARS] if isinstance(evidence, str) else "",
+        "depth": depth[:16] if isinstance(depth, str) else DEPTH_FULL,
+    }
+
+
+def restore(work_dir):
+    """Reload persisted verdicts for the lives the mirror still names.
+
+    Saved verdicts are keyed by tombstone label, so a document written before
+    an agent-container reset maps onto nothing and restores nothing; the next
+    persisted verdict rewrites the document with only current labels.
+    """
+    saved = store.load("desk")
+    if saved is None or not isinstance(saved.get("verdicts"), dict):
+        return None
+    notes = data.tombstone_paths(work_dir)
+    ordinals = {
+        os.path.basename(path): len(notes) - position for position, path in enumerate(notes)
+    }
+    for label, verdict in saved["verdicts"].items():
+        ordinal = ordinals.get(label)
+        if ordinal is None:
+            continue
+        cleaned = _valid_verdict(verdict, ordinal)
+        if cleaned is None:
+            continue
+        with _LOCK:
+            if ordinal not in _VERDICTS:
+                _VERDICTS[ordinal] = cleaned
+                _LABELS[ordinal] = label
+    meta = saved.get("meta")
+    if isinstance(meta, dict):
+        generated = meta.get("generated_at")
+        model = meta.get("model")
+        with _LOCK:
+            if not _META["generated_at"] and isinstance(generated, (int, float)):
+                if not isinstance(generated, bool):
+                    _META["generated_at"] = float(generated)
+            if not _META["model"] and isinstance(model, str):
+                _META["model"] = model
+    return None
 
 
 def _collect(telemetry_dir, transcript_path, now=None):
@@ -311,7 +386,7 @@ def _refresh_once(telemetry_dir, transcript_path, now=None, mono=None):
         parsed = _parse_verdict(reply)
         if parsed is not None:
             stars, line = parsed
-            _store(ordinal, stars, line, evidence)
+            _store(ordinal, stars, line, evidence, label=entry.get("label"))
         return True
     return False
 
@@ -327,8 +402,12 @@ def _loop(telemetry_dir, transcript_path):
 
 
 def start_background_refresh(telemetry_dir, transcript_path):
-    """Start the verdict thread. No-op when disabled."""
+    """Start the verdict thread. Restores persisted verdicts first; no thread when disabled."""
     global _THREAD, _STARTED
+    try:
+        restore(os.path.join(telemetry_dir, "work"))
+    except Exception:
+        pass
     if not enabled():
         return None
     with _START_LOCK:
@@ -351,6 +430,7 @@ def _reset_for_tests():
     global _THREAD, _STARTED
     with _LOCK:
         _VERDICTS.clear()
+        _LABELS.clear()
         _ATTEMPTS.clear()
         _META.update({"generated_at": 0.0, "model": ""})
     with _START_LOCK:

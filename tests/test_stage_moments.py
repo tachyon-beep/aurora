@@ -463,3 +463,102 @@ def test_given_up_is_a_pure_read_and_never_arms_the_desk_clock(monkeypatch):
     assert moments.given_up(9) is False
     monkeypatch.delenv("STAGE_SUMMARY_API_KEY")
     assert moments.given_up(9) is True
+
+
+# --- persistence ------------------------------------------------------------
+
+
+@pytest.fixture
+def _state_dir(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("STAGE_STATE_DIR", str(state))
+    return state
+
+
+def test_a_digest_generated_through_refresh_survives_a_restart(tmp_path, monkeypatch, _state_dir):
+    transcript, work = _standard(tmp_path)
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    monkeypatch.setattr(
+        moments.llm,
+        "chat",
+        lambda *a, **k: "MOMENT: T2 | 4 | It read itself.\nACHIEVEMENT: NONE",
+    )
+    assert moments.refresh_once(transcript, work, now=NOW) is True
+    assert moments.cached_digest(1)["moments"][0]["line"] == "It read itself."
+
+    moments._reset_for_tests()
+    assert moments.cached_digest(1) is None
+    moments.restore(work)
+    digest = moments.cached_digest(1)
+    assert digest["moments"] == [{"turn": 2, "stars": 4, "line": "It read itself."}]
+    assert digest["ordinal"] == 1
+
+
+def test_restore_rekeys_a_saved_digest_by_the_mirror_ordinal(tmp_path, _state_dir):
+    from stage import store
+
+    _transcript, work = _standard(tmp_path)
+    saved = {
+        "ordinal": 7,
+        "moments": [{"turn": 2, "stars": 5, "line": "It endured."}],
+        "achievement": "It endured a renumbering",
+        "turns_shown": 5,
+        "turns_total": 5,
+        "generated_at": NOW,
+        "model": "m",
+    }
+    store.save("moments", {"digests": {"incarnation-0001.txt": saved}})
+    moments.restore(work)
+    digest = moments.cached_digest(1)
+    assert digest["ordinal"] == 1
+    assert digest["achievement"] == "It endured a renumbering"
+    assert moments.cached_digest(7) is None
+
+
+def test_restore_ignores_labels_missing_from_the_mirror(tmp_path, _state_dir):
+    from stage import store
+
+    _transcript, work = _standard(tmp_path)
+    saved = {
+        "ordinal": 1,
+        "moments": [{"turn": 2, "stars": 5, "line": "From a prior container run."}],
+        "achievement": None,
+        "turns_shown": 5,
+        "turns_total": 5,
+        "generated_at": NOW,
+        "model": "m",
+    }
+    store.save("moments", {"digests": {"incarnation-gone.txt": saved}})
+    moments.restore(work)
+    assert moments.cached_digests() == {}
+
+
+def test_restore_drops_malformed_digests(tmp_path, _state_dir):
+    from stage import store
+
+    _transcript, work = _standard(tmp_path)
+    store.save(
+        "moments",
+        {
+            "digests": {
+                "incarnation-0001.txt": {
+                    "moments": [
+                        {"turn": "two", "stars": 4, "line": "bad turn"},
+                        {"turn": 2, "stars": 9, "line": "bad stars"},
+                        {"turn": 3, "stars": 2, "line": ""},
+                    ],
+                    "achievement": ["not", "text"],
+                }
+            }
+        },
+    )
+    moments.restore(work)
+    assert moments.cached_digests() == {}
+
+
+def test_restore_never_raises_on_a_damaged_document(tmp_path, _state_dir):
+    _transcript, work = _standard(tmp_path)
+    (_state_dir / "moments.json").write_text("{broken", encoding="utf-8")
+    moments.restore(work)
+    assert moments.cached_digests() == {}

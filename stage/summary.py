@@ -12,7 +12,7 @@ import os
 import threading
 import time
 
-from stage import data, llm
+from stage import data, llm, store
 
 DEFAULT_INTERVAL_SECONDS = 300
 
@@ -262,11 +262,35 @@ def _generate(prompt):
 
 
 def _store(text):
-    """Replace the cached recap."""
+    """Replace the cached recap and persist it."""
     with _LOCK:
         _CACHE["text"] = text
         _CACHE["generated_at"] = time.time()
         _CACHE["model"] = model_name()
+        snapshot = dict(_CACHE)
+    store.save("summary", snapshot)
+
+
+def restore():
+    """Reload the persisted recap when nothing has been generated yet."""
+    saved = store.load("summary")
+    if saved is None:
+        return None
+    text = saved.get("text")
+    if not isinstance(text, str) or not text.strip():
+        return None
+    generated = saved.get("generated_at")
+    if isinstance(generated, bool) or not isinstance(generated, (int, float)):
+        generated = time.time()
+    model = saved.get("model")
+    with _LOCK:
+        current = _CACHE.get("text")
+        if isinstance(current, str) and current.strip():
+            return None
+        _CACHE["text"] = text[: MAX_OUTPUT_CHARS * 2]
+        _CACHE["generated_at"] = float(generated)
+        _CACHE["model"] = model if isinstance(model, str) else ""
+    return None
 
 
 def _refresh_if_due(state, telemetry_dir, transcript_path, now=None):
@@ -309,8 +333,12 @@ def _loop(telemetry_dir, transcript_path):
 
 
 def start_background_refresh(telemetry_dir, transcript_path):
-    """Start the refresh thread. No-op when disabled."""
+    """Start the refresh thread. Restores the persisted recap first; no thread when disabled."""
     global _THREAD, _STARTED
+    try:
+        restore()
+    except Exception:
+        pass
     if not enabled():
         return None
     with _START_LOCK:

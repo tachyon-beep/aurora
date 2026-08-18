@@ -477,3 +477,75 @@ def test_the_prompt_states_the_digest_coverage():
     prompt = desk._prompt(evidence, "", digest)
     assert "digest coverage: 30 of 41 turns read" in prompt
     assert prompt.index("digest coverage") < prompt.index("moment: turn 3")
+
+
+# --- persistence ------------------------------------------------------------
+
+
+@pytest.fixture
+def _state_dir(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("STAGE_STATE_DIR", str(state))
+    return state
+
+
+def test_a_verdict_generated_through_refresh_survives_a_restart(tmp_path, monkeypatch, _state_dir):
+    now = time.time()
+    telemetry, transcript = _tree(tmp_path, [now - 600, now - 60])
+    _write_transcript(transcript, [now - 900])
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    monkeypatch.setattr(desk.llm, "chat", lambda *a, **k: "STARS: 4 | It worked steadily.")
+    assert desk._refresh_once(telemetry, transcript, now=now) is True
+    kept = {o: v for o, v in desk._VERDICTS.items()}
+    assert kept
+
+    desk._reset_for_tests()
+    assert desk._VERDICTS == {}
+    desk.restore(os.path.join(telemetry, "work"))
+    (ordinal,) = kept
+    verdict = desk.cached_verdict(ordinal)
+    assert verdict["stars"] == 4
+    assert verdict["line"] == "It worked steadily."
+    assert desk.cached_verdicts()["verdicts"]
+
+
+def test_desk_restore_rekeys_by_the_mirror_ordinal(tmp_path, _state_dir, monkeypatch):
+    from stage import store
+
+    now = time.time()
+    telemetry, _transcript = _tree(tmp_path, [now - 600])
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    saved = {
+        "ordinal": 9,
+        "stars": 5,
+        "line": "It endured a renumbering.",
+        "evidence": "lived 10m",
+        "depth": "full",
+    }
+    store.save("desk", {"verdicts": {"incarnation-0001.txt": saved}, "meta": {}})
+    desk.restore(os.path.join(telemetry, "work"))
+    assert desk.cached_verdict(1)["ordinal"] == 1
+    assert desk.cached_verdict(9) is None
+
+
+def test_desk_restore_ignores_unknown_labels_and_malformed_verdicts(
+    tmp_path, _state_dir, monkeypatch
+):
+    from stage import store
+
+    now = time.time()
+    telemetry, _transcript = _tree(tmp_path, [now - 600])
+    monkeypatch.setenv("STAGE_SUMMARY_API_KEY", STAGE_KEY)
+    store.save(
+        "desk",
+        {
+            "verdicts": {
+                "incarnation-gone.txt": {"stars": 5, "line": "old container"},
+                "incarnation-0001.txt": {"stars": 9, "line": "bad stars"},
+            },
+            "meta": {},
+        },
+    )
+    desk.restore(os.path.join(telemetry, "work"))
+    assert desk.cached_verdicts() is None

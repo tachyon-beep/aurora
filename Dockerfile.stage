@@ -1,6 +1,7 @@
 FROM python:3.13-slim
 
-RUN useradd --create-home --uid 1000 stageuser
+RUN useradd --create-home --uid 1000 stageuser \
+    && mkdir /stage-state && chown stageuser:stageuser /stage-state
 
 COPY --chown=stageuser:stageuser stage/ /opt/stage/stage/
 

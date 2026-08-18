@@ -279,6 +279,11 @@ services:
       # Frames captured by the sense service; written only by sense,
       # read-only here, served on the stream port's /frame/ route.
       - ./volumes/sense:/sense:ro
+      # The stage's own generated prose (digests, verdicts, recap), persisted
+      # across restarts. Mounted into the stage and nowhere else: it is no
+      # channel to any other container, and it holds nothing the stream page
+      # does not already show.
+      - stage_state:/stage-state
     ports:
       - "127.0.0.1:${STAGE_STREAM_PORT:-8091}:8091"
       - "127.0.0.1:${STAGE_CONSOLE_PORT:-8092}:8092"
@@ -314,3 +319,4 @@ volumes:
   llm_console: {}
   pump: {}
   video: {}
+  stage_state: {}

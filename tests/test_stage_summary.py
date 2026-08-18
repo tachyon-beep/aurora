@@ -491,3 +491,44 @@ def test_the_digest_no_longer_moves_with_the_turn_count(tmp_path):
     before = summary._collect(telemetry, transcript)["digest_material"]
     assert "turns this life" not in before
     assert "minutes alive" not in before
+
+
+# --- persistence ------------------------------------------------------------
+
+
+def test_a_recap_survives_a_restart(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("STAGE_STATE_DIR", str(state))
+    summary._store("A recap worth keeping.")
+    summary._reset_for_tests()
+    assert summary.cached_story() is None
+    summary.restore()
+    story = summary.cached_story()
+    assert story["text"] == "A recap worth keeping."
+    assert isinstance(story["generated_at"], float)
+
+
+def test_restore_ignores_a_damaged_or_malformed_recap(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("STAGE_STATE_DIR", str(state))
+    from stage import store
+
+    store.save("summary", {"text": 7, "generated_at": "yesterday", "model": []})
+    summary.restore()
+    assert summary.cached_story() is None
+    (state / "summary.json").write_text("{broken", encoding="utf-8")
+    summary.restore()
+    assert summary.cached_story() is None
+
+
+def test_restore_does_not_replace_a_newer_recap(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("STAGE_STATE_DIR", str(state))
+    summary._store("The old recap.")
+    summary._reset_for_tests()
+    summary._store("The current recap.")
+    summary.restore()
+    assert summary.cached_story()["text"] == "The current recap."

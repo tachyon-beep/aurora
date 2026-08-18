@@ -12,11 +12,12 @@ reads the cache. The desk waits for a life's digest before rating it, so a
 verdict is argued from the whole life rather than from a note alone.
 """
 
+import os
 import re
 import threading
 import time
 
-from stage import census, data, diag, llm
+from stage import census, data, diag, llm, store
 
 POLL_SECONDS = 30
 MAX_LIVES = 12
@@ -84,6 +85,7 @@ _ACHIEVEMENT_PATTERN = re.compile(
 
 _LOCK = threading.Lock()
 _DIGESTS = {}
+_LABELS = {}
 _ATTEMPTS = {}
 _SKIPPED = set()
 _ASKED = {}
@@ -422,8 +424,8 @@ def _parse(reply, shown_ids):
     return moments, achievement
 
 
-def _store(ordinal, moments, achievement, shown, total):
-    """Cache one digest for the life of the process."""
+def _store(ordinal, moments, achievement, shown, total, label=None):
+    """Cache one digest for the life of the process, and persist the labelled ones."""
     with _LOCK:
         _DIGESTS[ordinal] = {
             "ordinal": ordinal,
@@ -434,6 +436,94 @@ def _store(ordinal, moments, achievement, shown, total):
             "generated_at": time.time(),
             "model": model_name(),
         }
+        if isinstance(label, str) and label:
+            _LABELS[ordinal] = label
+    _persist()
+
+
+def _persist():
+    """Write every labelled digest to the state store, keyed by tombstone label."""
+    with _LOCK:
+        digests = {
+            _LABELS[ordinal]: dict(digest)
+            for ordinal, digest in _DIGESTS.items()
+            if ordinal in _LABELS
+        }
+    store.save("moments", {"digests": digests})
+
+
+def _valid_digest(digest, ordinal):
+    """A cleaned copy of one saved digest under the mirror's ordinal, or None."""
+    if not isinstance(digest, dict):
+        return None
+    kept = []
+    for moment in digest.get("moments") or []:
+        if not isinstance(moment, dict):
+            continue
+        turn = moment.get("turn")
+        stars = moment.get("stars")
+        line = moment.get("line")
+        if isinstance(turn, bool) or not isinstance(turn, int):
+            continue
+        if isinstance(stars, bool) or not isinstance(stars, int) or not 1 <= stars <= 5:
+            continue
+        if not isinstance(line, str) or not line.strip():
+            continue
+        kept.append({"turn": turn, "stars": stars, "line": line[:LINE_CHARS]})
+        if len(kept) >= MAX_MOMENTS:
+            break
+    if not kept:
+        return None
+    achievement = digest.get("achievement")
+    if not isinstance(achievement, str) or not achievement.strip():
+        achievement = None
+    else:
+        achievement = achievement[:ACHIEVEMENT_CHARS]
+    counts = {}
+    for field in ("turns_shown", "turns_total"):
+        value = digest.get(field)
+        counts[field] = value if isinstance(value, int) and not isinstance(value, bool) else None
+    generated = digest.get("generated_at")
+    if isinstance(generated, bool) or not isinstance(generated, (int, float)):
+        generated = time.time()
+    model = digest.get("model")
+    return {
+        "ordinal": ordinal,
+        "moments": kept,
+        "achievement": achievement,
+        "turns_shown": counts["turns_shown"],
+        "turns_total": counts["turns_total"],
+        "generated_at": float(generated),
+        "model": model if isinstance(model, str) else "",
+    }
+
+
+def restore(work_dir):
+    """Reload persisted digests for the lives the mirror still names.
+
+    Saved digests are keyed by tombstone label, so a document written before
+    an agent-container reset maps onto nothing and restores nothing; the next
+    persisted digest rewrites the document with only current labels.
+    """
+    saved = store.load("moments")
+    if saved is None or not isinstance(saved.get("digests"), dict):
+        return None
+    notes = data.tombstone_paths(work_dir)
+    ordinals = {
+        os.path.basename(path): len(notes) - position for position, path in enumerate(notes)
+    }
+    for label, digest in saved["digests"].items():
+        ordinal = ordinals.get(label)
+        if ordinal is None:
+            continue
+        cleaned = _valid_digest(digest, ordinal)
+        if cleaned is None:
+            continue
+        with _LOCK:
+            if ordinal not in _DIGESTS:
+                _DIGESTS[ordinal] = cleaned
+                _LABELS[ordinal] = label
+    return None
 
 
 def _due(ordinal, mono):
@@ -505,7 +595,7 @@ def refresh_once(transcript_path, work_dir, now=None, mono=None):
         parsed = _parse(reply, shown_ids)
         if parsed is not None:
             moments, achievement = parsed
-            _store(ordinal, moments, achievement, len(shown_ids), count)
+            _store(ordinal, moments, achievement, len(shown_ids), count, label=row.get("label"))
         return True
     return False
 
@@ -521,8 +611,12 @@ def _loop(transcript_path, work_dir):
 
 
 def start_background_refresh(transcript_path, work_dir):
-    """Start the digest thread. No-op when disabled."""
+    """Start the digest thread. Restores persisted digests first; no thread when disabled."""
     global _THREAD, _STARTED
+    try:
+        restore(work_dir)
+    except Exception:
+        pass
     if not enabled():
         return None
     with _START_LOCK:
@@ -545,6 +639,7 @@ def _reset_for_tests():
     global _THREAD, _STARTED
     with _LOCK:
         _DIGESTS.clear()
+        _LABELS.clear()
         _ATTEMPTS.clear()
         _SKIPPED.clear()
         _ASKED.clear()

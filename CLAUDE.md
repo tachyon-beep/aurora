@@ -160,6 +160,10 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      of the volumes the agent and stage do share (`diode`, `telemetry`, both mounted read-only into
      the stage). Its absence disables generation rather than degrading any other function. The
      stage never mounts `/state`.
+     The stage also mounts one writable volume of its own, `stage_state` at `/stage-state`,
+     where it persists its generated prose (per-life digests, desk verdicts, the recap) across
+     restarts. That volume is mounted into the stage and nowhere else — it is no channel to the
+     agent or any other container — and it holds only what the stream page already shows.
      Its console (port 8092) binds host-loopback only, requires `STAGE_CONSOLE_TOKEN` on every
      request, and is never exposed through the tunnel. The stream port (8091) serves no mutating
      endpoints. The console browser resolves paths only inside its allow-listed roots and never
