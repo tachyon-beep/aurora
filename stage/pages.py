@@ -459,6 +459,10 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
 #now-evidence { margin-top: 8px; font: 400 13px/18px var(--mono); letter-spacing: .06em;
   text-transform: uppercase; color: var(--paper-dim); white-space: nowrap; overflow: hidden;
   text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+/* Past NOW_AGED_SECONDS the read is old news: the marker names its age and
+   the line steps back from full contrast. */
+#now-age { color: var(--taken); font-variant-numeric: tabular-nums; }
+#now.aged #now-colour { color: var(--paper-dim); }
 /* commentary:end */
 
 /* ---------- ribbon ---------- */
@@ -716,7 +720,7 @@ html, body { width: 1920px; height: 1080px; margin: 0; padding: 0; overflow: hid
     </section>
 
     <section id="now" class="panel">
-      <div class="ptitle"><span>NOW</span></div>
+      <div class="ptitle"><span>NOW</span><span id="now-age" hidden></span></div>
       <p id="now-colour" aria-live="polite"></p>
       <div id="now-evidence"></div>
     </section>
@@ -1675,13 +1679,22 @@ function rotateLineageFoot(nowMs) {
 
 /* ---------- now ---------- */
 /* NOW: the generated colour line is the subject; the evidence line prefers
-   the beat's counted fact and falls back to the play phrase. */
+   the beat's counted fact and falls back to the play phrase. The line
+   regenerates on the commentary's own cadence, not the feed's, so past
+   NOW_AGED_SECONDS the panel marks itself as old news instead of passing
+   a stale read off as current. */
+var NOW_AGED_SECONDS = 120;
 function renderNow() {
   var c = (snap.commentary || {}), play = c.play || {}, colour = c.colour || {};
   setText($("now-colour"), colour.text || "");
   var line = colour.evidence || play.phrase || "waiting for the first word";
   var age = play.epoch == null ? null : Math.max(0, clock() / 1000 - play.epoch);
   setText($("now-evidence"), line + (age == null ? "" : " · " + dur(age)));
+  var aged = age != null && age > NOW_AGED_SECONDS;
+  setClass($("now"), "aged", aged);
+  var marker = $("now-age");
+  marker.hidden = !aged;
+  setText(marker, aged ? "AS OF " + dur(age) + " AGO" : "");
 }
 
 /* ---------- ribbon ---------- */

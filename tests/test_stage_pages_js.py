@@ -1502,10 +1502,19 @@ global.snap = { commentary: { play: { phrase: "running call_model", epoch: NOW /
 renderNow();
 out.colour = fake("now-colour").textContent;
 out.evidence = fake("now-evidence").textContent;
+out.fresh_aged = !!fake("now")._aged;
+out.fresh_marker_hidden = fake("now-age").hidden;
+global.snap = { commentary: { play: { phrase: "quiet", epoch: NOW / 1000 - 300 },
+  colour: { text: "It waits.", generated: true, evidence: "quiet for 5m" } } };
+renderNow();
+out.stale_aged = !!fake("now")._aged;
+out.stale_marker_hidden = fake("now-age").hidden;
+out.stale_marker = fake("now-age").textContent;
 global.snap = { commentary: { play: { phrase: "thinking it over", epoch: null },
   colour: { text: "Template.", generated: false, evidence: "" } } };
 renderNow();
 out.phrase_fallback = fake("now-evidence").textContent;
+out.no_epoch_aged = !!fake("now")._aged;
 global.snap = { commentary: {} };
 renderNow();
 out.empty = fake("now-evidence").textContent;
@@ -1518,7 +1527,13 @@ def test_now_prefers_evidence_over_phrase(tmp_path):
     out = _run(NOW_HARNESS.replace("__BLOCK__", _now_block()), tmp_path)
     assert out["colour"] == "It repeats."
     assert out["evidence"] == "run_shell x3 in a row · 16s"
+    assert out["fresh_aged"] is False
+    assert out["fresh_marker_hidden"] is True
+    assert out["stale_aged"] is True
+    assert out["stale_marker_hidden"] is False
+    assert out["stale_marker"] == "AS OF 300s AGO"
     assert out["phrase_fallback"] == "thinking it over"
+    assert out["no_epoch_aged"] is False
     assert out["empty"] == "waiting for the first word"
 
 
