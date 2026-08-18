@@ -29,6 +29,7 @@ DIODE_VERBS = {
     "airquality": "read the air quality",
     "tides": "read the sea state",
     "solarwind": "read the solar wind",
+    "nearby": "read what is nearby",
     "wikipedia": "looked something up",
     "entropy": "pulled random bytes",
     "abc": "read the headlines",
