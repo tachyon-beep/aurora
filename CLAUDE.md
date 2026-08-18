@@ -176,6 +176,32 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      from are the only contents, and all are agent-readable surfaces that stay within invariant 2.
      The sense service shares a network with no other service (`sense_egress` is its alone), so
      the viewer remains the sole occupant of the compose default network.
+   - The **video service** (`video.py`) answers a closed command vocabulary the agent writes
+     to the shared `/video` volume. The agent supplies an **11-character video id** or a
+     length- and charset-bounded search query, **never a URL**: no agent-authored string
+     reaches a host, scheme, or path. URLs the service composes it builds from that
+     validated id or query; URLs it receives back from the resolver — the media manifest,
+     a caption track — are third-party data and are re-validated before use (https only,
+     host allow-list matched on label boundaries, private/loopback/reserved rejection,
+     redirect re-validation on every hop), so no unvalidated URL reaches `ffmpeg` or an
+     HTTP fetch. The guarantee closing this channel: the service holds **no credential of
+     any kind**, mounts nothing else of the agent's world, and is the sole occupant of
+     `video_egress`. Its reach is clamped by the operator-side `VIDEO_HOURLY_MAX`,
+     `VIDEO_STILL_HOURLY_MAX` and `VIDEO_TEXT_HOURLY_MAX` on the `min(console value,
+     operator max)` pattern `DIODE_HOURLY_MAX` uses — a console value only ever lowers an
+     allowance — and those counters live in the service's own memory, never on an
+     agent-writable volume: `/video/state.json` is published and never read back, so
+     editing it cannot restore a spent allowance. `/video` is mounted into the agent and
+     the video service and **nowhere else — in particular not the stage**, so nothing this
+     service writes is rendered automatically on any outward-facing page. That closes
+     *automatic* publication, not relay: an agent that chose to could still pass something
+     outward through `/diode`, which is the already-accepted `commons` path. Ingested
+     third-party text (titles, captions) is bounded by byte, field and item caps with a
+     truncation marker, and is never escaped, rewritten, or otherwise laundered — the
+     agent audits what it reads. `/video/README.md`, `/video/HELP.md` and
+     `/video/state.json` are agent-readable surfaces and stay within invariant 2, and no
+     file copied into any image names the video platform, in a help string, a state field,
+     or the garden sentence.
    - The **books surface** (`/books`) is baked into the agent image at build time from the
      repository's gitignored `books/` directory (only `books/.gitkeep` is tracked, and
      `.dockerignore` keeps it out of the image, so a fresh clone builds an empty `/books`). It is
