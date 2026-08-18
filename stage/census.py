@@ -13,7 +13,9 @@ its new content, which is the same truth the console shows.
 import threading
 import time
 
-from stage import diag
+from stage import diag, store
+
+FIGURE_KEYS = ("turns", "subcalls", "errors", "edits")
 
 POLL_SECONDS = 10
 
@@ -43,11 +45,64 @@ def cached_life(ordinal):
     return None
 
 
+def _valid_figures(entry):
+    """A stored figure row, or None when any field is malformed."""
+    if not isinstance(entry, dict):
+        return None
+    cleaned = {}
+    for key in FIGURE_KEYS:
+        value = entry.get(key)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            return None
+        cleaned[key] = value
+    return cleaned
+
+
+def _merge_figures(lives):
+    """Overlay persisted figures onto dead lives; persist what this pass measured.
+
+    A dead life's true counts are fixed, so the highest measurement wins: the
+    live transcript either still covers the life or has rotated it down to
+    zero. Figures are keyed by tombstone label, which survives renumbering;
+    labels no longer in the mirror are pruned on save. A pass whose counts are
+    inexact (an undatable tombstone, an unplaceable entry) overlays but never
+    persists, so misplaced counts are not frozen.
+    """
+    doc = store.load("census")
+    stored = (
+        doc.get("figures") if isinstance(doc, dict) and isinstance(doc.get("figures"), dict) else {}
+    )
+    exact = bool(lives) and all(life.get("exact") for life in lives)
+    figures = {}
+    for life in lives:
+        label = life.get("label")
+        if life.get("current") or not isinstance(label, str) or not label:
+            continue
+        known = _valid_figures(stored.get(label))
+        if known:
+            for key in FIGURE_KEYS:
+                life[key] = max(life[key], known[key])
+        if exact:
+            figures[label] = {key: life[key] for key in FIGURE_KEYS}
+    if exact and figures != stored:
+        store.save("census", {"figures": figures})
+    return lives
+
+
 def refresh_once(transcript_path, work_dir, now=None):
-    """Take the census once and store it; returns the new list."""
+    """Take the census once and store it; returns the new list.
+
+    Dead lives' figures are backed by the stage's own store, so a life whose
+    transcript entries have rotated into an archive keeps the counts that
+    were measured while they were still readable.
+    """
     if now is None:
         now = time.time()
     lives = diag.incarnations(transcript_path, work_dir, now=now)
+    try:
+        lives = _merge_figures(lives)
+    except Exception:
+        pass
     with _LOCK:
         _MEMO["lives"] = [dict(life) for life in lives]
         _MEMO["taken_at"] = now
