@@ -451,3 +451,45 @@ def test_verify_script_video_state_json_poll_has_an_explicit_failure_path():
     assert "docker compose exec -T agent test -f /video/state.json" in block
     assert 'if [ "$video_state_ok" -ne 1 ]; then' in block
     assert 'echo "FAIL: /video/state.json has not appeared"; exit 1' in block
+
+
+# the garden sentence
+
+
+def test_the_garden_names_the_video_surface():
+    text = read("scripts/build_garden.py")
+    assert "recorded video can be searched, transcribed and sampled through /video" in text
+
+
+def test_the_garden_sentence_names_no_platform():
+    text = read("scripts/build_garden.py").lower()
+    assert "youtube" not in text
+
+
+def test_no_image_file_names_the_platform():
+    # Invariant 2: the agent reaches "these are YouTube ids" from evidence in
+    # its own search results, not from a caption the operator wrote. video.py
+    # names the host in its allow-list and composed watch URLs, which is
+    # unavoidable -- a host allow-list cannot be written without the host --
+    # but no help string or state field may.
+    for name in ("video.py", "Dockerfile.video"):
+        text = read(name)
+        help_and_state = [
+            line
+            for line in text.splitlines()
+            if '"help"' in line or "HELP" in line or "state" in line.lower()
+        ]
+        assert "youtube" not in " ".join(help_and_state).lower()
+
+
+def test_the_generated_agent_surfaces_name_no_platform():
+    # Stronger than the source-line filter above: assert on what the agent
+    # actually reads. HELP.md is generated from the COMMANDS help strings and
+    # state.json from the same vocabulary, so a platform name introduced into
+    # either would reach the agent regardless of which source line carried it.
+    import video
+
+    rendered = " ".join(spec["help"] for spec in video.COMMANDS.values())
+    assert "youtube" not in rendered.lower()
+    assert "googlevideo" not in rendered.lower()
+    assert "ytimg" not in rendered.lower()

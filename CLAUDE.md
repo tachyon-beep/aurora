@@ -198,10 +198,13 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      outward through `/diode`, which is the already-accepted `commons` path. Ingested
      third-party text (titles, captions) is bounded by byte, field and item caps with a
      truncation marker, and is never escaped, rewritten, or otherwise laundered — the
-     agent audits what it reads. `/video/README.md`, `/video/HELP.md` and
-     `/video/state.json` are agent-readable surfaces and stay within invariant 2, and no
-     file copied into any image names the video platform, in a help string, a state field,
-     or the garden sentence.
+     agent audits what it reads. `ffmpeg` runs with an explicit protocol allow-list, and
+     the service prunes `output/` and `stills/` on every cycle whatever the agent does, so
+     the volume cannot grow without bound. The agent-readable surfaces are
+     `/video/state.json` (published every cycle, read back by nothing), the `HELP.md` the
+     `help` command writes on demand, and the contents of `output/` and `stills/`; all stay
+     within invariant 2. No file copied into any image names the video platform, in a help
+     string, a state field, or the garden sentence.
    - The **books surface** (`/books`) is baked into the agent image at build time from the
      repository's gitignored `books/` directory (only `books/.gitkeep` is tracked, and
      `.dockerignore` keeps it out of the image, so a fresh clone builds an empty `/books`). It is
