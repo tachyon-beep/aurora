@@ -819,6 +819,8 @@ def resolve_binding(video_id):
             "--dump-single-json",
             "--skip-download",
             "--no-warnings",
+            "--extractor-args",
+            "youtube:player_client=android",
             "-f",
             "best[height<=720]",
             f"https://www.youtube.com/watch?v={vid}",

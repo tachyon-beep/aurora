@@ -2035,3 +2035,18 @@ def test_write_help_does_not_write_through_a_planted_symlink(volume):
     video.write_help(_open_variables())
     assert victim.read_text() == "ORIGINAL"
     assert not _os.path.islink(video.HELP_FILE)
+
+
+def test_resolve_binding_pins_the_android_player_client(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, timeout):
+        seen["argv"] = argv
+        return 0, '{"url": "https://example.com/m", "duration": 60}'
+
+    monkeypatch.setattr(video, "run_binary", fake_run)
+    binding = video.resolve_binding("dQw4w9WgXcQ")
+    assert binding is not None
+    argv = seen["argv"]
+    flag = argv.index("--extractor-args")
+    assert argv[flag + 1] == "youtube:player_client=android"
