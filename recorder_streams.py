@@ -10,6 +10,7 @@ POLL_SECONDS = 5
 CONSOLE_MAX_BYTES = 65_536
 MAX_STREAMS = 8
 ABSENT_MAX = 16
+MODEL_HISTORY_MAX = 8
 DEFAULT_STREAM_BUDGET = 10
 STREAM_LIMIT_MAX = 120
 STREAM_TOKEN_LIMIT_MAX = 2_000_000
@@ -466,6 +467,10 @@ a name that was served and is no longer declared keeps an entry in
 streams.json with the status absent and the time it stopped being served.
 the entry names no socket: the socket is gone.
 
+each served socket's entry states model_since, the time its current model
+was set, and previous_models, the models that name was served with before
+it and when each stopped.
+
 declared values replace the corresponding fields of each request on that
 socket. the current sockets, their settings, and their use are in
 streams.json. the model identifiers a declaration may set are listed in
@@ -483,6 +488,7 @@ def render_state(
     console_error=None,
     token_histories=None,
     absent=None,
+    models=None,
 ):
     """The streams.json document describing every socket in the directory.
 
@@ -491,6 +497,7 @@ def render_state(
     """
     token_histories = token_histories or {}
     absent = absent or {}
+    models = models or {}
     streams = {"core": {"socket": "core.sock", "status": "active"}}
     for name, settings in accepted.items():
         streams[name] = {
@@ -506,6 +513,13 @@ def render_state(
                 **token_status(token_histories.get(name, []), now),
             },
         }
+        record = models.get(name)
+        if record is not None:
+            streams[name]["model_since"] = int(record["since"])
+            streams[name]["previous_models"] = [
+                {"model": entry["model"], "until": int(entry["until"])}
+                for entry in record["previous"]
+            ]
     for name, reason in rejected.items():
         streams[name] = {"status": "rejected", "reason": reason}
     for name, since in absent.items():
@@ -578,6 +592,7 @@ class StreamRegistry:
         self._shared_hour = None
         self._shared_entries = []
         self._absent = {}
+        self._models = {}
         self._clock = clock
 
     def _shared_roll(self, now):
@@ -620,6 +635,27 @@ class StreamRegistry:
                 kept[name] = recent
         self._token_histories = kept
 
+    def _note_models(self, accepted, now):
+        """Record when each name's model was set, and the ones it replaced.
+
+        A response carries nothing that distinguishes one model from another,
+        so a name whose model changed is otherwise indistinguishable from one
+        that did not.
+        """
+        for name, settings in accepted.items():
+            model = settings.get("model")
+            record = self._models.get(name)
+            if record is None:
+                self._models[name] = {"model": model, "since": now, "previous": []}
+            elif record["model"] != model:
+                record["previous"].append({"model": record["model"], "until": now})
+                del record["previous"][:-MODEL_HISTORY_MAX]
+                record["model"] = model
+                record["since"] = now
+        for name in list(self._models):
+            if name not in self._settings and name not in self._absent:
+                del self._models[name]
+
     def _note_absent(self, removed, now):
         """Stamp departed names and forget the oldest beyond ABSENT_MAX.
 
@@ -644,6 +680,7 @@ class StreamRegistry:
             self._rejected = dict(rejected)
             now = self._clock()
             self._note_absent(removed, now)
+            self._note_models(accepted, now)
             self._prune_histories(now)
             return added, removed
 
@@ -749,6 +786,7 @@ class StreamRegistry:
                 console_error,
                 dict(self._token_histories),
                 dict(self._absent),
+                self._models,
             )
             self._shared_roll(now)
             allowance = global_token_limit_max()

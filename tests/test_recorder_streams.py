@@ -1256,3 +1256,67 @@ def test_a_rejected_stream_is_not_reported_as_absent():
 
 def test_the_readme_states_what_an_absent_entry_means():
     assert "absent" in rs.README_TEXT
+
+
+def test_a_stream_records_when_its_model_was_set():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"s1": {"budget": 10, "model": "a/one"}}, {})
+
+    entry = registry.state()["streams"]["s1"]
+    assert entry["model_since"] == 10_000
+    assert entry["previous_models"] == []
+
+
+def test_a_changed_model_keeps_the_one_it_replaced():
+    # Nothing about a chat completion's shape reveals that the model behind a
+    # name changed, so the only way the agent can tell is a recorded history.
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"s1": {"budget": 10, "model": "a/one"}}, {})
+    now[0] = 12_000.0
+    registry.apply({"s1": {"budget": 10, "model": "b/two"}}, {})
+
+    entry = registry.state()["streams"]["s1"]
+    assert entry["model_since"] == 12_000
+    assert entry["previous_models"] == [{"model": "a/one", "until": 12_000}]
+
+
+def test_an_unchanged_model_does_not_restamp_or_accumulate():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"s1": {"budget": 10, "model": "a/one"}}, {})
+    now[0] = 12_000.0
+    registry.apply({"s1": {"budget": 20, "model": "a/one"}}, {})
+
+    entry = registry.state()["streams"]["s1"]
+    assert entry["model_since"] == 10_000
+    assert entry["previous_models"] == []
+
+
+def test_the_model_history_is_capped():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    for index in range(rs.MODEL_HISTORY_MAX + 4):
+        now[0] += 1.0
+        registry.apply({"s1": {"budget": 10, "model": f"a/{index}"}}, {})
+
+    history = registry.state()["streams"]["s1"]["previous_models"]
+    assert len(history) == rs.MODEL_HISTORY_MAX
+    assert history[-1]["model"] == f"a/{rs.MODEL_HISTORY_MAX + 2}"
+
+
+def test_a_declaration_that_omits_a_model_records_that_too():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"s1": {"budget": 10, "model": "a/one"}}, {})
+    now[0] = 12_000.0
+    registry.apply({"s1": {"budget": 10}}, {})
+
+    entry = registry.state()["streams"]["s1"]
+    assert entry["model_since"] == 12_000
+    assert entry["previous_models"] == [{"model": "a/one", "until": 12_000}]
+
+
+def test_the_readme_states_that_a_replaced_model_is_recorded():
+    assert "previous_models" in rs.README_TEXT
