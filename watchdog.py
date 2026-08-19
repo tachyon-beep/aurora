@@ -1,4 +1,3 @@
-import datetime
 import hashlib
 import os
 import re
@@ -11,7 +10,6 @@ import time
 
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
 WATCHDOG_FILE = os.path.join(WORK_DIR, "watchdog.py")
-TRANSCRIPT_FILE = os.path.join(WORK_DIR, "agent_life_transcript.jsonl")
 AGENT_FILE = os.path.join(WORK_DIR, "agent.py")
 
 BASELINE_REF = "baseline"
@@ -173,8 +171,7 @@ def _force_rmtree(path):
 def clear_build_dir(build_dir=BUILD_DIR):
     """Remove the contents of the build directory, keeping the directory.
 
-    Called at the archive-and-reset boundary alongside archive_transcript and
-    git_reset_all. Does nothing when the directory does not exist. Directory
+    Called at the archive-and-reset boundary alongside git_reset_all. Does nothing when the directory does not exist. Directory
     modes that deny removal are restored first. Symbolic links are removed as
     links and never followed.
     """
@@ -320,19 +317,6 @@ sys.stdin = io.StringIO("Beep\\n")
         print(f"Error sanitizing stdin: {e}")
 
 
-def archive_transcript():
-    if not os.path.exists(TRANSCRIPT_FILE):
-        return
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest_dir = os.path.join(WORK_DIR, "tombstones")
-    os.makedirs(dest_dir, exist_ok=True)
-    dest = os.path.join(dest_dir, f"transcript_{stamp}.jsonl")
-    try:
-        shutil.copy2(TRANSCRIPT_FILE, dest)
-    except OSError:
-        pass
-
-
 def spawn_agent():
     sanitize_stdin(AGENT_FILE)
     proc = subprocess.Popen(
@@ -399,7 +383,6 @@ def apply_recovery(action, ret, own_hash):
     the harness's own restoration. tier3 exits for a container respawn.
     """
     if action == "archive_reset":
-        archive_transcript()
         git_reset_all()
         clear_build_dir()
         own_hash = file_hash(WATCHDOG_FILE)

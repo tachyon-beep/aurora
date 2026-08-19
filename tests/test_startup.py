@@ -207,3 +207,13 @@ def test_the_garden_names_the_books_surface_factually() -> None:
     template = _read("scripts/build_garden.py")
     assert "read-only document files are present at /books." in template
     assert template.count("/books") == 1
+
+
+def test_the_workspace_copy_ships_no_transcript_tooling() -> None:
+    # parse_transcripts.py reads transcript files that exist only on the
+    # recorder's volume; shipped into /opt/agent it becomes a workspace file
+    # promising transcripts the agent container can never hold.
+    dockerfile = _read("Dockerfile")
+    workspace = next(line for line in dockerfile.splitlines() if " /opt/agent/" in line)
+
+    assert "parse_transcripts" not in workspace

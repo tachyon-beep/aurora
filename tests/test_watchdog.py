@@ -345,3 +345,13 @@ def test_reap_children_translates_a_signalled_agents_exit_into_returncode():
 
 def test_reap_children_returns_quietly_with_no_children():
     watchdog.reap_children(None)
+
+
+def test_watchdog_ships_no_transcript_archiver():
+    # The agent-side transcript file never exists (the recorder writes
+    # transcripts to its own volume), so an archiver for it is a false
+    # affordance in the agent's world.
+    assert not hasattr(watchdog, "archive_transcript")
+    assert not hasattr(watchdog, "TRANSCRIPT_FILE")
+    source = open(watchdog.__file__, encoding="utf-8").read()
+    assert "agent_life_transcript" not in source
