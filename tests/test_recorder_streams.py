@@ -763,7 +763,7 @@ def test_a_request_refusal_reserves_no_tokens():
     registry.settle("aux", ticket, 0)
     assert registry.state()["streams"]["aux"]["tokens"]["used"] == 0
     registry.apply({}, {})
-    assert "aux" not in registry.state()["streams"]
+    assert registry.state()["streams"]["aux"]["status"] == "absent"
 
 
 def test_the_token_ceiling_is_reported_when_both_are_spent():
@@ -835,11 +835,14 @@ def test_a_retired_stream_token_charge_ages_out_after_the_window():
 
 
 def test_a_retired_stream_is_absent_from_the_state_document():
+    # It keeps a row rather than vanishing: a hole cannot be told apart from
+    # a name the reader misremembered or a publisher that broke.
     registry = _registry()
     registry.apply({"aux": {"budget": 1}}, {})
     registry.admit("aux", b"{}")
     registry.apply({}, {})
-    assert "aux" not in registry.state()["streams"]
+    entry = registry.state()["streams"]["aux"]
+    assert entry == {"status": "absent", "absent_since": 10_000}
 
 
 def test_reject_moves_a_stream_into_the_rejected_set():
@@ -1190,3 +1193,66 @@ def test_state_reports_the_shared_pool_with_a_remaining_percentage(monkeypatch):
 
 def test_the_readme_names_the_shared_pool():
     assert "shared_tokens" in rs.README_TEXT
+
+
+def test_a_removed_stream_is_retained_as_absent_rather_than_vanishing():
+    # A name that stops appearing leaves a hole, and a hole is ambiguous
+    # between removed, misremembered, and publisher-broken. An absent row
+    # states what happened.
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"s1": {"budget": 10}}, {})
+    assert registry.state()["streams"]["s1"]["status"] == "active"
+
+    now[0] = 10_600.0
+    registry.apply({}, {})
+
+    entry = registry.state()["streams"]["s1"]
+    assert entry["status"] == "absent"
+    assert entry["absent_since"] == 10_600
+
+
+def test_a_returning_stream_is_active_again_and_not_also_absent():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"s1": {"budget": 10}}, {})
+    now[0] = 10_600.0
+    registry.apply({}, {})
+    now[0] = 11_000.0
+    registry.apply({"s1": {"budget": 10}}, {})
+
+    entry = registry.state()["streams"]["s1"]
+    assert entry["status"] == "active"
+    assert "absent_since" not in entry
+
+
+def test_absent_rows_are_capped_so_name_churn_cannot_grow_the_document():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    for index in range(rs.ABSENT_MAX + 5):
+        now[0] += 1.0
+        registry.apply({f"s{index}": {"budget": 10}}, {})
+    now[0] += 1.0
+    registry.apply({}, {})
+
+    absent = [n for n, e in registry.state()["streams"].items() if e.get("status") == "absent"]
+    assert len(absent) == rs.ABSENT_MAX
+    # the oldest departures are the ones dropped
+    assert "s0" not in absent
+    assert f"s{rs.ABSENT_MAX + 4}" in absent
+
+
+def test_a_rejected_stream_is_not_reported_as_absent():
+    now = [10_000.0]
+    registry = rs.StreamRegistry(clock=lambda: now[0])
+    registry.apply({"s1": {"budget": 10}}, {})
+    now[0] = 10_600.0
+    registry.apply({}, {"s1": "budget must be a positive integer"})
+
+    entry = registry.state()["streams"]["s1"]
+    assert entry["status"] == "rejected"
+    assert "absent_since" not in entry
+
+
+def test_the_readme_states_what_an_absent_entry_means():
+    assert "absent" in rs.README_TEXT

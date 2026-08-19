@@ -9,6 +9,7 @@ CONSOLE_FILE = os.environ.get("LLM_CONSOLE_FILE", "/llm/console/console.json")
 POLL_SECONDS = 5
 CONSOLE_MAX_BYTES = 65_536
 MAX_STREAMS = 8
+ABSENT_MAX = 16
 DEFAULT_STREAM_BUDGET = 10
 STREAM_LIMIT_MAX = 120
 STREAM_TOKEN_LIMIT_MAX = 2_000_000
@@ -461,6 +462,10 @@ the top of each hour rather than rolling. its size, use, and remaining
 percentage are published in streams.json as shared_tokens. core.sock is
 outside the pool and carries no allowance of any kind.
 
+a name that was served and is no longer declared keeps an entry in
+streams.json with the status absent and the time it stopped being served.
+the entry names no socket: the socket is gone.
+
 declared values replace the corresponding fields of each request on that
 socket. the current sockets, their settings, and their use are in
 streams.json. the model identifiers a declaration may set are listed in
@@ -477,9 +482,15 @@ def render_state(
     streams_enabled,
     console_error=None,
     token_histories=None,
+    absent=None,
 ):
-    """The streams.json document describing every socket in the directory."""
+    """The streams.json document describing every socket in the directory.
+
+    A name that has been served and is no longer declared keeps a row stating
+    when it went, so a reader sees a departure rather than a hole.
+    """
     token_histories = token_histories or {}
+    absent = absent or {}
     streams = {"core": {"socket": "core.sock", "status": "active"}}
     for name, settings in accepted.items():
         streams[name] = {
@@ -497,6 +508,9 @@ def render_state(
         }
     for name, reason in rejected.items():
         streams[name] = {"status": "rejected", "reason": reason}
+    for name, since in absent.items():
+        if name not in streams:
+            streams[name] = {"status": "absent", "absent_since": int(since)}
     state = {"streams_enabled": streams_enabled, "streams": streams}
     if console_error is not None:
         state["console_error"] = console_error
@@ -563,6 +577,7 @@ class StreamRegistry:
         self._token_histories = {}
         self._shared_hour = None
         self._shared_entries = []
+        self._absent = {}
         self._clock = clock
 
     def _shared_roll(self, now):
@@ -605,6 +620,21 @@ class StreamRegistry:
                 kept[name] = recent
         self._token_histories = kept
 
+    def _note_absent(self, removed, now):
+        """Stamp departed names and forget the oldest beyond ABSENT_MAX.
+
+        A name that is declared or rejected again is no longer a departure.
+        """
+        for name in removed:
+            self._absent[name] = now
+        for name in list(self._absent):
+            if name in self._settings or name in self._rejected:
+                del self._absent[name]
+        if len(self._absent) > ABSENT_MAX:
+            oldest = sorted(self._absent.items(), key=lambda item: item[1])
+            for name, _since in oldest[: len(self._absent) - ABSENT_MAX]:
+                del self._absent[name]
+
     def apply(self, accepted, rejected):
         """Adopt a console evaluation. Returns (added, removed) stream names."""
         with self._lock:
@@ -612,7 +642,9 @@ class StreamRegistry:
             removed = [name for name in self._settings if name not in accepted]
             self._settings = {name: dict(settings) for name, settings in accepted.items()}
             self._rejected = dict(rejected)
-            self._prune_histories(self._clock())
+            now = self._clock()
+            self._note_absent(removed, now)
+            self._prune_histories(now)
             return added, removed
 
     def reject(self, name, reason):
@@ -716,6 +748,7 @@ class StreamRegistry:
                 streams_enabled,
                 console_error,
                 dict(self._token_histories),
+                dict(self._absent),
             )
             self._shared_roll(now)
             allowance = global_token_limit_max()

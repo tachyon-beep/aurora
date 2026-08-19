@@ -214,7 +214,9 @@ def test_poll_once_binds_and_unbinds_declared_sockets(tmp_path, transcripts, reg
         console.write_text(json.dumps({"enable_streams": True, "streams": {}}), encoding="utf-8")
         proxy.poll_once(registry, servers, str(tmp_path), str(console), str(state))
         assert not (tmp_path / "aux.sock").exists()
-        assert "aux" not in json.loads(state.read_text(encoding="utf-8"))["streams"]
+        retired = json.loads(state.read_text(encoding="utf-8"))["streams"]["aux"]
+        assert retired["status"] == "absent"
+        assert "socket" not in retired
     finally:
         for server_instance in servers.values():
             server_instance.shutdown()
