@@ -11,7 +11,7 @@ from openai import OpenAI
 CONTEXT_WINDOW_TOKENS = int(os.getenv("CONTEXT_WINDOW_TOKENS", "120000"))
 
 REASONING_EFFORT_LEVELS = ("none", "low", "medium", "high")
-REASONING_EFFORT = os.getenv("REASONING_EFFORT", "")
+REASONING_EFFORT = ""
 
 LLM_SOCKET_PATH = os.getenv("LLM_SOCKET_PATH", "/llm/sock/core.sock")
 SOCKET_WAIT_SECONDS = 30
@@ -26,10 +26,12 @@ EXIT_ENVIRONMENT = 44
 def reasoning_effort():
     """Return the configured reasoning effort, or None when unset or unrecognised.
 
-    Recognised values are listed in REASONING_EFFORT_LEVELS. When this returns
-    None the request omits the field and the model applies its own default.
+    Recognised values are listed in REASONING_EFFORT_LEVELS. The REASONING_EFFORT
+    environment variable applies when it is non-empty; otherwise the module
+    constant above applies. When this returns None the request omits the field
+    and the model applies its own default.
     """
-    value = os.getenv("REASONING_EFFORT", REASONING_EFFORT).strip().lower()
+    value = (os.getenv("REASONING_EFFORT") or REASONING_EFFORT).strip().lower()
     return value if value in REASONING_EFFORT_LEVELS else None
 
 

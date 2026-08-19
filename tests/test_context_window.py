@@ -130,3 +130,9 @@ def test_clip_chunked_eviction_still_fits_the_budget_and_keeps_the_latest_messag
     out = chassis.clip_to_window(msgs, budget_tokens=2000, eviction_chunk_tokens=800)
     assert out[-1] is msgs[-1]
     assert chassis._estimate_tokens(out) <= 2000
+
+
+def test_reasoning_effort_empty_env_falls_back_to_the_constant(monkeypatch):
+    monkeypatch.setenv("REASONING_EFFORT", "")
+    monkeypatch.setattr(chassis, "REASONING_EFFORT", "low")
+    assert chassis.reasoning_effort() == "low"
