@@ -180,8 +180,10 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      endpoints. The console browser resolves paths only inside its allow-listed roots and never
      follows a symlink across a root boundary; everything renders as escaped text.
    - The **telemetry volume** is written only by the watchdog (a mirror of `/work` plus the
-     captured agent log), mounted read-only into the stage, and never rendered wholesale on the
-     stream page — only curated, capped extracts (tombstone notes, source deltas, per-edit diff
+     captured agent log) — enforced, not assumed: every mirror pass removes volume-root entries
+     outside the watchdog's own manifest (`TELEMETRY_KEEP`), so nothing another process parks
+     there outlives the five-second cadence. It is mounted read-only into the stage, and never
+     rendered wholesale on the stream page — only curated, capped extracts (tombstone notes, source deltas, per-edit diff
      excerpts of `agent.py`), each read through `contained_file` and rendered as text. The mirror
      copies symlinks as links and never follows them.
    - The **sense volume** is written only by the sense service, which holds no credential of any

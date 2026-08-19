@@ -100,3 +100,36 @@ def test_mirror_replaces_a_planted_symlink_at_the_tmp_path(tmp_path):
     assert (dest_root / "work" / "agent.py").read_text(encoding="utf-8") == "AGENT\n"
     assert not os.path.lexists(dest_root / "work.tmp")
     assert (outside / "kept.txt").read_text(encoding="utf-8") == "kept\n"
+
+
+def test_mirror_sweeps_content_outside_its_own_manifest(tmp_path):
+    # The telemetry volume is written only by the watchdog; anything another
+    # process parks at the volume root is removed on the next mirror pass.
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    squat = dest_root / "memory"
+    squat.mkdir()
+    (squat / "notes.md").write_text("kept?\n", encoding="utf-8")
+    (dest_root / "stray.txt").write_text("stray\n", encoding="utf-8")
+
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+
+    assert not squat.exists()
+    assert not (dest_root / "stray.txt").exists()
+    assert (dest_root / "work" / "agent.py").read_text(encoding="utf-8") == "AGENT\n"
+
+
+def test_mirror_sweep_removes_a_symlink_as_a_link_and_never_follows(tmp_path):
+    src = _make_work(tmp_path)
+    dest_root = tmp_path / "telemetry"
+    dest_root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "kept.txt").write_text("kept\n", encoding="utf-8")
+    os.symlink(str(outside), str(dest_root / "stash"))
+
+    watchdog.mirror_work(src=str(src), dest_root=str(dest_root))
+
+    assert not os.path.lexists(dest_root / "stash")
+    assert (outside / "kept.txt").read_text(encoding="utf-8") == "kept\n"

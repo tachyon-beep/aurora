@@ -28,6 +28,7 @@ TERMINATED_FLAP_WINDOW_SECONDS = 600
 ENVIRONMENT_PAUSE_SECONDS = 60
 
 TELEMETRY_DIR = os.environ.get("TELEMETRY_DIR", "/telemetry")
+TELEMETRY_KEEP = ("work", "work.tmp", "work.old")
 BUILD_DIR = os.environ.get("BUILD_DIR", "/build")
 MIRROR_INTERVAL_SECONDS = 5
 MIRROR_EXCLUDE = ("__pycache__", ".git")
@@ -203,7 +204,9 @@ def mirror_work(src=None, dest_root=None):
     the destination root does not exist. Excludes MIRROR_EXCLUDE entries.
     Copied directory modes are reproduced, so the replaced copies are removed
     through _force_rmtree; a mode that denies removal would otherwise leave
-    the previous copy in place and stop every later replacement.
+    the previous copy in place and stop every later replacement. Each pass
+    also removes destination-root entries outside TELEMETRY_KEEP, so the
+    volume holds only what this file writes.
     """
     if src is None:
         src = WORK_DIR
@@ -211,6 +214,17 @@ def mirror_work(src=None, dest_root=None):
         dest_root = TELEMETRY_DIR
     if not os.path.isdir(dest_root):
         return
+    for name in os.listdir(dest_root):
+        if name in TELEMETRY_KEEP:
+            continue
+        stray = os.path.join(dest_root, name)
+        if os.path.isdir(stray) and not os.path.islink(stray):
+            _force_rmtree(stray)
+        else:
+            try:
+                os.unlink(stray)
+            except OSError:
+                pass
     dest = os.path.join(dest_root, "work")
     tmp = os.path.join(dest_root, "work.tmp")
     old = os.path.join(dest_root, "work.old")
