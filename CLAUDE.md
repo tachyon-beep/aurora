@@ -77,7 +77,8 @@ recording proxy, and uses tools to rewrite its own source code inside layered co
      the recorder holds no default-model knowledge, and requests keep the model field they were
      sent with), and the permitted set is published as `/llm/sock/models.json`, each entry marked
      `image_input` by membership in the vision list; a composed max_tokens additionally
-     gains the operator's `STREAM_REASONING_ALLOWANCE` when reasoning is on, so the declared
+     gains the operator's `STREAM_REASONING_ALLOWANCE` unless reasoning is composed off
+     (a `reasoning_effort` of `"none"`; an absent field also gains it), so the declared
      value bounds the response rather than being consumed by reasoning (the upstream counts
      reasoning inside max_tokens). The recorder additionally *sets* `stream_options.include_usage`
      on a streamed declared-stream request — the one field it sets rather than replaces — because
@@ -304,7 +305,8 @@ are on the image allow-list alongside `chassis.py`.
   pre-change image built on the same host. Do not add ML runtimes, local models, browser engines,
   agent frameworks, cloud SDKs, or service daemons without a new design decision and an image-size
   measurement. (The ceiling was 100 MiB until 2026-08-17, when it was raised by operator decision
-  to admit `scipy` and `netCDF4` alongside `duckdb`; measured cost of that set is 238 MiB. The
+  to admit `scipy`, `netCDF4`, `skyfield`, `pypdf`, and `poppler-utils` alongside `duckdb`;
+  measured cost of that set is 238 MiB. The
   rationale is recorded in `docs/superpowers/specs/2026-08-17-a-world-with-a-past-design.md` §4.7 —
   a package is admitted as a toolkit the agent *may* grow into, never as one it is expected to use,
   so latency of use is not evidence against inclusion.)
