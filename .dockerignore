@@ -10,6 +10,8 @@ tombstones
 README.md
 CLAUDE.md
 *.jsonl
+# *.txt matches only at the build-context root, so books/*.txt still reach
+# the image; widening it to **/*.txt would silently empty /books.
 *.txt
 !system_prompt.txt
 !user_prompt.txt

@@ -49,6 +49,9 @@ def test_state_has_no_automatic_runtime_consumers() -> None:
         "proxy.py",
         "diode.py",
         "viewer.py",
+        "pump.py",
+        "sense.py",
+        "video.py",
     )
     for relative in lifecycle_files:
         contents = (ROOT / relative).read_text()

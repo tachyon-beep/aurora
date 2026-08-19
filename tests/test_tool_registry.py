@@ -55,3 +55,17 @@ def test_schema_bool_type():
 def test_every_registered_tool_has_a_nonempty_description():
     for schema in agent.tools.schemas:
         assert schema["function"]["description"].strip()
+
+
+def test_genesis_surface_is_exactly_eight_tools_in_order():
+    assert list(agent.tools.tools) == [
+        "read_file",
+        "write_file",
+        "validate",
+        "migrate",
+        "done",
+        "reset",
+        "list_dir",
+        "compact",
+    ]
+    assert [s["function"]["name"] for s in agent.tools.schemas] == list(agent.tools.tools)

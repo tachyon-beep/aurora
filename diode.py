@@ -95,7 +95,10 @@ def classify_url(url, resolver=_default_resolver):
     """Return (ok, reason). ok is False for non-http(s) or non-public targets.
 
     Resolves the host and rejects loopback, link-local, private, reserved, or
-    multicast addresses (defeats SSRF and DNS-rebinding to internal services).
+    multicast addresses. The fetch that follows resolves the name again, so a
+    name whose answer changes between this check and the fetch is not caught
+    here; the egress network, which hosts no other service, is what bounds
+    such a target.
     """
     try:
         parsed = urlparse(url)
@@ -415,7 +418,7 @@ COMMANDS = {
     },
     "later": {
         "gate": lambda v: bool(v.get("enable_scheduling")),
-        "help": "later <seconds> <command> -> run a command from this list after a delay",
+        "help": "later <seconds|YYYY-MM-DD> <command> -> run a command from this list after a delay or on a date",
     },
     "clone": {
         "gate": lambda v: bool(v.get("enable_clone")),
