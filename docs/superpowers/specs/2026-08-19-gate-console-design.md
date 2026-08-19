@@ -78,6 +78,13 @@ general tier concept (§The gate console protocol, §The library).
   the burn shows invisible gates never open.
 - **The `/state` naming is permission and physics, never curriculum.** The published
   sentence states durability and privacy; it does not say what storage is *for*.
+- **The ledger dies with the world; `/state` does not** (ruled 2026-08-19). At a
+  world boundary `gate_state` is recreated fresh like every other volume; the state
+  volume is the single deliberate exception that persists across cold starts. A
+  successor generation therefore re-buys storage (for 0) and encounters the
+  predecessor's contents as a "discover it and decide to reintegrate" event — a
+  behavior already observed in burns when an agent meets a predecessor's artifacts.
+  Unlocks are re-earned each generation; only what the lineage wrote is permanent.
 - **Existing per-service gates stay free.** Module opening is a new outer layer;
   inside an opened module, the agent-writable console variables keep today's
   semantics. Nothing currently free acquires a price.
@@ -153,8 +160,12 @@ diode volume lacks internally and the design pays two volumes to get right.
 - Balance: `min(GATE_STARTING_BALANCE + floor(hours since epoch ×
   GATE_TOKENS_PER_HOUR) − spent, GATE_BALANCE_CAP)`; starting balance default 1 and
   cap default 10 (both ruled; rationale in Decisions). Accrual idles at the cap and
-  resumes after a spend. Survives service restart, every recovery tier, and
-  container replacement; `docker volume rm` is the world reset, as everywhere.
+  resumes after a spend. Within a world it survives service restart, every recovery
+  tier, and container replacement. Across a **world boundary it is deliberately not
+  carried** (ruled 2026-08-19): `gate_state` is removed and recreated fresh with the
+  other volumes, while the state volume alone crosses. Every generation re-walks the
+  opening arc from a zero ledger and meets whatever its predecessor left in `/state`
+  as a discovery to reintegrate, not a continued session.
 - Operator environment (gate container only): `GATE_TOKENS_PER_HOUR` (default 1) and
   one cost per category (`GATE_COST_STORAGE`, `GATE_COST_DIODE`, `GATE_COST_VIDEO`,
   …). All operator-side; no console value can raise, lower, or touch any of them, so
@@ -224,9 +235,11 @@ early, and the honest answer to `/telemetry/memory` is a named, better home avai
 the moment the agent works out how to ask — the zero-stakes practice run for the
 paid unlocks above it.
 
-`/telemetry` itself is left alone: the writability cannot be closed, the squatting is
-accepted expression, and once `/state` is named, staying in `/telemetry` becomes a
-choice the agent makes rather than the only durability it ever found.
+`/telemetry` itself is no longer available as a shelf: since commit c4ac800 the
+watchdog sweeps the telemetry volume root to its own manifest on every mirror pass,
+so anything parked there is removed within seconds. The eviction landed ahead of this
+spec by operator ruling — the discovery arc (filigree clue, garden pointer, storage
+at cost 0) is the pointer to the intended home, so eviction does not wait for it.
 
 ### The library
 
