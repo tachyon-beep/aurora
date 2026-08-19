@@ -434,6 +434,37 @@ information content, and organ contracts add a second axis that rewards periodic
 
 ---
 
+## 7b. The affordance principle
+
+Prior art the operator pointed at, and the cleanest statement of a rule this design keeps applying
+without having named it. `sense.py:177-184` stamps `last_lively` when a grab measurably differs from
+the one before it, published as `lively`. The agent picked it up unprompted and stopped re-reading
+frames merely to find out whether anything had changed.
+
+> **Publish the cheap derived fact that makes the expensive check unnecessary. Never remove the
+> expensive check.**
+
+Three properties make it work, and all three are load-bearing:
+
+1. **It measures the world, not the reader.** A pixel delta on real data with a stated method is a
+   measurement. A health score for the agent is a verdict about the reader with no real source. The
+   §6 ban on verdicts is a ban on the second kind, not the first — and the distinction is what keeps
+   this principle from licensing exactly what that section forbids.
+2. **The underlying data stays.** Every frame is still there and still readable. A summary that
+   *replaced* its source would be the world deciding what is worth noticing, which is curriculum.
+3. **It is optional.** Nothing requires its use, and an agent that ignores it loses nothing but time.
+
+Applications already in this document, now recognisable as one pattern: `previous_updated` beside
+`updated` (one read establishes the cadence instead of two); `absent_since` on a departed stream (a
+departure stated rather than a hole investigated); and the organ ledger's `superseded_at` (partition a
+stored corpus after the fact without having re-checked every batch). Each replaces a poll with a fact
+and leaves the poll available.
+
+Landed while this spec was being written, on the same principle: `streams.json` now retains a removed
+stream name as `{"status": "absent", "absent_since": ...}` rather than dropping it, and each served
+socket states `model_since` and `previous_models`. Nothing about a chat completion's shape reveals
+that the model behind a name changed, so that history is the only way the agent can tell.
+
 ## 8. Inbound pointer
 
 Per the cross-pointing corollary — a new surface arrives with at least one inbound pointer and never
