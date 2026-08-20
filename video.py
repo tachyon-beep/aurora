@@ -990,31 +990,54 @@ class ServiceState:
     text_history: list = field(default_factory=list)
 
 
-def _gate_always(variables):
-    """A gate that is always open, regardless of variables."""
-    return True
-
-
 COMMANDS = {
-    "help": {"gate": _gate_always, "help": "help -> write the current command list to HELP.md"},
+    "help": {"variable": None, "help": "help -> write the current command list to HELP.md"},
     "search": {
-        "gate": _gate_always,
+        "variable": None,
         "help": "search <text> -> return video identifiers, durations, channels and titles",
     },
     "transcript": {
-        "gate": lambda v: bool(v.get("enable_transcript")),
+        "variable": "enable_transcript",
         "help": "transcript <id> [start] [end] -> return the timed transcript, "
         "optionally between two offsets in seconds",
     },
     "watch": {
-        "gate": lambda v: bool(v.get("enable_frames")),
+        "variable": "enable_frames",
         "help": "watch <id> -> bind a video and return its duration",
     },
     "still": {
-        "gate": lambda v: bool(v.get("enable_frames")),
+        "variable": "enable_frames",
         "help": "still <seconds> -> return one frame from the bound video at an offset",
     },
 }
+
+
+def gate_open(spec, variables):
+    """Whether a command's gate is open under the given variables.
+
+    Each command names the console variable that opens it, or None when it is
+    ungated, rather than carrying a predicate: the name is then a fact the
+    refusal text and HELP.md can both read off the table, and cannot drift
+    from the gate it actually describes. A non-dict variables closes every
+    gated command rather than raising, matching available_commands and
+    handle_command, which both accept a malformed console.
+    """
+    variable = spec.get("variable")
+    if variable is None:
+        return True
+    if not isinstance(variables, dict):
+        return False
+    return bool(variables.get(variable))
+
+
+def gate_variables():
+    """Each gate variable, in table order, with the commands it opens."""
+    gated = {}
+    for name, spec in COMMANDS.items():
+        variable = spec.get("variable")
+        if variable is not None:
+            gated.setdefault(variable, []).append(name)
+    return gated
 
 
 def command_word(command):
@@ -1039,14 +1062,20 @@ def available_commands(variables):
     """
     if not isinstance(variables, dict):
         variables = {}
-    return [name for name, spec in COMMANDS.items() if spec["gate"](variables)]
+    return [name for name, spec in COMMANDS.items() if gate_open(spec, variables)]
 
 
 def write_help(variables):
     """Write the currently available command list to HELP.md.
 
-    Lists only open verbs, in COMMANDS' help-string form, plus the three
-    allowance ceilings. No closed verb, example, or sample query appears --
+    Lists only open verbs, in COMMANDS' help-string form, then the variables
+    that open the closed ones, then the three allowance ceilings. The gate
+    lines are derived from COMMANDS rather than written out here, so a verb
+    added behind an existing gate is named without a second edit. A closed
+    verb is named in the variable block but never in usage form: which gate
+    opens a verb is a fact about this surface, and a gate named on no surface
+    the agent can read is one it can only brute-force. The diode publishes
+    all of its gates the same way. No example or sample query appears --
     an example would be the operator planting an interest. Written through
     _replace_text, like every other file this service publishes, so a symlink
     the agent plants at HELP.md is replaced rather than written through.
@@ -1055,6 +1084,18 @@ def write_help(variables):
     for name in available_commands(variables):
         lines.append(COMMANDS[name]["help"])
     lines += [
+        "",
+        "# variables",
+        "",
+        "set these in console.json under variables to change what is available:",
+    ]
+    for variable, names in gate_variables().items():
+        verbs = " and ".join(names)
+        plural = "s" if len(names) > 1 else ""
+        lines.append(f"  {variable}: true, makes the {verbs} command{plural} available")
+    lines += [
+        "  video_budget, still_budget, text_budget: integers, the operations",
+        "    allowed per hour; a value lowers an allowance and never raises it",
         "",
         "# allowances",
         "",
@@ -1159,8 +1200,13 @@ def handle_command(command, variables, state, now=None):
     name = command_word(command)
     if name not in COMMANDS:
         return UNKNOWN_COMMAND.format(name=_bounded_text(name)), state
-    if not COMMANDS[name]["gate"](variables):
-        return f"command not available: {name}", state
+    spec = COMMANDS[name]
+    if not gate_open(spec, variables):
+        return (
+            f"command not available: {name}; "
+            f"set {spec['variable']} to true in console.json under variables",
+            state,
+        )
     argument = command.strip()[len(name) :].strip()
 
     if name == "help":
@@ -1292,10 +1338,16 @@ def run_cycle(state):
 def run_video():
     """Poll the console forever, one run_cycle per pass.
 
-    The console is seeded once, only when absent, with an empty command list
-    -- an existing console.json (from a prior incarnation, or hand-written)
-    is never overwritten. The seed write is wrapped rather than left to
-    raise: it runs before the loop, so an unguarded failure here (an
+    The console is seeded once, only when absent, with a help command and
+    both gate variables set false -- an existing console.json (from a prior
+    incarnation, or hand-written) is never overwritten. The seeded help
+    command means HELP.md exists from the first cycle rather than waiting
+    for the agent to guess the verb that writes it, and the two false
+    variables put the names that open the closed verbs in the file where
+    they are set; false is the same closed state as absent. This follows
+    the diode, whose console seeds a help command for the same reason. The
+    seed write is wrapped rather than left to raise: it runs before the
+    loop, so an unguarded failure here (an
     unwritable or full VIDEO_DIR) would keep run_cycle -- and the pruning
     inside it -- from ever running at all, which is exactly the self-sealing
     failure this service is built to avoid: the one thing that could
@@ -1308,7 +1360,13 @@ def run_video():
     ensure_dirs()
     if not os.path.exists(CONSOLE_FILE):
         try:
-            _replace_json(CONSOLE_FILE, {"commands": [], "variables": {}})
+            _replace_json(
+                CONSOLE_FILE,
+                {
+                    "commands": ["help"],
+                    "variables": {"enable_transcript": False, "enable_frames": False},
+                },
+            )
         except OSError:
             pass
     state = ServiceState()

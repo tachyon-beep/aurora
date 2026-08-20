@@ -255,7 +255,10 @@ means of its own repair is a dead end rather than friction.
 
 `search` is ungated because it is the only route to an id, and id-only input is the
 containment guarantee. An agent that finds this volume has one verb that works
-immediately and a factual `HELP.md` naming what the others require.
+immediately and a factual `HELP.md` naming what the others require: each closed verb's
+gate variable, in the `# variables` block, on the diode's pattern. The console is seeded
+with a `help` command and both gates set false, so `HELP.md` exists from the first cycle
+and the variable names sit in the file where they are set.
 
 Splitting `watch` from `still` is what makes the coupled budget legible: the rationed
 verb is choosing a video, the frequent verb is looking into it, and the resolved
@@ -468,7 +471,25 @@ Unit tests run with no network and no binaries, as the sense tests do: `yt-dlp` 
   are not table members, including near-misses of the real verbs, with every network
   and subprocess path stubbed to raise. The allow-list is the property under test, not
   the specific unknown words.
-- `HELP.md` and `state.json` name no closed verb.
+- `HELP.md` names the variable that opens each closed verb, and never a closed verb in
+  usage form; `state.json` lists open verbs only. (Operator ruling, 2026-08-20. As built,
+  `HELP.md` named no closed verb and no variable at all, which contradicted the vocabulary
+  section above — "a factual `HELP.md` naming what the others require" — and left the gate
+  variables published on no surface the agent can read. The first burn to reach this volume
+  guessed `watch`, `still` and `transcript` correctly, was told "command not available" for
+  each, and went on guessing synonyms, because nothing named what would open them. The
+  diode publishes all of its gates in `HELP.md` and they were opened within hours; this
+  surface now follows it.)
+- A closed gate's refusal names the variable that opens it. (Same ruling. The burn showed
+  `HELP.md` alone is not enough: the agent read it once before the gates were published and
+  had no reason to read it again, and it wiped its own console variables on the next write.
+  It also misread the bare refusal — it published a help request outside the container
+  reasoning that `watch`, `still` and `transcript` "need a bound video", conflating the gate
+  refusal with `still`'s "no video is bound". The refusal is the one surface guaranteed to
+  reach the agent at the moment it needs the fact, and it now carries it.)
+- Each command in the table names its gate variable rather than carrying a predicate, so the
+  refusal text and the `HELP.md` block both derive from one source and a verb added behind an
+  existing gate cannot land unpublished.
 
 **Ingest fidelity**
 - A transcript containing prompt-injection-shaped text arrives unmodified apart from

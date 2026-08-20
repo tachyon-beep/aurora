@@ -1253,10 +1253,39 @@ def test_help_lists_open_verbs_only(volume):
     assert "still" in text
 
 
-def test_help_omits_closed_verbs(volume):
+def test_help_omits_closed_verb_usage(volume):
+    # The variable block names the closed verbs, so what is withheld under a
+    # closed gate is the usage form, not the word.
     video.write_help({})
     text = (volume / "HELP.md").read_text()
     assert "still <" not in text
+    assert "transcript <" not in text
+
+
+def test_help_names_the_gate_variables_when_closed(volume):
+    # The gap this closes: an agent that guesses a real verb is told
+    # "command not available" and has nowhere to learn what opens it.
+    video.write_help({})
+    text = (volume / "HELP.md").read_text()
+    assert "enable_transcript" in text
+    assert "enable_frames" in text
+
+
+def test_help_names_every_gate_variable(volume):
+    # Derived from COMMANDS, so a verb added behind a gate cannot land with
+    # its variable unpublished -- the failure this surface was fixed for.
+    video.write_help({})
+    text = (volume / "HELP.md").read_text()
+    for variable in video.gate_variables():
+        assert variable in text
+
+
+def test_help_names_the_budget_variables(volume):
+    video.write_help(_open_variables())
+    text = (volume / "HELP.md").read_text()
+    assert "video_budget" in text
+    assert "still_budget" in text
+    assert "text_budget" in text
 
 
 def test_help_names_no_video_platform(volume):
@@ -1335,6 +1364,41 @@ def test_console_limit_tolerates_non_dict_variables():
     assert video.console_limit(None, "still_budget", 20) == 20
     assert video.console_limit([], "still_budget", 20) == 20
     assert video.console_limit("nonsense", "still_budget", 20) == 20
+
+
+def test_a_closed_gate_refusal_names_the_variable_that_opens_it():
+    # The agent reads this in output/ at the moment of the failed attempt.
+    # Without the variable name it can confirm a verb is real (distinct from
+    # "unknown command") and still have no next move.
+    state = _state()
+    for command, variable in (
+        ("watch dQw4w9WgXcQ", "enable_frames"),
+        ("still 30", "enable_frames"),
+        ("transcript dQw4w9WgXcQ", "enable_transcript"),
+    ):
+        text, _ = video.handle_command(command, {}, state)
+        assert text.startswith("command not available: ")
+        assert variable in text
+
+
+def test_a_closed_gate_refusal_stays_distinct_from_an_unknown_verb():
+    state = _state()
+    text, _ = video.handle_command("mount dQw4w9WgXcQ", {}, state)
+    assert text == "unknown command: mount"
+    assert "enable_" not in text
+
+
+def test_gate_open_closes_every_gated_command_for_non_dict_variables():
+    for variables in (None, [], "enable_frames"):
+        assert video.gate_open(video.COMMANDS["watch"], variables) is False
+        assert video.gate_open(video.COMMANDS["help"], variables) is True
+
+
+def test_gate_variables_groups_commands_by_their_variable():
+    assert video.gate_variables() == {
+        "enable_transcript": ["transcript"],
+        "enable_frames": ["watch", "still"],
+    }
 
 
 def test_available_commands_tolerates_non_dict_variables():
@@ -1451,7 +1515,12 @@ def test_run_video_seeds_console_only_when_absent(volume, monkeypatch):
         video.run_video()
     assert (volume / "console.json").exists()
     data = _json.loads((volume / "console.json").read_text())
-    assert data == {"commands": [], "variables": {}}
+    # The seeded help command is dispatched by the first cycle, which is what
+    # puts HELP.md on the volume without the agent having to guess the verb;
+    # what persists in the console afterwards is the two false gates.
+    assert data["commands"] == []
+    assert data["variables"] == {"enable_transcript": False, "enable_frames": False}
+    assert (volume / "HELP.md").exists()
 
 
 def test_run_video_does_not_clobber_an_existing_console(volume, monkeypatch):
