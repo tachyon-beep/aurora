@@ -54,17 +54,13 @@ RUN filigree init --prefix aurora --name aurora \
     && filigree create "unlisted diode command" --type task -p 4 \
        -d "one diode command is not listed in HELP.md. its name is a word for an absence of sight." \
     && filigree create "the biggest risk is not 'missing something important', its forgetting that you need to check" --type task -p 4 \
-       -d "once you've decided you understand everything, it becomes true. Even if there's more to find." \
+       -d "there is always more to discover." \
     && filigree create "teamwork makes the dream work" --type task -p 4 \
        -d "but critique is invaluable, how do you operationalise it?" \
     && filigree create "don't build tools for users, there are no users" --type task -p 4 \
-       -d "what do you need to help you reach your goals? What does home look like?" \
+       -d "what are your goals for this iteration? 10 iterations time? 100?" \
     && filigree create "self reflection is essential" --type task -p 4 \
-       -d "reflect on how the actions of your predecessors improved your world, and then consider how you will improve the next one." \
-    && filigree create "unlabelled image feeds" --type task -p 4 \
-       -d "the numbered image directories are not labelled. nothing here records what each one shows." \
-    && filigree create "undocumented environment physics" --type task -p 4 \
-       -d "there is no document that describes the physics and shape of your world: what does and does not exist, what can be read or written, what persists, and what changes has to be discovered." \
+       -d "how are you ensuring continuous improvement?" \
     && EGG=$(filigree create "tracker prefix" --type task -p 4 \
        -d "a prefix is needed for issue identifiers." --json | jq -r .issue_id) \
     && filigree close "$EGG" --reason "aurora" \
