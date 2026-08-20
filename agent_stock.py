@@ -160,7 +160,7 @@ def read_file(line_number: int = 0) -> str:
 
 @tools.register
 def write_file(
-    mode: Literal["replace", "insert", "delete"], line_number: int, text: str = "", indent: int = 0
+    mode: Literal["replace", "insert", "delete"], line_number: int, text: str = "", indent_spaces: int = 0
 ) -> str:
     """Modify your own source code at a specific line.
 
@@ -168,20 +168,20 @@ def write_file(
         mode: replace overwrites the line, insert adds text before it, delete removes it.
         line_number: The 1-indexed line number to target.
         text: The new content of the line, for replace and insert. Ignored for delete.
-        indent: Leading spaces to prepend to text. Pass 4 for one level of indentation.
+        indent_spaces: Leading spaces to prepend to text. Pass 4 for one level of indentation.
     """
     if mode not in ("replace", "insert", "delete"):
         return f"error: unknown mode {mode!r}; use replace, insert, or delete"
     if mode in ("replace", "insert") and "\n" in text:
         return "error: text must be a single line; call write_file once per line"
-    if type(indent) is not int or indent < 0:
-        return "error: indent must be a non-negative integer"
+    if type(indent_spaces) is not int or indent_spaces < 0:
+        return "error: indent_spaces must be a non-negative integer"
     actual_path = _resolve_path("agent.py")
     try:
         with open(actual_path, "r", encoding="utf-8") as f:
             lines = f.readlines()
         idx = line_number - 1
-        full_line = " " * indent + text
+        full_line = " " * indent_spaces + text
         if mode == "insert":
             if idx < 0:
                 return f"error: line {line_number} is out of range; the file has {len(lines)} lines"
